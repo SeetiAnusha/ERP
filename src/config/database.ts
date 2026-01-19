@@ -7,19 +7,19 @@ const sequelize = new Sequelize(
   process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/erp_database',
   {
     dialect: 'postgres',
-    logging: false,
     dialectOptions: {
       ssl: {
         require: true,
-        rejectUnauthorized: false
+        rejectUnauthorized: false // Important for Supabase
       }
     },
     pool: {
-      max: 5,
-      min: 0,
-      acquire: 30000,
+      max: 15, // Match your Supabase pool size
+      min: 2,
+      acquire: 60000,
       idle: 10000
-    }
+    },
+    logging: console.log
   }
 );
 
