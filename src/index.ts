@@ -37,6 +37,22 @@ app.use('/api/cash-register', cashRegisterRoutes);
 app.use('/api/adjustments', adjustmentRoutes);
 app.use('/api/reports', reportRoutes);
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'ERP Backend API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      products: '/api/products',
+      clients: '/api/clients',
+      suppliers: '/api/suppliers',
+      sales: '/api/sales',
+      purchases: '/api/purchases'
+    }
+  });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'ERP API is running' });
 });
@@ -53,14 +69,10 @@ const startServer = async () => {
     await sequelize.authenticate();
     console.log('Database connected successfully');
 
-    // Skip database sync in production (it takes too long)
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('Synchronizing database...');
-      await sequelize.sync({ alter: true });
-      console.log('Database synchronized');
-    } else {
-      console.log('Production mode: Skipping database sync');
-    }
+    // Sync database to create tables
+    console.log('Synchronizing database...');
+    await sequelize.sync({ alter: true });
+    console.log('Database synchronized');
   } catch (error) {
     console.error('Database connection error:', error);
     // Don't exit - server is already running
