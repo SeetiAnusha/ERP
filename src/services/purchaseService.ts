@@ -93,7 +93,7 @@ export const createPurchase = async (data: any) => {
           tax: invoice.tax,
           amount: invoice.amount,
           purchaseType: invoice.purchaseType || data.purchaseType,
-          paymentMethod: invoice.paymentMethod,
+          // paymentMethod: invoice.paymentMethod,
         }, { transaction });
       }
     }
