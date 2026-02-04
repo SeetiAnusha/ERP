@@ -327,7 +327,7 @@ export const getInventoryMovementReport = async (filters: {
               type: 'SALE',
               registrationNumber: sale.registrationNumber,
               quantity: Number(item.quantity),
-              unitPrice: Number(item.salePrice),
+              unitPrice: Number(item.unitPrice),
               total: Number(item.total),
               costOfGoodsSold: Number(item.costOfGoodsSold),
               grossMargin: Number(item.grossMargin),

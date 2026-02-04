@@ -1,5 +1,6 @@
 import Purchase from '../models/Purchase';
 import PurchaseItem from '../models/PurchaseItem';
+import AssociatedInvoice from '../models/AssociatedInvoice';
 import Supplier from '../models/Supplier';
 import Product from '../models/Product';
 import { Op } from 'sequelize';
@@ -9,7 +10,8 @@ export const getAllPurchases = async () => {
   return await Purchase.findAll({
     include: [
       { model: Supplier, as: 'supplier' },
-      { model: PurchaseItem, as: 'items' }
+      { model: PurchaseItem, as: 'items' },
+      { model: AssociatedInvoice, as: 'associatedInvoices' }
     ],
     order: [['registrationDate', 'DESC']],
   });
@@ -19,7 +21,8 @@ export const getPurchaseById = async (id: number) => {
   return await Purchase.findByPk(id, {
     include: [
       { model: Supplier, as: 'supplier' },
-      { model: PurchaseItem, as: 'items' }
+      { model: PurchaseItem, as: 'items' },
+      { model: AssociatedInvoice, as: 'associatedInvoices' }
     ],
   });
 };
@@ -48,6 +51,11 @@ export const createPurchase = async (data: any) => {
     
     const registrationNumber = `RC${String(nextNumber).padStart(4, '0')}`;
     
+    // Calculate associated expenses total
+    const associatedExpenses = data.associatedInvoices && data.associatedInvoices.length > 0
+      ? data.associatedInvoices.reduce((sum: number, inv: any) => sum + Number(inv.amount), 0)
+      : 0;
+    
     // Calculate payment status
     const total = data.total || 0;
     const paidAmount = data.paidAmount || 0;
@@ -67,7 +75,31 @@ export const createPurchase = async (data: any) => {
       paymentStatus,
       paidAmount,
       balanceAmount,
+      additionalExpenses: associatedExpenses,
+      totalWithAssociated: data.productTotal + associatedExpenses,
     }, { transaction });
+    
+    // Create associated invoices first
+    if (data.associatedInvoices && data.associatedInvoices.length > 0) {
+      for (const invoice of data.associatedInvoices) {
+        await AssociatedInvoice.create({
+          purchaseId: purchase.id,
+          supplierRnc: invoice.supplierRnc,
+          supplierName: invoice.supplierName,
+          concept: invoice.concept,
+          ncf: invoice.ncf,
+          date: invoice.date,
+          taxAmount: invoice.taxAmount,
+          tax: invoice.tax,
+          amount: invoice.amount,
+          purchaseType: invoice.purchaseType || data.purchaseType,
+          paymentMethod: invoice.paymentMethod,
+        }, { transaction });
+      }
+    }
+    
+    // Distribute associated costs proportionally to items
+    const productTotal = data.items.reduce((sum: number, item: any) => sum + Number(item.subtotal), 0);
     
     // Create purchase items and update inventory
     if (data.items && data.items.length > 0) {
@@ -76,6 +108,12 @@ export const createPurchase = async (data: any) => {
         if (!product) {
           throw new Error(`Product ${item.productId} not found`);
         }
+        
+        // Calculate proportional associated cost for this item
+        const itemPercentage = productTotal > 0 ? Number(item.subtotal) / productTotal : 0;
+        const itemAssociatedCost = associatedExpenses * itemPercentage;
+        const adjustedTotal = Number(item.subtotal) + itemAssociatedCost;
+        const adjustedUnitCost = item.quantity > 0 ? adjustedTotal / item.quantity : item.unitCost;
         
         await PurchaseItem.create({
           purchaseId: purchase.id,
@@ -88,12 +126,14 @@ export const createPurchase = async (data: any) => {
           subtotal: item.subtotal,
           tax: item.tax,
           total: item.total,
+          adjustedUnitCost: adjustedUnitCost,
+          adjustedTotal: adjustedTotal,
         }, { transaction });
         
-        // Increase inventory
+        // Increase inventory with adjusted unit cost
         await product.update({
-          quantity: Number(product.quantity) + item.quantity,
-          costPrice: item.unitCost // Update cost price with latest purchase price
+          amount: Number(product.amount) + item.quantity,
+          unitCost: adjustedUnitCost // Update unit cost with adjusted cost
         }, { transaction });
       }
     }
@@ -104,7 +144,8 @@ export const createPurchase = async (data: any) => {
     return await Purchase.findByPk(purchase.id, {
       include: [
         { model: Supplier, as: 'supplier' },
-        { model: PurchaseItem, as: 'items' }
+        { model: PurchaseItem, as: 'items' },
+        { model: AssociatedInvoice, as: 'associatedInvoices' }
       ],
     });
   } catch (error) {
@@ -143,7 +184,6 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
       paidAmount: newPaidAmount,
       balanceAmount: newBalanceAmount,
       paymentStatus,
-      paymentMethod: paymentData.paymentMethod,
     }, { transaction });
     
     await transaction.commit();
@@ -152,7 +192,8 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
     return await Purchase.findByPk(id, {
       include: [
         { model: Supplier, as: 'supplier' },
-        { model: PurchaseItem, as: 'items' }
+        { model: PurchaseItem, as: 'items' },
+        { model: AssociatedInvoice, as: 'associatedInvoices' }
       ],
     });
   } catch (error) {
@@ -182,12 +223,13 @@ export const deletePurchase = async (id: number) => {
       const product = await Product.findByPk(item.productId, { transaction });
       if (product) {
         await product.update({
-          quantity: Number(product.quantity) - Number(item.quantity)
+          amount: Number(product.amount) - Number(item.quantity)
         }, { transaction });
       }
     }
     
-    // Delete items and purchase
+    // Delete associated invoices, items and purchase
+    await AssociatedInvoice.destroy({ where: { purchaseId: id }, transaction });
     await PurchaseItem.destroy({ where: { purchaseId: id }, transaction });
     await purchase.destroy({ transaction });
     

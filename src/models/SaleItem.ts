@@ -9,7 +9,7 @@ interface SaleItemAttributes {
   productName: string;
   unitOfMeasurement: string;
   quantity: number;
-  salePrice: number;
+  unitPrice: number;
   subtotal: number;
   tax: number;
   total: number;
@@ -29,7 +29,7 @@ class SaleItem extends Model<SaleItemAttributes, SaleItemCreationAttributes> imp
   public productName!: string;
   public unitOfMeasurement!: string;
   public quantity!: number;
-  public salePrice!: number;
+  public unitPrice!: number;
   public subtotal!: number;
   public tax!: number;
   public total!: number;
@@ -78,7 +78,7 @@ SaleItem.init(
       type: DataTypes.DECIMAL(15, 4),
       allowNull: false,
     },
-    salePrice: {
+    unitPrice: {
       type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
     },

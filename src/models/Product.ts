@@ -7,9 +7,9 @@ interface ProductAttributes {
   name: string;
   category: string;
   unit: string;
-  quantity: number;
-  costPrice: number;
-  salePrice: number;
+  amount: number;
+  unitCost: number;
+  subtotal: number;
   supplierId?: number;
   minimumStock: number;
   taxRate: number;
@@ -28,9 +28,9 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public name!: string;
   public category!: string;
   public unit!: string;
-  public quantity!: number;
-  public costPrice!: number;
-  public salePrice!: number;
+  public amount!: number;
+  public unitCost!: number;
+  public subtotal!: number;
   public supplierId?: number;
   public minimumStock!: number;
   public taxRate!: number;
@@ -66,16 +66,16 @@ Product.init(
       type: DataTypes.STRING(50),
       allowNull: false,
     },
-    quantity: {
+    amount: {
       type: DataTypes.DECIMAL(15, 4),
       allowNull: false,
       defaultValue: 0,
     },
-    costPrice: {
+    unitCost: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
     },
-    salePrice: {
+    subtotal: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
     },

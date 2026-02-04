@@ -13,7 +13,6 @@ interface SaleAttributes {
   ncf?: string;
   saleType: string;
   paymentType: string;
-  paymentMethod: string;
   paymentStatus: string;
   subtotal: number;
   tax: number;
@@ -39,7 +38,6 @@ class Sale extends Model<SaleAttributes, SaleCreationAttributes> implements Sale
   public ncf?: string;
   public saleType!: string;
   public paymentType!: string;
-  public paymentMethod!: string;
   public paymentStatus!: string;
   public subtotal!: number;
   public tax!: number;
@@ -100,11 +98,6 @@ Sale.init(
     paymentType: {
       type: DataTypes.STRING(50),
       allowNull: false,
-    },
-    paymentMethod: {
-      type: DataTypes.STRING(50),
-      allowNull: false,
-      defaultValue: 'Cash',
     },
     paymentStatus: {
       type: DataTypes.STRING(50),

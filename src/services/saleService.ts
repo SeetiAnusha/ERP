@@ -59,13 +59,13 @@ export const createSale = async (data: any) => {
       paymentStatus = 'Partial';
     }
     
-    // Special handling for credit card payments
-    // Credit card payments are treated as accounts receivable until cash is received
+    // Special handling for credit payments
+    // Credit payments are treated as accounts receivable until cash is received
     let actualPaymentStatus = paymentStatus;
     let actualPaidAmount = paidAmount;
     let actualBalanceAmount = balanceAmount;
     
-    if (data.paymentMethod === 'Credit Card' && paidAmount > 0) {
+    if (data.paymentType === 'CREDIT' && paidAmount > 0) {
       // Treat as unpaid (accounts receivable) until cash is received
       actualPaymentStatus = 'Unpaid';
       actualPaidAmount = 0;
@@ -88,11 +88,11 @@ export const createSale = async (data: any) => {
           throw new Error(`Product ${item.productId} not found`);
         }
         
-        if (Number(product.quantity) < item.quantity) {
-          throw new Error(`Insufficient stock for ${product.name}. Available: ${product.quantity}, Required: ${item.quantity}`);
+        if (Number(product.amount) < item.quantity) {
+          throw new Error(`Insufficient stock for ${product.name}. Available: ${product.amount}, Required: ${item.quantity}`);
         }
         
-        const costOfGoodsSold = Number(product.costPrice) * item.quantity;
+        const costOfGoodsSold = Number(product.unitCost) * item.quantity;
         const grossMargin = item.total - costOfGoodsSold;
         
         await SaleItem.create({
@@ -102,7 +102,7 @@ export const createSale = async (data: any) => {
           productName: product.name,
           unitOfMeasurement: product.unit,
           quantity: item.quantity,
-          salePrice: item.salePrice,
+          unitPrice: item.unitPrice,
           subtotal: item.subtotal,
           tax: item.tax,
           total: item.total,
@@ -111,7 +111,7 @@ export const createSale = async (data: any) => {
         }, { transaction });
         
         await product.update({
-          quantity: Number(product.quantity) - item.quantity
+          amount: Number(product.amount) - item.quantity
         }, { transaction });
       }
     }
@@ -161,12 +161,10 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
       paidAmount: newPaidAmount,
       balanceAmount: newBalanceAmount,
       paymentStatus,
-      paymentMethod: paymentData.paymentMethod,
     }, { transaction });
     
-    // If this is a credit card payment being collected, create cash register entry
-    if (sale.paymentMethod === 'Credit Card' && paymentData.paymentMethod === 'Cash') {
-      const CashRegister = (await import('../models/CashRegister')).default;
+    // Create cash register entry for payment collection
+    const CashRegister = (await import('../models/CashRegister')).default;
       
       // Get last cash register transaction for balance
       const lastCashTransaction = await CashRegister.findOne({
@@ -198,10 +196,9 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
         relatedDocumentType: 'Sale',
         relatedDocumentNumber: sale.registrationNumber,
         clientRnc: sale.clientRnc,
-        description: `Credit card payment received for sale ${sale.registrationNumber}`,
+        description: `Payment received for sale ${sale.registrationNumber}`,
         balance: newBalance,
       }, { transaction });
-    }
     
     await transaction.commit();
     committed = true;
@@ -237,7 +234,7 @@ export const deleteSale = async (id: number) => {
       const product = await Product.findByPk(item.productId, { transaction });
       if (product) {
         await product.update({
-          quantity: Number(product.quantity) + Number(item.quantity)
+          amount: Number(product.amount) + Number(item.quantity)
         }, { transaction });
       }
     }

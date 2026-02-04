@@ -5,7 +5,6 @@ import Supplier from './Supplier';
 interface PurchaseAttributes {
   id: number;
   registrationNumber: string;
-  documentNumber: string;
   registrationDate: Date;
   date: Date;
   supplierId: number;
@@ -13,7 +12,6 @@ interface PurchaseAttributes {
   ncf?: string;
   purchaseType: string;
   paymentType: string;
-  paymentMethod: string;
   paymentStatus: string;
   productTotal: number;
   additionalExpenses: number;
@@ -22,7 +20,6 @@ interface PurchaseAttributes {
   balanceAmount: number;
   totalWithAssociated?: number;
   status: string;
-  invoice?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -32,7 +29,6 @@ interface PurchaseCreationAttributes extends Optional<PurchaseAttributes, 'id'> 
 class Purchase extends Model<PurchaseAttributes, PurchaseCreationAttributes> implements PurchaseAttributes {
   public id!: number;
   public registrationNumber!: string;
-  public documentNumber!: string;
   public registrationDate!: Date;
   public date!: Date;
   public supplierId!: number;
@@ -40,7 +36,6 @@ class Purchase extends Model<PurchaseAttributes, PurchaseCreationAttributes> imp
   public ncf?: string;
   public purchaseType!: string;
   public paymentType!: string;
-  public paymentMethod!: string;
   public paymentStatus!: string;
   public productTotal!: number;
   public additionalExpenses!: number;
@@ -49,7 +44,6 @@ class Purchase extends Model<PurchaseAttributes, PurchaseCreationAttributes> imp
   public balanceAmount!: number;
   public totalWithAssociated?: number;
   public status!: string;
-  public invoice?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -65,10 +59,6 @@ Purchase.init(
       type: DataTypes.STRING(50),
       allowNull: false,
       unique: true,
-    },
-    documentNumber: {
-      type: DataTypes.STRING(50),
-      allowNull: false,
     },
     registrationDate: {
       type: DataTypes.DATE,
@@ -102,11 +92,6 @@ Purchase.init(
     paymentType: {
       type: DataTypes.STRING(50),
       allowNull: false,
-    },
-    paymentMethod: {
-      type: DataTypes.STRING(50),
-      allowNull: false,
-      defaultValue: 'Cash',
     },
     paymentStatus: {
       type: DataTypes.STRING(50),
@@ -143,10 +128,6 @@ Purchase.init(
     status: {
       type: DataTypes.STRING(50),
       allowNull: false,
-    },
-    invoice: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
     },
   },
   {

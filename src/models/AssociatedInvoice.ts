@@ -13,7 +13,7 @@ interface AssociatedInvoiceAttributes {
   tax: number;
   amount: number;
   purchaseType: string;
-  paymentMethod: string;
+  paymentType?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -32,7 +32,7 @@ class AssociatedInvoice extends Model<AssociatedInvoiceAttributes, AssociatedInv
   public tax!: number;
   public amount!: number;
   public purchaseType!: string;
-  public paymentMethod!: string;
+  public paymentType?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -88,9 +88,9 @@ AssociatedInvoice.init(
       type: DataTypes.STRING(100),
       allowNull: false,
     },
-    paymentMethod: {
+    paymentType: {
       type: DataTypes.STRING(50),
-      allowNull: false,
+      allowNull: true,
     },
   },
   {
