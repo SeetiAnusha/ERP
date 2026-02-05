@@ -110,8 +110,13 @@ export const createSale = async (data: any) => {
           grossMargin,
         }, { transaction });
         
+        // Decrease stock and update subtotal
+        const newAmount = Number(product.amount) - item.quantity;
+        const newSubtotal = newAmount * Number(product.unitCost);
+        
         await product.update({
-          amount: Number(product.amount) - item.quantity
+          amount: newAmount,
+          subtotal: newSubtotal
         }, { transaction });
       }
     }
@@ -233,8 +238,13 @@ export const deleteSale = async (id: number) => {
     for (const item of items) {
       const product = await Product.findByPk(item.productId, { transaction });
       if (product) {
+        // Restore stock and update subtotal
+        const newAmount = Number(product.amount) + Number(item.quantity);
+        const newSubtotal = newAmount * Number(product.unitCost);
+        
         await product.update({
-          amount: Number(product.amount) + Number(item.quantity)
+          amount: newAmount,
+          subtotal: newSubtotal
         }, { transaction });
       }
     }

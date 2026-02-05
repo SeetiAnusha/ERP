@@ -93,7 +93,7 @@ export const createPurchase = async (data: any) => {
           tax: invoice.tax,
           amount: invoice.amount,
           purchaseType: invoice.purchaseType || data.purchaseType,
-          // paymentMethod: invoice.paymentMethod,
+          paymentType: invoice.paymentType,
         }, { transaction });
       }
     }
@@ -130,10 +130,14 @@ export const createPurchase = async (data: any) => {
           adjustedTotal: adjustedTotal,
         }, { transaction });
         
-        // Increase inventory with adjusted unit cost
+        // Increase product stock and update subtotal
+        const newAmount = Number(product.amount) + item.quantity;
+        const newSubtotal = newAmount * adjustedUnitCost;
+        
         await product.update({
-          amount: Number(product.amount) + item.quantity,
-          unitCost: adjustedUnitCost // Update unit cost with adjusted cost
+          amount: newAmount,
+          unitCost: adjustedUnitCost,
+          subtotal: newSubtotal
         }, { transaction });
       }
     }
@@ -218,12 +222,16 @@ export const deletePurchase = async (id: number) => {
       transaction
     });
     
-    // Restore inventory
+    // Restore inventory - decrease stock by purchased quantity
     for (const item of items) {
       const product = await Product.findByPk(item.productId, { transaction });
       if (product) {
+        const newAmount = Number(product.amount) - Number(item.quantity);
+        const newSubtotal = newAmount * Number(product.unitCost);
+        
         await product.update({
-          amount: Number(product.amount) - Number(item.quantity)
+          amount: newAmount,
+          subtotal: newSubtotal
         }, { transaction });
       }
     }
