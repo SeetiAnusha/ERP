@@ -16,6 +16,8 @@ interface PaymentAttributes {
   clientName?: string;
   outstandingCreditInvoices?: string;
   outstandingCashInvoices?: string;
+  invoiceApplications?: string; // JSON string of invoice applications
+  excessAmount?: number; // Amount exceeding invoice totals (creates credit)
   notes?: string;
   createdAt?: Date;
   updatedAt?: Date;
@@ -38,6 +40,8 @@ class Payment extends Model<PaymentAttributes, PaymentCreationAttributes> implem
   public clientName?: string;
   public outstandingCreditInvoices?: string;
   public outstandingCashInvoices?: string;
+  public invoiceApplications?: string;
+  public excessAmount?: number;
   public notes?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -102,6 +106,15 @@ Payment.init(
     outstandingCashInvoices: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    invoiceApplications: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    excessAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+      defaultValue: 0,
     },
     notes: {
       type: DataTypes.TEXT,

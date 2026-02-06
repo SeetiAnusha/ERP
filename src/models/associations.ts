@@ -7,6 +7,10 @@ import Sale from './Sale';
 import SaleItem from './SaleItem';
 import Client from './Client';
 import AssociatedInvoice from './AssociatedInvoice';
+import Payment from './Payment';
+import PaymentInvoiceApplication from './PaymentInvoiceApplication';
+import SupplierCredit from './SupplierCredit';
+import ClientCredit from './ClientCredit';
 
 // Purchase associations
 Purchase.belongsTo(Supplier, { foreignKey: 'supplierId', as: 'supplier' });
@@ -28,6 +32,20 @@ Sale.hasMany(SaleItem, { foreignKey: 'saleId', as: 'items' });
 SaleItem.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
 SaleItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 
+// Payment associations
+Payment.hasMany(PaymentInvoiceApplication, { foreignKey: 'paymentId', as: 'applications' });
+
+// PaymentInvoiceApplication associations
+PaymentInvoiceApplication.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
+
+// SupplierCredit associations
+SupplierCredit.belongsTo(Supplier, { foreignKey: 'supplierId', as: 'supplier' });
+SupplierCredit.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
+
+// ClientCredit associations
+ClientCredit.belongsTo(Client, { foreignKey: 'clientId', as: 'client' });
+ClientCredit.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
+
 // Product associations (if any)
 // Product.hasMany(PurchaseItem, { foreignKey: 'productId', as: 'purchaseItems' });
 // Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
@@ -41,4 +59,8 @@ export default {
   SaleItem,
   Client,
   AssociatedInvoice,
+  Payment,
+  PaymentInvoiceApplication,
+  SupplierCredit,
+  ClientCredit,
 };

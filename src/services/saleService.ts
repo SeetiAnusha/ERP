@@ -47,38 +47,32 @@ export const createSale = async (data: any) => {
     
     const registrationNumber = `RV${String(nextNumber).padStart(4, '0')}`;
     
-    // Calculate payment status
+    // Calculate payment status based on payment type
     const total = data.total || 0;
-    const paidAmount = data.paidAmount || 0;
-    const balanceAmount = total - paidAmount;
-    
+    let paidAmount = 0;
+    let balanceAmount = total;
     let paymentStatus = 'Unpaid';
-    if (paidAmount >= total) {
+    
+    // Only CASH payment is marked as paid immediately
+    // All other payment types (Bank Transfer, Deposit, Credit Card, Credit) require payment recording
+    if (data.paymentType && data.paymentType.toUpperCase() === 'CASH') {
+      paidAmount = total;
+      balanceAmount = 0;
       paymentStatus = 'Paid';
-    } else if (paidAmount > 0) {
-      paymentStatus = 'Partial';
-    }
-    
-    // Special handling for credit payments
-    // Credit payments are treated as accounts receivable until cash is received
-    let actualPaymentStatus = paymentStatus;
-    let actualPaidAmount = paidAmount;
-    let actualBalanceAmount = balanceAmount;
-    
-    if (data.paymentType === 'CREDIT' && paidAmount > 0) {
-      // Treat as unpaid (accounts receivable) until cash is received
-      actualPaymentStatus = 'Unpaid';
-      actualPaidAmount = 0;
-      actualBalanceAmount = total;
+    } else {
+      // All other payment types are unpaid until payment is recorded
+      paidAmount = 0;
+      balanceAmount = total;
+      paymentStatus = 'Unpaid';
     }
     
     const sale = await Sale.create({
       ...data,
       registrationNumber,
       registrationDate: new Date(),
-      paymentStatus: actualPaymentStatus,
-      paidAmount: actualPaidAmount,
-      balanceAmount: actualBalanceAmount,
+      paymentStatus,
+      paidAmount,
+      balanceAmount,
     }, { transaction });
     
     if (data.items && data.items.length > 0) {

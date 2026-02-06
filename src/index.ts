@@ -62,20 +62,34 @@ const startServer = async () => {
     // Start the server FIRST to bind to port immediately
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
 
     // Then connect to database in background
     console.log('Attempting database connection...');
+    console.log('Database URL:', process.env.DATABASE_URL ? 'Set (hidden for security)' : 'NOT SET!');
+    
     await sequelize.authenticate();
-    console.log('Database connected successfully');
+    console.log('✓ Database connected successfully');
 
     // Sync database to create tables
     console.log('Synchronizing database...');
     await sequelize.sync({ alter: true });
-    console.log('Database synchronized');
-  } catch (error) {
-    console.error('Database connection error:', error);
-    // Don't exit - server is already running
+    console.log('✓ Database synchronized - all tables created/updated');
+  } catch (error: any) {
+    console.error('❌ Database connection error:');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    if (error.parent) {
+      console.error('Parent error:', error.parent.message);
+    }
+    console.error('Full error:', error);
+    console.log('\n⚠️  Server is running but database is not connected!');
+    console.log('Please check:');
+    console.log('1. DATABASE_URL environment variable is set correctly');
+    console.log('2. Database credentials are correct');
+    console.log('3. Database server is accessible');
+    console.log('4. SSL settings are correct for your database');
   }
 };
 

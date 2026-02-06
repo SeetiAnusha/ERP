@@ -10,5 +10,7 @@ router.put('/:id', paymentController.update);
 router.delete('/:id', paymentController.remove);
 router.get('/outstanding/purchases/:supplierId', paymentController.getOutstandingPurchases);
 router.get('/outstanding/sales/:clientId', paymentController.getOutstandingSales);
+router.get('/credits/supplier/:supplierId', paymentController.getSupplierCredits);
+router.get('/credits/client/:clientId', paymentController.getClientCredits);
 
 export default router;

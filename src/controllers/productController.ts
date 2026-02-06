@@ -6,7 +6,11 @@ export const getAll = async (req: Request, res: Response) => {
     const products = await productService.getAllProducts();
     res.json(products);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('Error in getAll products:', error);
+    res.status(500).json({ 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 

@@ -64,3 +64,21 @@ export const getOutstandingSales = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const getSupplierCredits = async (req: Request, res: Response) => {
+  try {
+    const credits = await paymentService.getSupplierCredits(parseInt(req.params.supplierId));
+    res.json(credits);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getClientCredits = async (req: Request, res: Response) => {
+  try {
+    const credits = await paymentService.getClientCredits(parseInt(req.params.clientId));
+    res.json(credits);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

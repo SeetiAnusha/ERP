@@ -32,11 +32,11 @@ export const createPurchase = async (data: any) => {
   let committed = false;
   
   try {
-    // Generate registration number (RC format)
+    // Generate registration number (CP format for purchases - Compra/Purchase)
     const lastPurchase = await Purchase.findOne({
       where: {
         registrationNumber: {
-          [Op.like]: 'RC%'
+          [Op.like]: 'CP%'
         }
       },
       order: [['id', 'DESC']],
@@ -49,23 +49,30 @@ export const createPurchase = async (data: any) => {
       nextNumber = lastNumber + 1;
     }
     
-    const registrationNumber = `RC${String(nextNumber).padStart(4, '0')}`;
+    const registrationNumber = `CP${String(nextNumber).padStart(4, '0')}`;
     
     // Calculate associated expenses total
     const associatedExpenses = data.associatedInvoices && data.associatedInvoices.length > 0
       ? data.associatedInvoices.reduce((sum: number, inv: any) => sum + Number(inv.amount), 0)
       : 0;
     
-    // Calculate payment status
+    // Calculate payment status based on payment type
     const total = data.total || 0;
-    const paidAmount = data.paidAmount || 0;
-    const balanceAmount = total - paidAmount;
-    
+    let paidAmount = 0;
+    let balanceAmount = total;
     let paymentStatus = 'Unpaid';
-    if (paidAmount >= total) {
+    
+    // Only CASH payment is marked as paid immediately
+    // All other payment types (Bank Transfer, Deposit, Credit Card, Credit) require payment recording
+    if (data.paymentType && data.paymentType.toUpperCase() === 'CASH') {
+      paidAmount = total;
+      balanceAmount = 0;
       paymentStatus = 'Paid';
-    } else if (paidAmount > 0) {
-      paymentStatus = 'Partial';
+    } else {
+      // All other payment types are unpaid until payment is recorded
+      paidAmount = 0;
+      balanceAmount = total;
+      paymentStatus = 'Unpaid';
     }
     
     const purchase = await Purchase.create({
