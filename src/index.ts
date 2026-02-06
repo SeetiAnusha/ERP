@@ -74,7 +74,9 @@ const startServer = async () => {
 
     // Sync database to create tables
     console.log('Synchronizing database...');
-    await sequelize.sync({ alter: true });
+    if (process.env.NODE_ENV !== 'production') {
+      await sequelize.sync();
+    }
     console.log('✓ Database synchronized - all tables created/updated');
   } catch (error: any) {
     console.error('❌ Database connection error:');
