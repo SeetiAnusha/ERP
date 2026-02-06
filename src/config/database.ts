@@ -19,7 +19,12 @@ const sequelize = new Sequelize(
       acquire: 60000,
       idle: 10000
     },
-    logging: console.log
+    logging: console.log,
+    // Force snake_case for all column names to match Render database
+    define: {
+      underscored: true,
+      freezeTableName: true
+    }
   }
 );
 

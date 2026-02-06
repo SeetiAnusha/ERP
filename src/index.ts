@@ -74,9 +74,8 @@ const startServer = async () => {
 
     // Sync database to create tables
     console.log('Synchronizing database...');
-    if (process.env.NODE_ENV !== 'production') {
-      await sequelize.sync();
-    }
+    // Use alter: true to update existing tables without dropping data
+    await sequelize.sync({ alter: true });
     console.log('✓ Database synchronized - all tables created/updated');
   } catch (error: any) {
     console.error('❌ Database connection error:');
