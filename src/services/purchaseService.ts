@@ -52,8 +52,9 @@ export const createPurchase = async (data: any) => {
     const registrationNumber = `CP${String(nextNumber).padStart(4, '0')}`;
     
     // Calculate associated expenses total
+    // Calculate associated expenses total (use tax field which contains base amount without tax)
     const associatedExpenses = data.associatedInvoices && data.associatedInvoices.length > 0
-      ? data.associatedInvoices.reduce((sum: number, inv: any) => sum + Number(inv.amount), 0)
+      ? data.associatedInvoices.reduce((sum: number, inv: any) => sum + Number(inv.tax), 0)
       : 0;
     
     // Calculate payment status based on payment type
@@ -127,7 +128,7 @@ export const createPurchase = async (data: any) => {
           productId: item.productId,
           productCode: product.code,
           productName: product.name,
-          unitOfMeasurement: product.unit,
+          unitOfMeasurement: item.unitOfMeasurement || product.unit,
           quantity: item.quantity,
           unitCost: item.unitCost,
           subtotal: item.subtotal,
@@ -141,11 +142,24 @@ export const createPurchase = async (data: any) => {
         const newAmount = Number(product.amount) + item.quantity;
         const newSubtotal = newAmount * adjustedUnitCost;
         
-        await product.update({
+        // Update product unit and tax if provided in purchase item
+        const updateData: any = {
           amount: newAmount,
           unitCost: adjustedUnitCost,
           subtotal: newSubtotal
-        }, { transaction });
+        };
+        
+        // If unit of measurement is provided in purchase, update the product's unit
+        if (item.unitOfMeasurement && item.unitOfMeasurement !== product.unit) {
+          updateData.unit = item.unitOfMeasurement;
+        }
+        
+        // If tax is provided in purchase, update the product's tax (absolute amount)
+        if (item.tax > 0) {
+          updateData.taxRate = item.tax;  // Store absolute tax amount
+        }
+        
+        await product.update(updateData, { transaction });
       }
     }
     

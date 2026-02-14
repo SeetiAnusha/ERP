@@ -25,6 +25,8 @@ export const create = async (req: Request, res: Response) => {
     const purchase = await purchaseService.createPurchase(req.body);
     res.status(201).json(purchase);
   } catch (error: any) {
+    console.error('Purchase creation error:', error);
+    console.error('Error details:', error.original || error);
     res.status(400).json({ error: error.message });
   }
 };

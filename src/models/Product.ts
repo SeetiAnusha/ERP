@@ -72,11 +72,11 @@ Product.init(
       defaultValue: 0,
     },
     unitCost: {
-      type: DataTypes.DECIMAL(10, 2),
+      type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
     },
     subtotal: {
-      type: DataTypes.DECIMAL(10, 2),
+      type: DataTypes.DECIMAL(18, 2),
       allowNull: false,
     },
     supplierId: {
@@ -93,7 +93,7 @@ Product.init(
       defaultValue: 10,
     },
     taxRate: {
-      type: DataTypes.DECIMAL(5, 2),
+      type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
       defaultValue: 18.00,
     },
