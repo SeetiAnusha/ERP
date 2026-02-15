@@ -8,6 +8,7 @@ import supplierRoutes from './routes/supplierRoutes';
 import saleRoutes from './routes/saleRoutes';
 import purchaseRoutes from './routes/purchaseRoutes';
 import productRoutes from './routes/productRoutes';
+import productPriceRoutes from './routes/productPriceRoutes';
 import fixedAssetRoutes from './routes/fixedAssetRoutes';
 import investmentRoutes from './routes/investmentRoutes';
 import prepaidExpenseRoutes from './routes/prepaidExpenseRoutes';
@@ -15,6 +16,7 @@ import paymentRoutes from './routes/paymentRoutes';
 import cashRegisterRoutes from './routes/cashRegisterRoutes';
 import adjustmentRoutes from './routes/adjustmentRoutes';
 import reportRoutes from './routes/reportRoutes';
+import * as productPriceService from './services/productPriceService';
 
 dotenv.config();
 
@@ -29,6 +31,7 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/product-prices', productPriceRoutes);
 app.use('/api/fixed-assets', fixedAssetRoutes);
 app.use('/api/investments', investmentRoutes);
 app.use('/api/prepaid-expenses', prepaidExpenseRoutes);
@@ -77,6 +80,11 @@ const startServer = async () => {
     // Use alter: true to update existing tables without dropping data
     await sequelize.sync({ alter: true });
     console.log('✓ Database synchronized - all tables created/updated');
+    
+    // Update price active status based on current date
+    console.log('Updating product price active status...');
+    await productPriceService.updatePriceActiveStatus();
+    console.log('✓ Product prices synchronized with current date');
   } catch (error: any) {
     console.error('❌ Database connection error:');
     console.error('Error name:', error.name);

@@ -2,6 +2,7 @@
 import Purchase from './Purchase';
 import PurchaseItem from './PurchaseItem';
 import Product from './Product';
+import ProductPrice from './ProductPrice';
 import Supplier from './Supplier';
 import Sale from './Sale';
 import SaleItem from './SaleItem';
@@ -46,6 +47,12 @@ SupplierCredit.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
 ClientCredit.belongsTo(Client, { foreignKey: 'clientId', as: 'client' });
 ClientCredit.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
 
+// Product associations
+Product.hasMany(ProductPrice, { foreignKey: 'product_id', as: 'priceHistory' });
+
+// ProductPrice associations
+ProductPrice.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
 // Product associations (if any)
 // Product.hasMany(PurchaseItem, { foreignKey: 'productId', as: 'purchaseItems' });
 // Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
@@ -54,6 +61,7 @@ export default {
   Purchase,
   PurchaseItem,
   Product,
+  ProductPrice,
   Supplier,
   Sale,
   SaleItem,

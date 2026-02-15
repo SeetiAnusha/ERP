@@ -9,6 +9,7 @@ interface ProductAttributes {
   unit: string;
   amount: number;
   unitCost: number;
+  salesPrice: number;
   subtotal: number;
   supplierId?: number;
   minimumStock: number;
@@ -30,6 +31,7 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public unit!: string;
   public amount!: number;
   public unitCost!: number;
+  public salesPrice!: number;
   public subtotal!: number;
   public supplierId?: number;
   public minimumStock!: number;
@@ -74,6 +76,11 @@ Product.init(
     unitCost: {
       type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
+    },
+    salesPrice: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: false,
+      defaultValue: 0,
     },
     subtotal: {
       type: DataTypes.DECIMAL(18, 2),
