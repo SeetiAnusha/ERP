@@ -10,24 +10,22 @@ export const getPriceHistory = async (productId: number) => {
   });
 };
 
-// Get current active price for a product (ONLY if date is exactly today)
+// Get current active price for a product (most recent price where effectiveDate <= today)
 export const getCurrentPrice = async (productId: number) => {
   const today = new Date();
-  const todayString = today.toISOString().split('T')[0];
+  today.setHours(0, 0, 0, 0);
   
-  // Get all prices and find the one that matches today exactly
+  // Get all prices where effective date is today or in the past
   const allPrices = await ProductPrice.findAll({
-    where: { productId },
+    where: { 
+      productId,
+      effectiveDate: { [Op.lte]: today }
+    },
+    order: [['effectiveDate', 'DESC']],
   });
   
-  for (const price of allPrices) {
-    const priceDateString = new Date(price.effectiveDate).toISOString().split('T')[0];
-    if (priceDateString === todayString) {
-      return price;
-    }
-  }
-  
-  return null;
+  // Return the most recent one (first in DESC order)
+  return allPrices.length > 0 ? allPrices[0] : null;
 };
 
 // Get price valid for a specific date
@@ -99,24 +97,24 @@ export const createPrice = async (data: any) => {
     isActive: false,
   });
 
-  // Now determine which price should be active (ONLY if date is exactly today)
-  const todayString = today.toISOString().split('T')[0];
+  // Now determine which price should be active (most recent where effectiveDate <= today)
   const allPricesAfterCreate = await ProductPrice.findAll({
     where: { productId },
     order: [['effectiveDate', 'DESC']],
   });
   
-  // Find the price that matches today's date exactly
+  // Find the most recent price where effectiveDate <= today
   let currentActivePrice: ProductPrice | null = null;
   for (const price of allPricesAfterCreate) {
-    const priceDateString = new Date(price.effectiveDate).toISOString().split('T')[0];
-    if (priceDateString === todayString) {
+    const priceDate = new Date(price.effectiveDate);
+    priceDate.setHours(0, 0, 0, 0);
+    if (priceDate <= today) {
       currentActivePrice = price;
-      break;
+      break; // Found the most recent one
     }
   }
   
-  // Set only today's price as active (if it exists)
+  // Set only the current active price as active
   for (const price of allPricesAfterCreate) {
     const shouldBeActive = currentActivePrice && price.id === currentActivePrice.id;
     if (price.isActive !== shouldBeActive) {
@@ -184,24 +182,24 @@ export const updatePrice = async (id: number, data: any) => {
   // Recalculate active status for all prices of this product
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const todayString = today.toISOString().split('T')[0];
   
   const allPricesForProduct = await ProductPrice.findAll({
     where: { productId },
     order: [['effectiveDate', 'DESC']],
   });
   
-  // Find the price that matches today's date exactly
+  // Find the most recent price where effectiveDate <= today
   let currentActivePrice: ProductPrice | null = null;
   for (const p of allPricesForProduct) {
-    const pDateString = new Date(p.effectiveDate).toISOString().split('T')[0];
-    if (pDateString === todayString) {
+    const pDate = new Date(p.effectiveDate);
+    pDate.setHours(0, 0, 0, 0);
+    if (pDate <= today) {
       currentActivePrice = p;
-      break;
+      break; // Found the most recent one
     }
   }
   
-  // Set only today's price as active (if it exists)
+  // Set only the current active price as active
   for (const p of allPricesForProduct) {
     const shouldBeActive = currentActivePrice && p.id === currentActivePrice.id;
     if (p.isActive !== shouldBeActive) {
@@ -258,10 +256,10 @@ export const deletePrice = async (id: number) => {
   return { message: 'Price deleted successfully' };
 };
 
-// Sync product salesPrice with current active price (ONLY if date is exactly today)
+// Sync product salesPrice with current active price (most recent where effectiveDate <= today)
 export const syncProductPrice = async (productId: number) => {
   const today = new Date();
-  const todayString = today.toISOString().split('T')[0];
+  today.setHours(0, 0, 0, 0);
   
   // Get all prices for this product
   const allPrices = await ProductPrice.findAll({
@@ -269,17 +267,18 @@ export const syncProductPrice = async (productId: number) => {
     order: [['effectiveDate', 'DESC']],
   });
   
-  // Find the price that matches today's date exactly
+  // Find the most recent price where effectiveDate <= today
   let currentActivePrice: ProductPrice | null = null;
   for (const price of allPrices) {
-    const priceDateString = new Date(price.effectiveDate).toISOString().split('T')[0];
-    if (priceDateString === todayString) {
+    const priceDate = new Date(price.effectiveDate);
+    priceDate.setHours(0, 0, 0, 0);
+    if (priceDate <= today) {
       currentActivePrice = price;
-      break;
+      break; // Found the most recent one
     }
   }
   
-  // Set only today's price as active (if it exists)
+  // Set only the current active price as active
   for (const price of allPrices) {
     const shouldBeActive = currentActivePrice && price.id === currentActivePrice.id;
     if (price.isActive !== shouldBeActive) {
@@ -295,7 +294,7 @@ export const syncProductPrice = async (productId: number) => {
     );
     return currentActivePrice.salesPrice;
   } else {
-    // No price for today, use the most recent price
+    // No price has taken effect yet, use the most recent future price
     if (allPrices.length > 0) {
       await Product.update(
         { salesPrice: allPrices[0].salesPrice },
@@ -307,10 +306,10 @@ export const syncProductPrice = async (productId: number) => {
   return null;
 };
 
-// Update all prices to set correct active status based on current date (ONLY today's date)
+// Update all prices to set correct active status based on current date (most recent where effectiveDate <= today)
 export const updatePriceActiveStatus = async () => {
   const today = new Date();
-  const todayString = today.toISOString().split('T')[0];
+  today.setHours(0, 0, 0, 0);
   
   // Get all products
   const products = await Product.findAll();
@@ -322,17 +321,18 @@ export const updatePriceActiveStatus = async () => {
       order: [['effectiveDate', 'DESC']],
     });
     
-    // Find the price that matches today's date exactly
+    // Find the most recent price where effectiveDate <= today
     let currentActivePrice: ProductPrice | null = null;
     for (const price of allPricesForProduct) {
-      const priceDateString = new Date(price.effectiveDate).toISOString().split('T')[0];
-      if (priceDateString === todayString) {
+      const priceDate = new Date(price.effectiveDate);
+      priceDate.setHours(0, 0, 0, 0);
+      if (priceDate <= today) {
         currentActivePrice = price;
-        break;
+        break; // Found the most recent one
       }
     }
     
-    // Update all prices: only today's price should be active
+    // Update all prices: only the current active price should be active
     for (const price of allPricesForProduct) {
       const shouldBeActive = currentActivePrice && price.id === currentActivePrice.id;
       
@@ -341,7 +341,7 @@ export const updatePriceActiveStatus = async () => {
       }
     }
     
-    // Update product's salesPrice with today's active price
+    // Update product's salesPrice with the current active price
     if (currentActivePrice) {
       await Product.update(
         { salesPrice: currentActivePrice.salesPrice },
