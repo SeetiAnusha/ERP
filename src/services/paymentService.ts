@@ -118,34 +118,34 @@ export const createPayment = async (data: any) => {
               const currentBalance = parseFloat(sale.balanceAmount.toString());
               const amountToApply = Math.min(application.appliedAmount, currentBalance);
               
-              const newPaidAmount = parseFloat(sale.paidAmount.toString()) + amountToApply;
+              const newCollectedAmount = parseFloat(sale.collectedAmount.toString()) + amountToApply;
               const totalAmount = parseFloat(sale.total.toString());
-              const newBalanceAmount = totalAmount - newPaidAmount;
+              const newBalanceAmount = totalAmount - newCollectedAmount;
               
-              // Determine payment status with proper precision
-              let paymentStatus = 'Unpaid';
+              // Determine collection status with proper precision
+              let collectionStatus = 'Not Collected';
               if (Math.abs(newBalanceAmount) < 0.01) {
                 // Balance is essentially zero (accounting for floating point)
-                paymentStatus = 'Paid';
-              } else if (newPaidAmount > 0 && newBalanceAmount > 0) {
-                // Some paid, some remaining
-                paymentStatus = 'Partial';
+                collectionStatus = 'Collected';
+              } else if (newCollectedAmount > 0 && newBalanceAmount > 0) {
+                // Some collected, some remaining
+                collectionStatus = 'Partial';
               }
               
               console.log('Payment application:', {
                 saleId: sale.id,
                 total: totalAmount,
-                previousPaid: sale.paidAmount,
+                previousCollected: sale.collectedAmount,
                 amountApplied: amountToApply,
-                newPaidAmount,
+                newCollectedAmount,
                 newBalanceAmount,
-                paymentStatus
+                collectionStatus
               });
               
               await sale.update({
-                paidAmount: newPaidAmount,
+                collectedAmount: newCollectedAmount,
                 balanceAmount: Math.max(0, newBalanceAmount),
-                paymentStatus
+                collectionStatus
               }, { transaction });
               
               totalApplied += amountToApply;
@@ -268,14 +268,14 @@ export const deletePayment = async (id: number) => {
       } else if (app.invoiceType === 'Sale') {
         const sale = await Sale.findByPk(app.invoiceId, { transaction });
         if (sale) {
-          const newPaidAmount = parseFloat(sale.paidAmount.toString()) - parseFloat(app.appliedAmount.toString());
-          const newBalanceAmount = parseFloat(sale.total.toString()) - newPaidAmount;
+          const newCollectedAmount = parseFloat(sale.collectedAmount.toString()) - parseFloat(app.appliedAmount.toString());
+          const newBalanceAmount = parseFloat(sale.total.toString()) - newCollectedAmount;
           
           await sale.update({
-            paidAmount: Math.max(0, newPaidAmount),
+            collectedAmount: Math.max(0, newCollectedAmount),
             balanceAmount: newBalanceAmount,
-            paymentStatus: newBalanceAmount <= 0.01 ? 'Paid' : 
-                          newBalanceAmount < parseFloat(sale.total.toString()) ? 'Partial' : 'Unpaid'
+            collectionStatus: newBalanceAmount <= 0.01 ? 'Collected' : 
+                          newBalanceAmount < parseFloat(sale.total.toString()) ? 'Partial' : 'Not Collected'
           }, { transaction });
         }
       }
