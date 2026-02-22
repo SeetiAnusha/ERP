@@ -63,14 +63,35 @@ export const createPurchase = async (data: any) => {
     let balanceAmount = total;
     let paymentStatus = 'Unpaid';
     
-    // Only CASH payment is marked as paid immediately
-    // All other payment types (Bank Transfer, Deposit, Credit Card, Credit) require payment recording
-    if (data.paymentType && data.paymentType.toUpperCase() === 'CASH') {
+    const paymentType = data.paymentType ? data.paymentType.toUpperCase() : '';
+    
+    if (paymentType === 'CASH') {
+      // CASH: Paid immediately, cash balance decreases (CashRegister entry created below)
       paidAmount = total;
       balanceAmount = 0;
       paymentStatus = 'Paid';
-    } else {
-      // All other payment types are unpaid until payment is recorded
+    } 
+    else if (paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+      // BANK TRANSFER or DEPOSIT: Paid immediately, bank balance reduces
+      paidAmount = total;
+      balanceAmount = 0;
+      paymentStatus = 'Paid';
+      // Will create CashRegister entry (OUTFLOW) below after purchase is created
+    }
+    else if (paymentType === 'CREDIT_CARD') {
+      // CREDIT CARD: Marked as paid (supplier got money), but you owe card company
+      paidAmount = total;
+      balanceAmount = 0;
+      paymentStatus = 'Paid';
+    }
+    else if (paymentType === 'CREDIT') {
+      // CREDIT: Not paid yet, will pay later
+      paidAmount = 0;
+      balanceAmount = total;
+      paymentStatus = 'Unpaid';
+    }
+    else {
+      // Default: treat as unpaid
       paidAmount = 0;
       balanceAmount = total;
       paymentStatus = 'Unpaid';
@@ -86,6 +107,81 @@ export const createPurchase = async (data: any) => {
       additionalExpenses: associatedExpenses,
       totalWithAssociated: data.productTotal + associatedExpenses,
     }, { transaction });
+    
+    // Create CashRegister entry for immediate payments: CASH, Bank Transfer, or Deposit (OUTFLOW)
+    if (paymentType === 'CASH' || paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+      const CashRegister = (await import('../models/CashRegister')).default;
+      
+      // Get last cash register transaction for balance
+      const lastCashTransaction = await CashRegister.findOne({
+        where: { registrationNumber: { [Op.like]: 'CJ%' } },
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      let nextCashNumber = 1;
+      if (lastCashTransaction) {
+        const lastNumber = parseInt(lastCashTransaction.registrationNumber.substring(2));
+        nextCashNumber = lastNumber + 1;
+      }
+      
+      const cashRegistrationNumber = `CJ${String(nextCashNumber).padStart(4, '0')}`;
+      const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
+      const newBalance = lastBalance - total; // OUTFLOW reduces balance
+      
+      const supplier = await Supplier.findByPk(data.supplierId, { transaction });
+      
+      await CashRegister.create({
+        registrationNumber: cashRegistrationNumber,
+        registrationDate: new Date(),
+        transactionType: 'OUTFLOW',
+        amount: total,
+        paymentMethod: paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit'),
+        relatedDocumentType: 'Purchase',
+        relatedDocumentNumber: registrationNumber,
+        clientRnc: data.supplierRnc || '',
+        clientName: supplier?.name || '',
+        description: `Payment for purchase ${registrationNumber} via ${paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit')}`,
+        balance: newBalance,
+      }, { transaction });
+    }
+    
+    // Create Accounts Payable for credit card and credit purchases
+    if (paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
+      const AccountsPayable = (await import('../models/AccountsPayable')).default;
+      
+      // Generate AP registration number
+      const lastAP = await AccountsPayable.findOne({
+        where: { registrationNumber: { [Op.like]: 'AP%' } },
+        order: [['id', 'DESC']],
+        transaction
+      });
+      const nextAPNumber = lastAP ? parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
+      const apRegistrationNumber = `AP${String(nextAPNumber).padStart(4, '0')}`;
+      
+      // Get supplier info for credit purchases
+      const supplier = await Supplier.findByPk(data.supplierId, { transaction });
+      
+      await AccountsPayable.create({
+        registrationNumber: apRegistrationNumber,
+        registrationDate: new Date(),
+        type: paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+        relatedDocumentType: 'Purchase',
+        relatedDocumentId: purchase.id,
+        relatedDocumentNumber: registrationNumber,
+        supplierId: paymentType === 'CREDIT' ? data.supplierId : undefined,
+        supplierName: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : (supplier?.name || ''),
+        cardIssuer: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : undefined,
+        amount: total,
+        paidAmount: 0,
+        balanceAmount: total,
+        status: 'Pending',
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        notes: paymentType === 'CREDIT_CARD' 
+          ? `Credit card payment for purchase ${registrationNumber}`
+          : `Credit purchase from ${supplier?.name || 'supplier'} - ${registrationNumber}`,
+      }, { transaction });
+    }
     
     // Create associated invoices first
     if (data.associatedInvoices && data.associatedInvoices.length > 0) {
@@ -138,14 +234,19 @@ export const createPurchase = async (data: any) => {
           adjustedTotal: adjustedTotal,
         }, { transaction });
         
-        // Increase product stock and update subtotal
+        // Calculate WEIGHTED AVERAGE cost (not just overwrite)
+        // Formula: (old inventory value + new purchase value) / total quantity
+        const oldInventoryValue = Number(product.amount) * Number(product.unitCost);
+        const newPurchaseValue = adjustedTotal;
+        const totalInventoryValue = oldInventoryValue + newPurchaseValue;
         const newAmount = Number(product.amount) + item.quantity;
-        const newSubtotal = newAmount * adjustedUnitCost;
+        const weightedAverageCost = newAmount > 0 ? totalInventoryValue / newAmount : adjustedUnitCost;
+        const newSubtotal = newAmount * weightedAverageCost;
         
         // Update product unit and tax if provided in purchase item
         const updateData: any = {
           amount: newAmount,
-          unitCost: adjustedUnitCost,
+          unitCost: weightedAverageCost,  // Use weighted average, not just new cost
           subtotal: newSubtotal
         };
         

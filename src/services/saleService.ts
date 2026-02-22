@@ -47,33 +47,129 @@ export const createSale = async (data: any) => {
     
     const registrationNumber = `RV${String(nextNumber).padStart(4, '0')}`;
     
-    // Calculate payment status based on payment type
+    // Calculate collection status based on payment type
     const total = data.total || 0;
-    let paidAmount = 0;
+    let collectedAmount = 0;
     let balanceAmount = total;
-    let paymentStatus = 'Unpaid';
+    let collectionStatus = 'Not Collected';
     
-    // Only CASH payment is marked as paid immediately
-    // All other payment types (Bank Transfer, Deposit, Credit Card, Credit) require payment recording
-    if (data.paymentType && data.paymentType.toUpperCase() === 'CASH') {
-      paidAmount = total;
+    const paymentType = data.paymentType ? data.paymentType.toUpperCase() : '';
+    
+    if (paymentType === 'CASH') {
+      // CASH: Collected immediately, cash balance increases (CashRegister entry created below)
+      collectedAmount = total;
       balanceAmount = 0;
-      paymentStatus = 'Paid';
-    } else {
-      // All other payment types are unpaid until payment is recorded
-      paidAmount = 0;
+      collectionStatus = 'Collected';
+    }
+    else if (paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+      // BANK TRANSFER or DEPOSIT: Collected immediately, bank balance increases
+      collectedAmount = total;
+      balanceAmount = 0;
+      collectionStatus = 'Collected';
+      // Will create CashRegister entry (INFLOW) below after sale is created
+    }
+    else if (paymentType === 'CREDIT_CARD') {
+      // CREDIT CARD: Marked as collected (you made the sale), but card company owes you
+      collectedAmount = total;
+      balanceAmount = 0;
+      collectionStatus = 'Collected';
+    }
+    else if (paymentType === 'CREDIT') {
+      // CREDIT: Not collected yet, client will pay later
+      collectedAmount = 0;
       balanceAmount = total;
-      paymentStatus = 'Unpaid';
+      collectionStatus = 'Not Collected';
+    }
+    else {
+      // Default: treat as not collected
+      collectedAmount = 0;
+      balanceAmount = total;
+      collectionStatus = 'Not Collected';
     }
     
     const sale = await Sale.create({
       ...data,
       registrationNumber,
       registrationDate: new Date(),
-      paymentStatus,
-      paidAmount,
+      collectionStatus,  // Changed from paymentStatus
+      collectedAmount,   // Changed from paidAmount
       balanceAmount,
     }, { transaction });
+    
+    // Create CashRegister entry for immediate collections: CASH, Bank Transfer, or Deposit (INFLOW)
+    if (paymentType === 'CASH' || paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+      const CashRegister = (await import('../models/CashRegister')).default;
+      
+      // Get last cash register transaction for balance
+      const lastCashTransaction = await CashRegister.findOne({
+        where: { registrationNumber: { [Op.like]: 'CJ%' } },
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      let nextCashNumber = 1;
+      if (lastCashTransaction) {
+        const lastNumber = parseInt(lastCashTransaction.registrationNumber.substring(2));
+        nextCashNumber = lastNumber + 1;
+      }
+      
+      const cashRegistrationNumber = `CJ${String(nextCashNumber).padStart(4, '0')}`;
+      const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
+      const newBalance = lastBalance + total; // INFLOW increases balance
+      
+      const client = await Client.findByPk(data.clientId, { transaction });
+      
+      await CashRegister.create({
+        registrationNumber: cashRegistrationNumber,
+        registrationDate: new Date(),
+        transactionType: 'INFLOW',
+        amount: total,
+        paymentMethod: paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit'),
+        relatedDocumentType: 'Sale',
+        relatedDocumentNumber: registrationNumber,
+        clientRnc: data.clientRnc || '',
+        clientName: client?.name || '',
+        description: `Payment received for sale ${registrationNumber} via ${paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit')}`,
+        balance: newBalance,
+      }, { transaction });
+    }
+    
+    // Create Accounts Receivable for credit card and credit sales
+    if (paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
+      const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
+      
+      // Generate AR registration number
+      const lastAR = await AccountsReceivable.findOne({
+        where: { registrationNumber: { [Op.like]: 'AR%' } },
+        order: [['id', 'DESC']],
+        transaction
+      });
+      const nextARNumber = lastAR ? parseInt(lastAR.registrationNumber.substring(2)) + 1 : 1;
+      const arRegistrationNumber = `AR${String(nextARNumber).padStart(4, '0')}`;
+      
+      // Get client info for credit sales
+      const client = await Client.findByPk(data.clientId, { transaction });
+      
+      await AccountsReceivable.create({
+        registrationNumber: arRegistrationNumber,
+        registrationDate: new Date(),
+        type: paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_SALE' : 'CLIENT_CREDIT',
+        relatedDocumentType: 'Sale',
+        relatedDocumentId: sale.id,
+        relatedDocumentNumber: registrationNumber,
+        clientId: paymentType === 'CREDIT' ? data.clientId : undefined,
+        clientName: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : (client?.name || ''),
+        cardNetwork: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : undefined,
+        amount: total,
+        receivedAmount: 0,
+        balanceAmount: total,
+        status: 'Pending',
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        notes: paymentType === 'CREDIT_CARD'
+          ? `Credit card payment for sale ${registrationNumber}`
+          : `Credit sale to ${client?.name || 'client'} - ${registrationNumber}`,
+      }, { transaction });
+    }
     
     if (data.items && data.items.length > 0) {
       for (const item of data.items) {
@@ -86,6 +182,8 @@ export const createSale = async (data: any) => {
           throw new Error(`Insufficient stock for ${product.name}. Available: ${product.amount}, Required: ${item.quantity}`);
         }
         
+        // Calculate Cost of Goods Sold using CURRENT unit cost (before sale)
+        // This is the weighted average cost that existed before this sale
         const costOfGoodsSold = Number(product.unitCost) * item.quantity;
         const grossMargin = item.total - costOfGoodsSold;
         
@@ -105,6 +203,7 @@ export const createSale = async (data: any) => {
         }, { transaction });
         
         // Decrease stock and update subtotal
+        // Note: unitCost stays the same (weighted average doesn't change on sale)
         const newAmount = Number(product.amount) - item.quantity;
         const newSubtotal = newAmount * Number(product.unitCost);
         
@@ -146,20 +245,20 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
     const sale = await Sale.findByPk(id, { transaction });
     if (!sale) throw new Error('Sale not found');
     
-    const newPaidAmount = Number(sale.paidAmount) + paymentData.amount;
-    const newBalanceAmount = Number(sale.total) - newPaidAmount;
+    const newCollectedAmount = Number(sale.collectedAmount) + paymentData.amount;  // Changed from paidAmount
+    const newBalanceAmount = Number(sale.total) - newCollectedAmount;
     
-    let paymentStatus = 'Unpaid';
-    if (newPaidAmount >= Number(sale.total)) {
-      paymentStatus = 'Paid';
-    } else if (newPaidAmount > 0) {
-      paymentStatus = 'Partial';
+    let collectionStatus = 'Not Collected';  // Changed from paymentStatus = 'Unpaid'
+    if (newCollectedAmount >= Number(sale.total)) {
+      collectionStatus = 'Collected';  // Changed from 'Paid'
+    } else if (newCollectedAmount > 0) {
+      collectionStatus = 'Partial';
     }
     
     await sale.update({
-      paidAmount: newPaidAmount,
+      collectedAmount: newCollectedAmount,  // Changed from paidAmount
       balanceAmount: newBalanceAmount,
-      paymentStatus,
+      collectionStatus,  // Changed from paymentStatus
     }, { transaction });
     
     // Create cash register entry for payment collection

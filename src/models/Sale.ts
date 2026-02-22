@@ -13,12 +13,12 @@ interface SaleAttributes {
   ncf?: string;
   saleType: string;
   paymentType: string;
-  paymentStatus: string;
+  collectionStatus: string;  // Changed from paymentStatus
   subtotal: number;
   tax: number;
   discount: number;
   total: number;
-  paidAmount: number;
+  collectedAmount: number;  // Changed from paidAmount
   balanceAmount: number;
   status: string;
   createdAt?: Date;
@@ -38,12 +38,12 @@ class Sale extends Model<SaleAttributes, SaleCreationAttributes> implements Sale
   public ncf?: string;
   public saleType!: string;
   public paymentType!: string;
-  public paymentStatus!: string;
+  public collectionStatus!: string;  // Changed from paymentStatus
   public subtotal!: number;
   public tax!: number;
   public discount!: number;
   public total!: number;
-  public paidAmount!: number;
+  public collectedAmount!: number;  // Changed from paidAmount
   public balanceAmount!: number;
   public status!: string;
   public readonly createdAt!: Date;
@@ -99,10 +99,10 @@ Sale.init(
       type: DataTypes.STRING(50),
       allowNull: false,
     },
-    paymentStatus: {
+    collectionStatus: {  // Changed from paymentStatus
       type: DataTypes.STRING(50),
       allowNull: false,
-      defaultValue: 'Unpaid',
+      defaultValue: 'Not Collected',  // Changed from 'Unpaid'
     },
     subtotal: {
       type: DataTypes.DECIMAL(15, 2),
@@ -121,7 +121,7 @@ Sale.init(
       type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
     },
-    paidAmount: {
+    collectedAmount: {  // Changed from paidAmount
       type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
       defaultValue: 0,
