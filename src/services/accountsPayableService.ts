@@ -1,11 +1,42 @@
 import AccountsPayable from '../models/AccountsPayable';
+import Purchase from '../models/Purchase';
+import Supplier from '../models/Supplier';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 
 export const getAllAccountsPayable = async () => {
-  return await AccountsPayable.findAll({
+  const aps = await AccountsPayable.findAll({
     order: [['registrationDate', 'DESC']],
   });
+  
+  // Fetch related purchase data for each AP
+  const apsWithPurchaseData = await Promise.all(
+    aps.map(async (ap) => {
+      const apData = ap.toJSON();
+      
+      // If related to a purchase, fetch purchase details
+      if (apData.relatedDocumentType === 'Purchase' && apData.relatedDocumentId) {
+        const purchase = await Purchase.findByPk(apData.relatedDocumentId, {
+          include: [{ model: Supplier, as: 'supplier' }]
+        });
+        
+        if (purchase) {
+          return {
+            ...apData,
+            supplierRnc: purchase.supplierRnc,
+            ncf: purchase.ncf,
+            purchaseDate: purchase.date,
+            purchaseType: purchase.purchaseType,
+            paymentType: purchase.paymentType,
+          };
+        }
+      }
+      
+      return apData;
+    })
+  );
+  
+  return apsWithPurchaseData;
 };
 
 export const getAccountsPayableById = async (id: number) => {
@@ -112,4 +143,11 @@ export const deleteAccountsPayable = async (id: number) => {
   
   await ap.destroy();
   return { message: 'Accounts Payable deleted successfully' };
+};
+
+export const updateAccountsPayable = async (id: number, data: any) => {
+  const ap = await AccountsPayable.findByPk(id);
+  if (!ap) throw new Error('Accounts Payable not found');
+  
+  return await ap.update(data);
 };

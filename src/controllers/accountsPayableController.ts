@@ -60,3 +60,15 @@ export const deleteAccountsPayable = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const updateAccountsPayable = async (req: Request, res: Response) => {
+  try {
+    const accountsPayable = await accountsPayableService.updateAccountsPayable(
+      parseInt(req.params.id),
+      req.body
+    );
+    res.json(accountsPayable);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

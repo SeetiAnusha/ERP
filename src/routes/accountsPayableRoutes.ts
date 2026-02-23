@@ -7,6 +7,7 @@ router.get('/', accountsPayableController.getAllAccountsPayable);
 router.get('/pending', accountsPayableController.getPendingAccountsPayable);
 router.get('/:id', accountsPayableController.getAccountsPayableById);
 router.post('/', accountsPayableController.createAccountsPayable);
+router.put('/:id', accountsPayableController.updateAccountsPayable);
 router.post('/:id/record-payment', accountsPayableController.recordPayment);
 router.delete('/:id', accountsPayableController.deleteAccountsPayable);
 
