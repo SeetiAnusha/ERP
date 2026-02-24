@@ -172,6 +172,11 @@ export const createPurchase = async (data: any) => {
         relatedDocumentNumber: registrationNumber,
         supplierId: paymentType === 'CREDIT' ? data.supplierId : undefined,
         supplierName: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : (supplier?.name || ''),
+        supplierRnc: data.supplierRnc || '',
+        ncf: data.ncf || '',
+        purchaseDate: data.date ? new Date(data.date) : new Date(),
+        purchaseType: data.purchaseType,
+        paymentType: paymentType,
         cardIssuer: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : undefined,
         amount: data.productTotal, // Only product total, not including associated invoices
         paidAmount: 0,
@@ -185,24 +190,89 @@ export const createPurchase = async (data: any) => {
       
       // Create separate AP entries for each associated invoice (if CREDIT payment type)
       if (paymentType === 'CREDIT' && data.associatedInvoices && data.associatedInvoices.length > 0) {
+        console.log('🔍 Creating AP for invoices. Main purchase payment type:', paymentType);
+        console.log('🔍 Number of invoices:', data.associatedInvoices.length);
+        
         for (const invoice of data.associatedInvoices) {
+          console.log('🔍 Processing invoice:', {
+            supplierName: invoice.supplierName,
+            supplierRnc: invoice.supplierRnc,
+            ncf: invoice.ncf,
+            paymentType: invoice.paymentType,
+            purchaseType: invoice.purchaseType,
+            amount: invoice.amount
+          });
+          
           nextAPNumber++;
           const invoiceAPNumber = `AP${String(nextAPNumber).padStart(4, '0')}`;
           
-          await AccountsPayable.create({
+          // Determine if this invoice should create AP based on its payment type
+          const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : 'CREDIT';
+          
+          const apData = {
             registrationNumber: invoiceAPNumber,
             registrationDate: new Date(),
-            type: 'SUPPLIER_CREDIT',
+            type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
             relatedDocumentType: 'Purchase',
             relatedDocumentId: purchase.id,
             relatedDocumentNumber: registrationNumber,
             supplierName: invoice.supplierName || 'Unknown Supplier',
+            supplierRnc: invoice.supplierRnc || '',
+            ncf: invoice.ncf || '',
+            purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
+            purchaseType: invoice.purchaseType || data.purchaseType,
+            paymentType: invoicePaymentType,
             amount: invoice.amount, // Total amount including tax
             paidAmount: 0,
             balanceAmount: invoice.amount,
             status: 'Pending',
             dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-            notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName}`,
+            notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
+          };
+          
+          console.log('🔍 Creating AP with data:', apData);
+          
+          // Create AP for ALL invoices (removed payment type check)
+          await AccountsPayable.create(apData, { transaction });
+          
+          console.log('✅ AP created successfully:', invoiceAPNumber);
+        }
+      }
+      
+      // Create AP for ALL associated invoices regardless of main purchase payment type
+      // This handles cases where main purchase is CASH but invoices need AP
+      if (paymentType !== 'CREDIT' && data.associatedInvoices && data.associatedInvoices.length > 0) {
+        for (const invoice of data.associatedInvoices) {
+          const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : '';
+          
+          const lastAP = await AccountsPayable.findOne({
+            where: { registrationNumber: { [Op.like]: 'AP%' } },
+            order: [['id', 'DESC']],
+            transaction
+          });
+          const nextAPNum = lastAP ? parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
+          const invoiceAPNumber = `AP${String(nextAPNum).padStart(4, '0')}`;
+          
+          // Create AP for ALL invoices (removed payment type check)
+          await AccountsPayable.create({
+            registrationNumber: invoiceAPNumber,
+            registrationDate: new Date(),
+            type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+            relatedDocumentType: 'Purchase',
+            relatedDocumentId: purchase.id,
+            relatedDocumentNumber: registrationNumber,
+            supplierName: invoice.supplierName || 'Unknown Supplier',
+            supplierRnc: invoice.supplierRnc || '',
+            ncf: invoice.ncf || '',
+            purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
+            purchaseType: invoice.purchaseType || data.purchaseType,
+            paymentType: invoicePaymentType,
+            amount: invoice.amount,
+            paidAmount: 0,
+            balanceAmount: invoice.amount,
+            status: 'Pending',
+            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
           }, { transaction });
         }
       }

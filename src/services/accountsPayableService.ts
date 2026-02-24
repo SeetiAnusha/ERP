@@ -9,34 +9,8 @@ export const getAllAccountsPayable = async () => {
     order: [['registrationDate', 'DESC']],
   });
   
-  // Fetch related purchase data for each AP
-  const apsWithPurchaseData = await Promise.all(
-    aps.map(async (ap) => {
-      const apData = ap.toJSON();
-      
-      // If related to a purchase, fetch purchase details
-      if (apData.relatedDocumentType === 'Purchase' && apData.relatedDocumentId) {
-        const purchase = await Purchase.findByPk(apData.relatedDocumentId, {
-          include: [{ model: Supplier, as: 'supplier' }]
-        });
-        
-        if (purchase) {
-          return {
-            ...apData,
-            supplierRnc: purchase.supplierRnc,
-            ncf: purchase.ncf,
-            purchaseDate: purchase.date,
-            purchaseType: purchase.purchaseType,
-            paymentType: purchase.paymentType,
-          };
-        }
-      }
-      
-      return apData;
-    })
-  );
-  
-  return apsWithPurchaseData;
+  // Return AP data as-is (already has all fields from database)
+  return aps.map(ap => ap.toJSON());
 };
 
 export const getAccountsPayableById = async (id: number) => {
