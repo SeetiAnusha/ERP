@@ -67,7 +67,7 @@ AccountsPayable.init(
     registrationNumber: {
       type: DataTypes.STRING(50),
       allowNull: false,
-      unique: true,
+      unique: false, // Changed from true - allow duplicate registration numbers (e.g., CP#### for main purchase and invoices)
     },
     registrationDate: {
       type: DataTypes.DATE,

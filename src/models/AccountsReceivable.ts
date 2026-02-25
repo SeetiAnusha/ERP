@@ -63,7 +63,7 @@ AccountsReceivable.init(
     registrationNumber: {
       type: DataTypes.STRING(50),
       allowNull: false,
-      unique: true,
+      unique: false, // Changed from true - allow duplicate registration numbers
     },
     registrationDate: {
       type: DataTypes.DATE,

@@ -30,7 +30,7 @@ BankRegister.init(
     registrationNumber: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
+      unique: false, // Changed from true - allow duplicate registration numbers
     },
     registrationDate: {
       type: DataTypes.DATE,
