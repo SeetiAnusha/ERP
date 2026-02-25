@@ -262,41 +262,52 @@ export const createPurchase = async (data: any) => {
           }
         }
       }
+    }
+    
+    // Create AP for ALL associated invoices regardless of main purchase payment type
+    // This handles cases where main purchase is CASH but invoices need AP
+    if (paymentType !== 'CREDIT' && paymentType !== 'CREDIT_CARD' && data.associatedInvoices && data.associatedInvoices.length > 0) {
+      const AccountsPayable = (await import('../models/AccountsPayable')).default;
       
-      // Create AP for ALL associated invoices regardless of main purchase payment type
-      // This handles cases where main purchase is CASH but invoices need AP
-      if (paymentType !== 'CREDIT' && data.associatedInvoices && data.associatedInvoices.length > 0) {
-        for (const invoice of data.associatedInvoices) {
-          const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : '';
+      console.log('🔍 Checking invoices for AP creation. Main purchase payment type:', paymentType);
+      console.log('🔍 Number of invoices:', data.associatedInvoices.length);
+      
+      for (const invoice of data.associatedInvoices) {
+        const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : '';
+        
+        console.log('🔍 Processing invoice:', {
+          supplierName: invoice.supplierName,
+          paymentType: invoicePaymentType,
+          amount: invoice.amount
+        });
+        
+        // Only create AP for CREDIT and CREDIT_CARD invoices
+        if (invoicePaymentType === 'CREDIT' || invoicePaymentType === 'CREDIT_CARD') {
+          // Use the purchase registration number (CP####) instead of generating new AP####
+          await AccountsPayable.create({
+            registrationNumber: registrationNumber, // Use purchase registration number
+            registrationDate: new Date(),
+            type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+            relatedDocumentType: 'Purchase',
+            relatedDocumentId: purchase.id,
+            relatedDocumentNumber: registrationNumber,
+            supplierName: invoice.supplierName || 'Unknown Supplier',
+            supplierRnc: invoice.supplierRnc || '',
+            ncf: invoice.ncf || '',
+            purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
+            purchaseType: invoice.purchaseType || data.purchaseType,
+            paymentType: invoicePaymentType,
+            amount: invoice.amount,
+            paidAmount: 0,
+            balanceAmount: invoice.amount,
+            status: 'Pending',
+            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
+          }, { transaction });
           
-          // Only create AP for CREDIT and CREDIT_CARD invoices
-          if (invoicePaymentType === 'CREDIT' || invoicePaymentType === 'CREDIT_CARD') {
-            // Use the purchase registration number (CP####) instead of generating new AP####
-            await AccountsPayable.create({
-              registrationNumber: registrationNumber, // Use purchase registration number
-              registrationDate: new Date(),
-              type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
-              relatedDocumentType: 'Purchase',
-              relatedDocumentId: purchase.id,
-              relatedDocumentNumber: registrationNumber,
-              supplierName: invoice.supplierName || 'Unknown Supplier',
-              supplierRnc: invoice.supplierRnc || '',
-              ncf: invoice.ncf || '',
-              purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
-              purchaseType: invoice.purchaseType || data.purchaseType,
-              paymentType: invoicePaymentType,
-              amount: invoice.amount,
-              paidAmount: 0,
-              balanceAmount: invoice.amount,
-              status: 'Pending',
-              dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-              notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
-            }, { transaction });
-            
-            console.log('✅ AP created for invoice with payment type:', invoicePaymentType, '- Using purchase #:', registrationNumber);
-          } else {
-            console.log('⏭️ Skipping AP creation for invoice with payment type:', invoicePaymentType, '(will create register entry instead)');
-          }
+          console.log('✅ AP created for invoice with payment type:', invoicePaymentType, '- Using purchase #:', registrationNumber);
+        } else {
+          console.log('⏭️ Skipping AP creation for invoice with payment type:', invoicePaymentType, '(will create register entry instead)');
         }
       }
     }
