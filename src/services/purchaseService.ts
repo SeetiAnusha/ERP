@@ -59,6 +59,10 @@ export const createPurchase = async (data: any) => {
     
     // Calculate payment status based on payment type
     const total = data.total || 0;
+    
+    // Calculate main purchase amount (without associated invoices)
+    const mainPurchaseAmount = data.productTotal || (total - associatedExpenses) || total;
+    
     let paidAmount = 0;
     let balanceAmount = total;
     let paymentStatus = 'Unpaid';
@@ -105,7 +109,7 @@ export const createPurchase = async (data: any) => {
       paidAmount,
       balanceAmount,
       additionalExpenses: associatedExpenses,
-      totalWithAssociated: data.productTotal + associatedExpenses,
+      totalWithAssociated: mainPurchaseAmount + associatedExpenses,
     }, { transaction });
     
     // Create Cash Register entry for CASH and CHEQUE payments (OUTFLOW)
@@ -119,7 +123,7 @@ export const createPurchase = async (data: any) => {
       });
       
       const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
-      const newBalance = lastBalance - total; // OUTFLOW reduces balance
+      const newBalance = lastBalance - mainPurchaseAmount; // OUTFLOW reduces balance - use mainPurchaseAmount only
       
       const supplier = await Supplier.findByPk(data.supplierId, { transaction });
       
@@ -130,7 +134,7 @@ export const createPurchase = async (data: any) => {
         registrationNumber: registrationNumber, // Use purchase registration number
         registrationDate: new Date(),
         transactionType: 'OUTFLOW',
-        amount: total,
+        amount: mainPurchaseAmount, // Use mainPurchaseAmount only, not including associated invoices
         paymentMethod: paymentMethodLabel,
         relatedDocumentType: 'Purchase',
         relatedDocumentNumber: registrationNumber,
@@ -153,7 +157,7 @@ export const createPurchase = async (data: any) => {
       });
       
       const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
-      const newBalance = lastBalance - total; // OUTFLOW reduces balance
+      const newBalance = lastBalance - mainPurchaseAmount; // OUTFLOW reduces balance - use mainPurchaseAmount only
       
       const supplier = await Supplier.findByPk(data.supplierId, { transaction });
       
@@ -164,7 +168,7 @@ export const createPurchase = async (data: any) => {
         registrationNumber: registrationNumber, // Use purchase registration number
         registrationDate: new Date(),
         transactionType: 'OUTFLOW',
-        amount: total,
+        amount: mainPurchaseAmount, // Use mainPurchaseAmount only, not including associated invoices
         paymentMethod: paymentMethodLabel,
         relatedDocumentType: 'Purchase',
         relatedDocumentNumber: registrationNumber,
@@ -200,9 +204,9 @@ export const createPurchase = async (data: any) => {
         purchaseType: data.purchaseType,
         paymentType: paymentType,
         cardIssuer: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : undefined,
-        amount: data.productTotal, // Only product total, not including associated invoices
+        amount: mainPurchaseAmount, // Only mainPurchaseAmount, not including associated invoices
         paidAmount: 0,
-        balanceAmount: data.productTotal,
+        balanceAmount: mainPurchaseAmount,
         status: 'Pending',
         dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         notes: paymentType === 'CREDIT_CARD' 
