@@ -11,6 +11,9 @@ interface AccountsReceivableAttributes {
   relatedDocumentNumber: string;
   clientId?: number;
   clientName?: string;
+  clientRnc?: string;
+  ncf?: string;
+  saleOf?: string;
   cardNetwork?: string; // 'Visa', 'Mastercard', 'Amex', etc.
   amount: number;
   receivedAmount: number;
@@ -35,6 +38,9 @@ class AccountsReceivable extends Model<AccountsReceivableAttributes, AccountsRec
   public relatedDocumentNumber!: string;
   public clientId?: number;
   public clientName?: string;
+  public clientRnc?: string;
+  public ncf?: string;
+  public saleOf?: string;
   public cardNetwork?: string;
   public amount!: number;
   public receivedAmount!: number;
@@ -85,6 +91,18 @@ AccountsReceivable.init(
     },
     clientName: {
       type: DataTypes.STRING(200),
+      allowNull: true,
+    },
+    clientRnc: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    ncf: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    saleOf: {
+      type: DataTypes.TEXT,
       allowNull: true,
     },
     cardNetwork: {

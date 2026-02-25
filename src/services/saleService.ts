@@ -55,8 +55,8 @@ export const createSale = async (data: any) => {
     
     const paymentType = data.paymentType ? data.paymentType.toUpperCase() : '';
     
-    if (paymentType === 'CASH') {
-      // CASH: Collected immediately, cash balance increases (CashRegister entry created below)
+    if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
+      // CASH/CHEQUE: Collected immediately, cash balance increases (CashRegister entry created below)
       collectedAmount = total;
       balanceAmount = 0;
       collectionStatus = 'Collected';
@@ -96,40 +96,70 @@ export const createSale = async (data: any) => {
       balanceAmount,
     }, { transaction });
     
-    // Create CashRegister entry for immediate collections: CASH, Bank Transfer, or Deposit (INFLOW)
-    if (paymentType === 'CASH' || paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+    // Create Cash Register entry for CASH and CHEQUE collections (INFLOW)
+    if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
       const CashRegister = (await import('../models/CashRegister')).default;
       
       // Get last cash register transaction for balance
       const lastCashTransaction = await CashRegister.findOne({
-        where: { registrationNumber: { [Op.like]: 'CJ%' } },
         order: [['id', 'DESC']],
         transaction
       });
       
-      let nextCashNumber = 1;
-      if (lastCashTransaction) {
-        const lastNumber = parseInt(lastCashTransaction.registrationNumber.substring(2));
-        nextCashNumber = lastNumber + 1;
-      }
-      
-      const cashRegistrationNumber = `CJ${String(nextCashNumber).padStart(4, '0')}`;
       const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
       const newBalance = lastBalance + total; // INFLOW increases balance
       
       const client = await Client.findByPk(data.clientId, { transaction });
       
+      const paymentMethodLabel = paymentType === 'CASH' ? 'Cash' : 'Cheque';
+      
+      // Use the sale registration number (RV####) instead of generating new CJ####
       await CashRegister.create({
-        registrationNumber: cashRegistrationNumber,
+        registrationNumber: registrationNumber, // Use sale registration number
         registrationDate: new Date(),
         transactionType: 'INFLOW',
         amount: total,
-        paymentMethod: paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit'),
+        paymentMethod: paymentMethodLabel,
         relatedDocumentType: 'Sale',
         relatedDocumentNumber: registrationNumber,
         clientRnc: data.clientRnc || '',
         clientName: client?.name || '',
-        description: `Payment received for sale ${registrationNumber} via ${paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit')}`,
+        ncf: data.ncf || '',
+        description: `Payment received for sale ${registrationNumber} via ${paymentMethodLabel}`,
+        balance: newBalance,
+      }, { transaction });
+    }
+    
+    // Create Bank Register entry for BANK_TRANSFER and DEPOSIT collections (INFLOW)
+    if (paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+      const BankRegister = (await import('../models/BankRegister')).default;
+      
+      // Get last bank register transaction for balance
+      const lastBankTransaction = await BankRegister.findOne({
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+      const newBalance = lastBalance + total; // INFLOW increases balance
+      
+      const client = await Client.findByPk(data.clientId, { transaction });
+      
+      const paymentMethodLabel = paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit';
+      
+      // Use the sale registration number (RV####) instead of generating new BR####
+      await BankRegister.create({
+        registrationNumber: registrationNumber, // Use sale registration number
+        registrationDate: new Date(),
+        transactionType: 'INFLOW',
+        amount: total,
+        paymentMethod: paymentMethodLabel,
+        relatedDocumentType: 'Sale',
+        relatedDocumentNumber: registrationNumber,
+        clientRnc: data.clientRnc || '',
+        clientName: client?.name || '',
+        ncf: data.ncf || '',
+        description: `Payment received for sale ${registrationNumber} via ${paymentMethodLabel}`,
         balance: newBalance,
       }, { transaction });
     }
@@ -138,20 +168,12 @@ export const createSale = async (data: any) => {
     if (paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
       const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
       
-      // Generate AR registration number
-      const lastAR = await AccountsReceivable.findOne({
-        where: { registrationNumber: { [Op.like]: 'AR%' } },
-        order: [['id', 'DESC']],
-        transaction
-      });
-      const nextARNumber = lastAR ? parseInt(lastAR.registrationNumber.substring(2)) + 1 : 1;
-      const arRegistrationNumber = `AR${String(nextARNumber).padStart(4, '0')}`;
-      
       // Get client info for credit sales
       const client = await Client.findByPk(data.clientId, { transaction });
       
+      // Use the sale registration number (RV####) instead of generating new AR####
       await AccountsReceivable.create({
-        registrationNumber: arRegistrationNumber,
+        registrationNumber: registrationNumber, // Use sale registration number
         registrationDate: new Date(),
         type: paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_SALE' : 'CLIENT_CREDIT',
         relatedDocumentType: 'Sale',
@@ -159,6 +181,9 @@ export const createSale = async (data: any) => {
         relatedDocumentNumber: registrationNumber,
         clientId: paymentType === 'CREDIT' ? data.clientId : undefined,
         clientName: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : (client?.name || ''),
+        clientRnc: data.clientRnc || '',
+        ncf: data.ncf || '',
+        saleOf: data.saleType || 'Merchandise for sale', // Use saleType field
         cardNetwork: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : undefined,
         amount: total,
         receivedAmount: 0,

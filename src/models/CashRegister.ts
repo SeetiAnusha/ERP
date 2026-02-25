@@ -12,6 +12,7 @@ interface CashRegisterAttributes {
   relatedDocumentNumber?: string;
   clientRnc?: string;
   clientName?: string;
+  ncf?: string;
   description: string;
   balance: number;
   createdAt?: Date;
@@ -31,6 +32,7 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public relatedDocumentNumber?: string;
   public clientRnc?: string;
   public clientName?: string;
+  public ncf?: string;
   public description!: string;
   public balance!: number;
   public readonly createdAt!: Date;
@@ -79,6 +81,10 @@ CashRegister.init(
     },
     clientName: {
       type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    ncf: {
+      type: DataTypes.STRING(50),
       allowNull: true,
     },
     description: {

@@ -65,8 +65,8 @@ export const createPurchase = async (data: any) => {
     
     const paymentType = data.paymentType ? data.paymentType.toUpperCase() : '';
     
-    if (paymentType === 'CASH') {
-      // CASH: Paid immediately, cash balance decreases (CashRegister entry created below)
+    if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
+      // CASH/CHEQUE: Paid immediately, cash balance decreases (CashRegister entry created below)
       paidAmount = total;
       balanceAmount = 0;
       paymentStatus = 'Paid';
@@ -108,40 +108,70 @@ export const createPurchase = async (data: any) => {
       totalWithAssociated: data.productTotal + associatedExpenses,
     }, { transaction });
     
-    // Create CashRegister entry for immediate payments: CASH, Bank Transfer, or Deposit (OUTFLOW)
-    if (paymentType === 'CASH' || paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+    // Create Cash Register entry for CASH and CHEQUE payments (OUTFLOW)
+    if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
       const CashRegister = (await import('../models/CashRegister')).default;
       
       // Get last cash register transaction for balance
       const lastCashTransaction = await CashRegister.findOne({
-        where: { registrationNumber: { [Op.like]: 'CJ%' } },
         order: [['id', 'DESC']],
         transaction
       });
       
-      let nextCashNumber = 1;
-      if (lastCashTransaction) {
-        const lastNumber = parseInt(lastCashTransaction.registrationNumber.substring(2));
-        nextCashNumber = lastNumber + 1;
-      }
-      
-      const cashRegistrationNumber = `CJ${String(nextCashNumber).padStart(4, '0')}`;
       const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
       const newBalance = lastBalance - total; // OUTFLOW reduces balance
       
       const supplier = await Supplier.findByPk(data.supplierId, { transaction });
       
+      const paymentMethodLabel = paymentType === 'CASH' ? 'Cash' : 'Cheque';
+      
+      // Use the purchase registration number (CP####) instead of generating new CJ####
       await CashRegister.create({
-        registrationNumber: cashRegistrationNumber,
+        registrationNumber: registrationNumber, // Use purchase registration number
         registrationDate: new Date(),
         transactionType: 'OUTFLOW',
         amount: total,
-        paymentMethod: paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit'),
+        paymentMethod: paymentMethodLabel,
         relatedDocumentType: 'Purchase',
         relatedDocumentNumber: registrationNumber,
         clientRnc: data.supplierRnc || '',
         clientName: supplier?.name || '',
-        description: `Payment for purchase ${registrationNumber} via ${paymentType === 'CASH' ? 'Cash' : (paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit')}`,
+        ncf: data.ncf || '',
+        description: `Payment for purchase ${registrationNumber} via ${paymentMethodLabel}`,
+        balance: newBalance,
+      }, { transaction });
+    }
+    
+    // Create Bank Register entry for BANK_TRANSFER and DEPOSIT payments (OUTFLOW)
+    if (paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
+      const BankRegister = (await import('../models/BankRegister')).default;
+      
+      // Get last bank register transaction for balance
+      const lastBankTransaction = await BankRegister.findOne({
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+      const newBalance = lastBalance - total; // OUTFLOW reduces balance
+      
+      const supplier = await Supplier.findByPk(data.supplierId, { transaction });
+      
+      const paymentMethodLabel = paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit';
+      
+      // Use the purchase registration number (CP####) instead of generating new BR####
+      await BankRegister.create({
+        registrationNumber: registrationNumber, // Use purchase registration number
+        registrationDate: new Date(),
+        transactionType: 'OUTFLOW',
+        amount: total,
+        paymentMethod: paymentMethodLabel,
+        relatedDocumentType: 'Purchase',
+        relatedDocumentNumber: registrationNumber,
+        clientRnc: data.supplierRnc || '',
+        clientName: supplier?.name || '',
+        ncf: data.ncf || '',
+        description: `Payment for purchase ${registrationNumber} via ${paymentMethodLabel}`,
         balance: newBalance,
       }, { transaction });
     }
@@ -150,21 +180,13 @@ export const createPurchase = async (data: any) => {
     if (paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
       const AccountsPayable = (await import('../models/AccountsPayable')).default;
       
-      // Generate AP registration number for main purchase
-      const lastAP = await AccountsPayable.findOne({
-        where: { registrationNumber: { [Op.like]: 'AP%' } },
-        order: [['id', 'DESC']],
-        transaction
-      });
-      let nextAPNumber = lastAP ? parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
-      const apRegistrationNumber = `AP${String(nextAPNumber).padStart(4, '0')}`;
-      
       // Get supplier info for credit purchases
       const supplier = await Supplier.findByPk(data.supplierId, { transaction });
       
       // Create AP for main purchase (product total only, not including associated invoices)
+      // Use the purchase registration number (CP####) instead of generating new AP####
       await AccountsPayable.create({
-        registrationNumber: apRegistrationNumber,
+        registrationNumber: registrationNumber, // Use purchase registration number
         registrationDate: new Date(),
         type: paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
         relatedDocumentType: 'Purchase',
@@ -188,7 +210,7 @@ export const createPurchase = async (data: any) => {
           : `Credit purchase from ${supplier?.name || 'supplier'} - ${registrationNumber}`,
       }, { transaction });
       
-      // Create separate AP entries for each associated invoice (if CREDIT payment type)
+      // Create separate AP entries for each associated invoice (if CREDIT or CREDIT_CARD payment type)
       if (paymentType === 'CREDIT' && data.associatedInvoices && data.associatedInvoices.length > 0) {
         console.log('🔍 Creating AP for invoices. Main purchase payment type:', paymentType);
         console.log('🔍 Number of invoices:', data.associatedInvoices.length);
@@ -203,39 +225,41 @@ export const createPurchase = async (data: any) => {
             amount: invoice.amount
           });
           
-          nextAPNumber++;
-          const invoiceAPNumber = `AP${String(nextAPNumber).padStart(4, '0')}`;
-          
           // Determine if this invoice should create AP based on its payment type
           const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : 'CREDIT';
           
-          const apData = {
-            registrationNumber: invoiceAPNumber,
-            registrationDate: new Date(),
-            type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
-            relatedDocumentType: 'Purchase',
-            relatedDocumentId: purchase.id,
-            relatedDocumentNumber: registrationNumber,
-            supplierName: invoice.supplierName || 'Unknown Supplier',
-            supplierRnc: invoice.supplierRnc || '',
-            ncf: invoice.ncf || '',
-            purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
-            purchaseType: invoice.purchaseType || data.purchaseType,
-            paymentType: invoicePaymentType,
-            amount: invoice.amount, // Total amount including tax
-            paidAmount: 0,
-            balanceAmount: invoice.amount,
-            status: 'Pending',
-            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-            notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
-          };
-          
-          console.log('🔍 Creating AP with data:', apData);
-          
-          // Create AP for ALL invoices (removed payment type check)
-          await AccountsPayable.create(apData, { transaction });
-          
-          console.log('✅ AP created successfully:', invoiceAPNumber);
+          // Only create AP for CREDIT and CREDIT_CARD invoices
+          if (invoicePaymentType === 'CREDIT' || invoicePaymentType === 'CREDIT_CARD') {
+            // Use the purchase registration number (CP####) for invoice AP entries too
+            const apData = {
+              registrationNumber: registrationNumber, // Use purchase registration number
+              registrationDate: new Date(),
+              type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+              relatedDocumentType: 'Purchase',
+              relatedDocumentId: purchase.id,
+              relatedDocumentNumber: registrationNumber,
+              supplierName: invoice.supplierName || 'Unknown Supplier',
+              supplierRnc: invoice.supplierRnc || '',
+              ncf: invoice.ncf || '',
+              purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
+              purchaseType: invoice.purchaseType || data.purchaseType,
+              paymentType: invoicePaymentType,
+              amount: invoice.amount, // Total amount including tax
+              paidAmount: 0,
+              balanceAmount: invoice.amount,
+              status: 'Pending',
+              dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
+            };
+            
+            console.log('🔍 Creating AP with data:', apData);
+            
+            await AccountsPayable.create(apData, { transaction });
+            
+            console.log('✅ AP created successfully using purchase #:', registrationNumber);
+          } else {
+            console.log('⏭️ Skipping AP creation for invoice with payment type:', invoicePaymentType, '(will create register entry instead)');
+          }
         }
       }
       
@@ -245,35 +269,34 @@ export const createPurchase = async (data: any) => {
         for (const invoice of data.associatedInvoices) {
           const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : '';
           
-          const lastAP = await AccountsPayable.findOne({
-            where: { registrationNumber: { [Op.like]: 'AP%' } },
-            order: [['id', 'DESC']],
-            transaction
-          });
-          const nextAPNum = lastAP ? parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
-          const invoiceAPNumber = `AP${String(nextAPNum).padStart(4, '0')}`;
-          
-          // Create AP for ALL invoices (removed payment type check)
-          await AccountsPayable.create({
-            registrationNumber: invoiceAPNumber,
-            registrationDate: new Date(),
-            type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
-            relatedDocumentType: 'Purchase',
-            relatedDocumentId: purchase.id,
-            relatedDocumentNumber: registrationNumber,
-            supplierName: invoice.supplierName || 'Unknown Supplier',
-            supplierRnc: invoice.supplierRnc || '',
-            ncf: invoice.ncf || '',
-            purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
-            purchaseType: invoice.purchaseType || data.purchaseType,
-            paymentType: invoicePaymentType,
-            amount: invoice.amount,
-            paidAmount: 0,
-            balanceAmount: invoice.amount,
-            status: 'Pending',
-            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-            notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
-          }, { transaction });
+          // Only create AP for CREDIT and CREDIT_CARD invoices
+          if (invoicePaymentType === 'CREDIT' || invoicePaymentType === 'CREDIT_CARD') {
+            // Use the purchase registration number (CP####) instead of generating new AP####
+            await AccountsPayable.create({
+              registrationNumber: registrationNumber, // Use purchase registration number
+              registrationDate: new Date(),
+              type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+              relatedDocumentType: 'Purchase',
+              relatedDocumentId: purchase.id,
+              relatedDocumentNumber: registrationNumber,
+              supplierName: invoice.supplierName || 'Unknown Supplier',
+              supplierRnc: invoice.supplierRnc || '',
+              ncf: invoice.ncf || '',
+              purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
+              purchaseType: invoice.purchaseType || data.purchaseType,
+              paymentType: invoicePaymentType,
+              amount: invoice.amount,
+              paidAmount: 0,
+              balanceAmount: invoice.amount,
+              status: 'Pending',
+              dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
+            }, { transaction });
+            
+            console.log('✅ AP created for invoice with payment type:', invoicePaymentType, '- Using purchase #:', registrationNumber);
+          } else {
+            console.log('⏭️ Skipping AP creation for invoice with payment type:', invoicePaymentType, '(will create register entry instead)');
+          }
         }
       }
     }
@@ -294,6 +317,72 @@ export const createPurchase = async (data: any) => {
           purchaseType: invoice.purchaseType || data.purchaseType,
           paymentType: invoice.paymentType,
         }, { transaction });
+        
+        // Create register entries for each associated invoice based on its payment type
+        const invoicePaymentType = invoice.paymentType ? invoice.paymentType.toUpperCase() : '';
+        const invoiceAmount = invoice.amount || 0;
+        
+        // CASH or CHEQUE → Cash Register
+        if (invoicePaymentType === 'CASH' || invoicePaymentType === 'CHEQUE') {
+          const CashRegister = (await import('../models/CashRegister')).default;
+          
+          const lastCashTransaction = await CashRegister.findOne({
+            order: [['id', 'DESC']],
+            transaction
+          });
+          
+          const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
+          const newBalance = lastBalance - invoiceAmount; // OUTFLOW reduces balance
+          
+          const paymentMethodLabel = invoicePaymentType === 'CASH' ? 'Cash' : 'Cheque';
+          
+          // Use the purchase registration number (CP####) instead of generating new CJ####
+          await CashRegister.create({
+            registrationNumber: registrationNumber, // Use purchase registration number
+            registrationDate: new Date(),
+            transactionType: 'OUTFLOW',
+            amount: invoiceAmount,
+            paymentMethod: paymentMethodLabel,
+            relatedDocumentType: 'Purchase',
+            relatedDocumentNumber: registrationNumber,
+            clientRnc: invoice.supplierRnc || '',
+            clientName: invoice.supplierName || '',
+            ncf: invoice.ncf || '',
+            description: `${invoice.concept || 'Associated invoice'} for purchase ${registrationNumber} via ${paymentMethodLabel} - Supplier: ${invoice.supplierName}`,
+            balance: newBalance,
+          }, { transaction });
+        }
+        
+        // BANK_TRANSFER or DEPOSIT → Bank Register
+        if (invoicePaymentType === 'BANK_TRANSFER' || invoicePaymentType === 'DEPOSIT') {
+          const BankRegister = (await import('../models/BankRegister')).default;
+          
+          const lastBankTransaction = await BankRegister.findOne({
+            order: [['id', 'DESC']],
+            transaction
+          });
+          
+          const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+          const newBalance = lastBalance - invoiceAmount; // OUTFLOW reduces balance
+          
+          const paymentMethodLabel = invoicePaymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit';
+          
+          // Use the purchase registration number (CP####) instead of generating new BR####
+          await BankRegister.create({
+            registrationNumber: registrationNumber, // Use purchase registration number
+            registrationDate: new Date(),
+            transactionType: 'OUTFLOW',
+            amount: invoiceAmount,
+            paymentMethod: paymentMethodLabel,
+            relatedDocumentType: 'Purchase',
+            relatedDocumentNumber: registrationNumber,
+            clientRnc: invoice.supplierRnc || '',
+            clientName: invoice.supplierName || '',
+            ncf: invoice.ncf || '',
+            description: `${invoice.concept || 'Associated invoice'} for purchase ${registrationNumber} via ${paymentMethodLabel} - Supplier: ${invoice.supplierName}`,
+            balance: newBalance,
+          }, { transaction });
+        }
       }
     }
     
