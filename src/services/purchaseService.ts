@@ -287,9 +287,8 @@ export const createPurchase = async (data: any) => {
         
         // Only create AP for CREDIT and CREDIT_CARD invoices
         if (invoicePaymentType === 'CREDIT' || invoicePaymentType === 'CREDIT_CARD') {
-          // Use the purchase registration number (CP####) instead of generating new AP####
           await AccountsPayable.create({
-            registrationNumber: registrationNumber, // Use purchase registration number
+            registrationNumber: registrationNumber, // Use purchase registration number (CP####)
             registrationDate: new Date(),
             type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
             relatedDocumentType: 'Purchase',
@@ -309,7 +308,7 @@ export const createPurchase = async (data: any) => {
             notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
           }, { transaction });
           
-          console.log('✅ AP created for invoice with payment type:', invoicePaymentType, '- Using purchase #:', registrationNumber);
+          console.log('✅ AP created for invoice with payment type:', invoicePaymentType, '- Using AP #:', registrationNumber);
         } else {
           console.log('⏭️ Skipping AP creation for invoice with payment type:', invoicePaymentType, '(will create register entry instead)');
         }
@@ -351,9 +350,8 @@ export const createPurchase = async (data: any) => {
           
           const paymentMethodLabel = invoicePaymentType === 'CASH' ? 'Cash' : 'Cheque';
           
-          // Use the purchase registration number (CP####) instead of generating new CJ####
           await CashRegister.create({
-            registrationNumber: registrationNumber, // Use purchase registration number
+            registrationNumber: registrationNumber, // Use purchase registration number (CP####)
             registrationDate: new Date(),
             transactionType: 'OUTFLOW',
             amount: invoiceAmount,
@@ -382,9 +380,8 @@ export const createPurchase = async (data: any) => {
           
           const paymentMethodLabel = invoicePaymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit';
           
-          // Use the purchase registration number (CP####) instead of generating new BR####
           await BankRegister.create({
-            registrationNumber: registrationNumber, // Use purchase registration number
+            registrationNumber: registrationNumber, // Use purchase registration number (CP####)
             registrationDate: new Date(),
             transactionType: 'OUTFLOW',
             amount: invoiceAmount,
