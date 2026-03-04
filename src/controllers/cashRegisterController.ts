@@ -38,6 +38,26 @@ export const getBalance = async (req: Request, res: Response) => {
   }
 };
 
+// Phase 3: Get balance for specific cash register
+export const getCashRegisterBalance = async (req: Request, res: Response) => {
+  try {
+    const balance = await cashRegisterService.getCashRegisterBalance(parseInt(req.params.cashRegisterId));
+    res.json(balance);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Phase 3: Get pending AR invoices for customer
+export const getPendingInvoices = async (req: Request, res: Response) => {
+  try {
+    const invoices = await cashRegisterService.getPendingARInvoices(parseInt(req.params.customerId));
+    res.json(invoices);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const remove = async (req: Request, res: Response) => {
   try {
     const result = await cashRegisterService.deleteCashTransaction(parseInt(req.params.id));

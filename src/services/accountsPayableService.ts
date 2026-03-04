@@ -1,4 +1,4 @@
-import AccountsPayable from '../models/AccountsPayable';
+﻿import AccountsPayable from '../models/AccountsPayable';
 import Purchase from '../models/Purchase';
 import Supplier from '../models/Supplier';
 import { Op } from 'sequelize';
@@ -73,7 +73,13 @@ export const createAccountsPayable = async (data: any) => {
   }
 };
 
-export const recordPayment = async (id: number, paymentData: { amount: number; paidDate?: Date; notes?: string }) => {
+export const recordPayment = async (id: number, paymentData: { 
+  amount: number; 
+  paidDate?: Date; 
+  notes?: string;
+  cardId?: number;
+  paymentMethod?: string;
+}) => {
   const transaction = await sequelize.transaction();
   let committed = false;
   
@@ -81,6 +87,145 @@ export const recordPayment = async (id: number, paymentData: { amount: number; p
     const ap = await AccountsPayable.findByPk(id, { transaction });
     if (!ap) throw new Error('Accounts Payable not found');
     
+    // ✅ VALIDATION: If paying with card, validate balance/limit
+    if (paymentData.cardId) {
+      const Card = (await import('../models/Card')).default;
+      const BankAccount = (await import('../models/BankAccount')).default;
+      const BankRegister = (await import('../models/BankRegister')).default;
+      
+      const card = await Card.findByPk(paymentData.cardId, { transaction });
+      if (!card) {
+        throw new Error('Card not found');
+      }
+      
+      const paymentAmount = paymentData.amount;
+      
+      if (card.cardType === 'DEBIT') {
+        // DEBIT Card: Must have bank account and sufficient balance
+        if (!card.bankAccountId) {
+          throw new Error(
+            `DEBIT card ****${card.cardNumberLast4} is not linked to a bank account. ` +
+            `Please link this card to a bank account before making payments.`
+          );
+        }
+        
+        const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
+        if (!bankAccount) {
+          throw new Error(
+            `Bank account not found for DEBIT card ****${card.cardNumberLast4}. ` +
+            `Please check card configuration.`
+          );
+        }
+        
+        // Validate balance
+        const currentBalance = Number(bankAccount.balance);
+        if (currentBalance < paymentAmount) {
+          throw new Error(
+            `Insufficient balance in bank account linked to DEBIT card ****${card.cardNumberLast4}. ` +
+            `Available: $${currentBalance.toFixed(2)}, Required: $${paymentAmount.toFixed(2)}. ` +
+            `You need $${(paymentAmount - currentBalance).toFixed(2)} more to complete this payment.`
+          );
+        }
+        
+        // Deduct from bank account
+        const newBankBalance = currentBalance - paymentAmount;
+        await bankAccount.update({ balance: newBankBalance }, { transaction });
+        
+        // Create Bank Register entry
+        const lastBankTransaction = await BankRegister.findOne({
+          order: [['id', 'DESC']],
+          transaction
+        });
+        
+        const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+        const newBalance = lastBalance - paymentAmount;
+        
+        await BankRegister.create({
+          registrationNumber: ap.registrationNumber,
+          registrationDate: new Date(),
+          transactionType: 'OUTFLOW',
+          amount: paymentAmount,
+          paymentMethod: 'Debit Card',
+          relatedDocumentType: 'Accounts Payable Payment',
+          relatedDocumentNumber: ap.registrationNumber,
+          clientRnc: ap.supplierRnc || '',
+          clientName: ap.supplierName || '',
+          ncf: ap.ncf || '',
+          description: `AP Payment ${ap.registrationNumber} via DEBIT card ${card.cardBrand || ''} ****${card.cardNumberLast4} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
+          balance: newBalance,
+          bankAccountId: card.bankAccountId,
+        }, { transaction });
+        
+      } else if (card.cardType === 'CREDIT') {
+        // ✅ FIX: Don't create duplicate AP if already paying credit card debt
+        const isAlreadyCreditCardDebt = ap.type === 'CREDIT_CARD_PURCHASE';
+        
+        if (!isAlreadyCreditCardDebt) {
+          // Paying supplier AP with credit card - track usedCredit
+          const creditLimit = Number(card.creditLimit || 0);
+          const usedCredit = Number(card.usedCredit || 0);
+          const availableCredit = creditLimit - usedCredit;
+          
+          if (creditLimit <= 0) {
+            throw new Error(
+              `CREDIT card ****${card.cardNumberLast4} has no credit limit set. ` +
+              `Please set a credit limit for this card before making payments.`
+            );
+          }
+          
+          // Validate available credit
+          if (paymentAmount > availableCredit) {
+            throw new Error(
+              `Insufficient credit available on card ****${card.cardNumberLast4}. ` +
+              `Available: ${availableCredit.toFixed(2)}, Required: ${paymentAmount.toFixed(2)}. ` +
+              `Credit Limit: ${creditLimit.toFixed(2)}, Currently Used: ${usedCredit.toFixed(2)}.`
+            );
+          }
+          
+          // Increase usedCredit
+          const newUsedCredit = usedCredit + paymentAmount;
+          await card.update({ usedCredit: newUsedCredit }, { transaction });
+          
+          console.log(`Credit card usage: ${usedCredit.toFixed(2)} -> ${newUsedCredit.toFixed(2)}`);
+          
+          // For CREDIT card, create a new AP entry (paying one AP with credit creates another AP)
+        // This represents the debt to the credit card company
+        const newAP = await AccountsPayable.create({
+          registrationNumber: `${ap.registrationNumber}-CC`,
+          registrationDate: new Date(),
+          type: 'CREDIT_CARD_PURCHASE',
+          relatedDocumentType: 'AP Payment',
+          relatedDocumentId: ap.id,
+          relatedDocumentNumber: ap.registrationNumber,
+          supplierName: `Credit Card Company (${card.cardBrand || 'Card'} ****${card.cardNumberLast4})`,
+          supplierRnc: '',
+          ncf: '',
+          purchaseDate: new Date(),
+          purchaseType: 'Service',
+          paymentType: 'CREDIT_CARD',
+          cardIssuer: `${card.cardBrand || 'Card'} ****${card.cardNumberLast4}`,
+          cardId: card.id, // ✅ Store which card was used
+          amount: paymentAmount,
+          paidAmount: 0,
+          balanceAmount: paymentAmount,
+          status: 'Pending',
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          notes: `Payment for AP ${ap.registrationNumber} using CREDIT card - Now owe credit card company`,
+        }, { transaction });
+        } else {
+          // ✅ Paying credit card debt - RESTORE credit limit
+          const usedCredit = Number(card.usedCredit || 0);
+          const newUsedCredit = Math.max(0, usedCredit - paymentAmount);
+          
+          await card.update({ usedCredit: newUsedCredit }, { transaction });
+          
+          console.log(`✅ Credit restored: $${usedCredit.toFixed(2)} -> $${newUsedCredit.toFixed(2)}`);
+          console.log(`✅ Available credit: $${(Number(card.creditLimit) - usedCredit).toFixed(2)} -> $${(Number(card.creditLimit) - newUsedCredit).toFixed(2)}`);
+        }
+      }
+    }
+    
+    // Update the original AP
     const newPaidAmount = Number(ap.paidAmount) + paymentData.amount;
     const newBalanceAmount = Number(ap.amount) - newPaidAmount;
     

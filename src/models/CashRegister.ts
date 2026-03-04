@@ -15,6 +15,13 @@ interface CashRegisterAttributes {
   ncf?: string;
   description: string;
   balance: number;
+  // Phase 3: New fields for cash register management
+  cashRegisterId?: number;      // FK to cash_register_masters (REQUIRED)
+  bankAccountId?: number;        // For bank deposits
+  chequeNumber?: string;         // For cheque payments
+  receiptNumber?: string;        // For receipt tracking
+  customerId?: number;           // For AR collections
+  invoiceIds?: string;           // JSON array of invoice IDs being paid
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -35,6 +42,13 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public ncf?: string;
   public description!: string;
   public balance!: number;
+  // Phase 3: New fields
+  public cashRegisterId?: number;
+  public bankAccountId?: number;
+  public chequeNumber?: string;
+  public receiptNumber?: string;
+  public customerId?: number;
+  public invoiceIds?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -94,6 +108,43 @@ CashRegister.init(
     balance: {
       type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
+    },
+    // Phase 3: New fields
+    cashRegisterId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'cash_register_masters',
+        key: 'id',
+      },
+    },
+    bankAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'bank_accounts',
+        key: 'id',
+      },
+    },
+    chequeNumber: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    receiptNumber: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    customerId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'clients',  // Fixed: Changed from 'customers' to 'clients'
+        key: 'id',
+      },
+    },
+    invoiceIds: {
+      type: DataTypes.TEXT,
+      allowNull: true,
     },
   },
   {

@@ -12,6 +12,12 @@ import Payment from './Payment';
 import PaymentInvoiceApplication from './PaymentInvoiceApplication';
 import SupplierCredit from './SupplierCredit';
 import ClientCredit from './ClientCredit';
+import Card from './Card';
+import BankAccount from './BankAccount';
+
+// Card associations
+Card.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'BankAccount' });
+BankAccount.hasMany(Card, { foreignKey: 'bankAccountId', as: 'Cards' });
 
 // Purchase associations
 Purchase.belongsTo(Supplier, { foreignKey: 'supplierId', as: 'supplier' });
@@ -71,4 +77,6 @@ export default {
   PaymentInvoiceApplication,
   SupplierCredit,
   ClientCredit,
+  Card,
+  BankAccount,
 };

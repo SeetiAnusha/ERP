@@ -20,6 +20,15 @@ interface PurchaseAttributes {
   balanceAmount: number;
   totalWithAssociated?: number;
   status: string;
+  // New fields for Phase 2
+  bankAccountId?: number;
+  cardId?: number;
+  chequeNumber?: string;
+  chequeDate?: Date;
+  transferNumber?: string;
+  transferDate?: Date;
+  paymentReference?: string;
+  voucherDate?: Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -44,6 +53,15 @@ class Purchase extends Model<PurchaseAttributes, PurchaseCreationAttributes> imp
   public balanceAmount!: number;
   public totalWithAssociated?: number;
   public status!: string;
+  // New fields for Phase 2
+  public bankAccountId?: number;
+  public cardId?: number;
+  public chequeNumber?: string;
+  public chequeDate?: Date;
+  public transferNumber?: string;
+  public transferDate?: Date;
+  public paymentReference?: string;
+  public voucherDate?: Date;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -128,6 +146,47 @@ Purchase.init(
     status: {
       type: DataTypes.STRING(50),
       allowNull: false,
+    },
+    // New fields for Phase 2
+    bankAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'bank_accounts',
+        key: 'id',
+      },
+    },
+    cardId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'cards',
+        key: 'id',
+      },
+    },
+    chequeNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    chequeDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    transferNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    transferDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    paymentReference: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    voucherDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
   },
   {

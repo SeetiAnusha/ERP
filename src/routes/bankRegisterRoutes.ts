@@ -4,6 +4,7 @@ import * as bankRegisterController from '../controllers/bankRegisterController';
 const router = Router();
 
 router.get('/', bankRegisterController.getAll);
+router.get('/pending-invoices/:supplierId', bankRegisterController.getPendingInvoices);
 router.get('/:id', bankRegisterController.getById);
 router.post('/', bankRegisterController.create);
 router.delete('/:id', bankRegisterController.remove);

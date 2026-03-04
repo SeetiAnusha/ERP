@@ -18,6 +18,13 @@ class BankRegister extends Model {
   public bankAccountName?: string;
   public bankAccountNumber?: string;
   public referenceNumber?: string;
+  // Phase 3: Added for bank account tracking
+  public bankAccountId?: number;
+  // Phase 4: Added for supplier payments and auto-numbering
+  public chequeNumber?: string;      // Auto-generated: CK0001, CK0002...
+  public transferNumber?: string;    // Auto-generated: TF0001, TF0002...
+  public supplierId?: number;        // For supplier payments
+  public invoiceIds?: string;        // JSON array of AP invoice IDs
 }
 
 BankRegister.init(
@@ -88,6 +95,36 @@ BankRegister.init(
     },
     referenceNumber: {
       type: DataTypes.STRING,
+      allowNull: true,
+    },
+    // Phase 3: Added for bank account tracking
+    bankAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'bank_accounts',
+        key: 'id',
+      },
+    },
+    // Phase 4: Added for supplier payments and auto-numbering
+    chequeNumber: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    transferNumber: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    supplierId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'suppliers',
+        key: 'id',
+      },
+    },
+    invoiceIds: {
+      type: DataTypes.TEXT,
       allowNull: true,
     },
   },

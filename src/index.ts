@@ -19,6 +19,10 @@ import adjustmentRoutes from './routes/adjustmentRoutes';
 import reportRoutes from './routes/reportRoutes';
 import accountsReceivableRoutes from './routes/accountsReceivableRoutes';
 import accountsPayableRoutes from './routes/accountsPayableRoutes';
+import bankAccountRoutes from './routes/bankAccountRoutes';
+import cashRegisterMasterRoutes from './routes/cashRegisterMasterRoutes';
+import cardRoutes from './routes/cardRoutes';
+import financerRoutes from './routes/financerRoutes';
 import * as productPriceService from './services/productPriceService';
 
 dotenv.config();
@@ -45,6 +49,10 @@ app.use('/api/adjustments', adjustmentRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/accounts-receivable', accountsReceivableRoutes);
 app.use('/api/accounts-payable', accountsPayableRoutes);
+app.use('/api/bank-accounts', bankAccountRoutes);
+app.use('/api/cash-register-masters', cashRegisterMasterRoutes);
+app.use('/api/cards', cardRoutes);
+app.use('/api/financers', financerRoutes);
 
 // Root route
 app.get('/', (req, res) => {

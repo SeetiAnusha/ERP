@@ -55,6 +55,26 @@ export const createSale = async (data: any) => {
     
     const paymentType = data.paymentType ? data.paymentType.toUpperCase() : '';
     
+    // ✅ VALIDATION: For CASH/CHEQUE, require cash register selection
+    if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
+      if (!data.cashRegisterId) {
+        throw new Error(
+          `Cash register selection is required for ${paymentType} payments. ` +
+          `Please select a cash register to record this sale.`
+        );
+      }
+    }
+    
+    // ✅ VALIDATION: For DEBIT_CARD, require card selection (CREDIT_CARD doesn't need card selection)
+    if (paymentType === 'DEBIT_CARD') {
+      if (!data.cardId) {
+        throw new Error(
+          `Card selection is required for debit card payments. ` +
+          `Please select a card to process this sale.`
+        );
+      }
+    }
+    
     if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
       // CASH/CHEQUE: Collected immediately, cash balance increases (CashRegister entry created below)
       collectedAmount = total;
@@ -68,8 +88,8 @@ export const createSale = async (data: any) => {
       collectionStatus = 'Collected';
       // Will create CashRegister entry (INFLOW) below after sale is created
     }
-    else if (paymentType === 'CREDIT_CARD') {
-      // CREDIT CARD: Marked as collected (you made the sale), but card company owes you
+    else if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD') {
+      // DEBIT/CREDIT CARD: Marked as collected (you made the sale), but card company owes you
       collectedAmount = total;
       balanceAmount = 0;
       collectionStatus = 'Collected';
@@ -99,9 +119,19 @@ export const createSale = async (data: any) => {
     // Create Cash Register entry for CASH and CHEQUE collections (INFLOW)
     if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
       const CashRegister = (await import('../models/CashRegister')).default;
+      const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
       
-      // Get last cash register transaction for balance
+      // Validate cash register exists
+      const cashRegister = await CashRegisterMaster.findByPk(data.cashRegisterId, { transaction });
+      if (!cashRegister) {
+        throw new Error('Cash register not found');
+      }
+      
+      // ✅ FIX: Get last transaction for THIS SPECIFIC cash register only
       const lastCashTransaction = await CashRegister.findOne({
+        where: {
+          cashRegisterId: data.cashRegisterId
+        },
         order: [['id', 'DESC']],
         transaction
       });
@@ -109,13 +139,18 @@ export const createSale = async (data: any) => {
       const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
       const newBalance = lastBalance + total; // INFLOW increases balance
       
+      // ✅ FIX: Also update the CashRegisterMaster balance
+      const currentMasterBalance = Number(cashRegister.balance || 0);
+      const newMasterBalance = currentMasterBalance + total;
+      await cashRegister.update({ balance: newMasterBalance }, { transaction });
+      
       const client = await Client.findByPk(data.clientId, { transaction });
       
       const paymentMethodLabel = paymentType === 'CASH' ? 'Cash' : 'Cheque';
       
-      // Use the sale registration number (RV####) instead of generating new CJ####
+      // Use the sale registration number (RV####)
       await CashRegister.create({
-        registrationNumber: registrationNumber, // Use sale registration number
+        registrationNumber: registrationNumber,
         registrationDate: new Date(),
         transactionType: 'INFLOW',
         amount: total,
@@ -125,17 +160,41 @@ export const createSale = async (data: any) => {
         clientRnc: data.clientRnc || '',
         clientName: client?.name || '',
         ncf: data.ncf || '',
-        description: `Payment received for sale ${registrationNumber} via ${paymentMethodLabel}`,
+        description: `Sale ${registrationNumber} via ${paymentMethodLabel} - Cash Register: ${cashRegister.name}`,
         balance: newBalance,
+        cashRegisterId: data.cashRegisterId,
       }, { transaction });
     }
     
     // Create Bank Register entry for BANK_TRANSFER and DEPOSIT collections (INFLOW)
     if (paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
       const BankRegister = (await import('../models/BankRegister')).default;
+      const BankAccount = (await import('../models/BankAccount')).default;
       
-      // Get last bank register transaction for balance
+      // ✅ VALIDATION: Require bank account selection
+      if (!data.bankAccountId) {
+        throw new Error(
+          `Bank account selection is required for ${paymentType} payments. ` +
+          `Please select which bank account will receive this payment.`
+        );
+      }
+      
+      // ✅ Get and validate bank account
+      const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
+      if (!bankAccount) {
+        throw new Error('Bank account not found');
+      }
+      
+      // ✅ Update bank account balance
+      const currentBankBalance = Number(bankAccount.balance || 0);
+      const newBankBalance = currentBankBalance + total;
+      await bankAccount.update({ balance: newBankBalance }, { transaction });
+      
+      // ✅ Get last bank register transaction for THIS SPECIFIC bank account
       const lastBankTransaction = await BankRegister.findOne({
+        where: {
+          bankAccountId: data.bankAccountId
+        },
         order: [['id', 'DESC']],
         transaction
       });
@@ -147,9 +206,9 @@ export const createSale = async (data: any) => {
       
       const paymentMethodLabel = paymentType === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit';
       
-      // Use the sale registration number (RV####) instead of generating new BR####
+      // Use the sale registration number (RV####)
       await BankRegister.create({
-        registrationNumber: registrationNumber, // Use sale registration number
+        registrationNumber: registrationNumber,
         registrationDate: new Date(),
         transactionType: 'INFLOW',
         amount: total,
@@ -159,41 +218,129 @@ export const createSale = async (data: any) => {
         clientRnc: data.clientRnc || '',
         clientName: client?.name || '',
         ncf: data.ncf || '',
-        description: `Payment received for sale ${registrationNumber} via ${paymentMethodLabel}`,
+        description: `Sale ${registrationNumber} via ${paymentMethodLabel} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
         balance: newBalance,
+        bankAccountId: data.bankAccountId,  // ✅ Link to specific bank account
       }, { transaction });
     }
     
-    // Create Accounts Receivable for credit card and credit sales
-    if (paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
+    // Create Accounts Receivable for debit/credit card and credit sales
+    if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
       const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
+      const Card = (await import('../models/Card')).default;
+      const BankAccount = (await import('../models/BankAccount')).default;
+      const BankRegister = (await import('../models/BankRegister')).default;
       
-      // Get client info for credit sales
+      // Get client info
       const client = await Client.findByPk(data.clientId, { transaction });
       
-      // Use the sale registration number (RV####) instead of generating new AR####
-      await AccountsReceivable.create({
-        registrationNumber: registrationNumber, // Use sale registration number
-        registrationDate: new Date(),
-        type: paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_SALE' : 'CLIENT_CREDIT',
-        relatedDocumentType: 'Sale',
-        relatedDocumentId: sale.id,
-        relatedDocumentNumber: registrationNumber,
-        clientId: paymentType === 'CREDIT' ? data.clientId : undefined,
-        clientName: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : (client?.name || ''),
-        clientRnc: data.clientRnc || '',
-        ncf: data.ncf || '',
-        saleOf: data.saleType || 'Merchandise for sale', // Use saleType field
-        cardNetwork: paymentType === 'CREDIT_CARD' ? 'Credit Card Company' : undefined,
-        amount: total,
-        receivedAmount: 0,
-        balanceAmount: total,
-        status: 'Pending',
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        notes: paymentType === 'CREDIT_CARD'
-          ? `Credit card payment for sale ${registrationNumber}`
-          : `Credit sale to ${client?.name || 'client'} - ${registrationNumber}`,
-      }, { transaction });
+      if (paymentType === 'DEBIT_CARD') {
+        // ✅ DEBIT CARD SALE: Handle debit card payments (requires card selection)
+        const card = await Card.findByPk(data.cardId, { transaction });
+        if (!card) {
+          throw new Error('Card not found');
+        }
+        
+        // ✅ Validate card type matches payment type
+        if (card.cardType !== 'DEBIT') {
+          throw new Error(
+            `Selected card ****${card.cardNumberLast4} is a ${card.cardType} card, not a DEBIT card. ` +
+            `Please select a DEBIT card or change payment type to CREDIT_CARD.`
+          );
+        }
+        
+        const cardInfo = `${card.cardBrand || 'Card'} ****${card.cardNumberLast4}`;
+        
+        // DEBIT Card Sale: Money goes to YOUR bank account immediately
+        if (!card.bankAccountId) {
+          throw new Error(
+            `DEBIT card ****${card.cardNumberLast4} is not linked to a bank account. ` +
+            `Please link this card to a bank account before processing sales.`
+          );
+        }
+        
+        const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
+        if (!bankAccount) {
+          throw new Error(
+            `Bank account not found for DEBIT card ****${card.cardNumberLast4}.`
+          );
+        }
+        
+        // Add money to bank account
+        const newBankBalance = Number(bankAccount.balance) + total;
+        await bankAccount.update({ balance: newBankBalance }, { transaction });
+        
+        // Create Bank Register INFLOW entry
+        const lastBankTransaction = await BankRegister.findOne({
+          order: [['id', 'DESC']],
+          transaction
+        });
+        
+        const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+        const newBalance = lastBalance + total;
+        
+        await BankRegister.create({
+          registrationNumber: registrationNumber,
+          registrationDate: new Date(),
+          transactionType: 'INFLOW',
+          amount: total,
+          paymentMethod: 'Debit Card',
+          relatedDocumentType: 'Sale',
+          relatedDocumentNumber: registrationNumber,
+          clientRnc: data.clientRnc || '',
+          clientName: client?.name || '',
+          ncf: data.ncf || '',
+          description: `Sale ${registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
+          balance: newBalance,
+          bankAccountId: card.bankAccountId,
+        }, { transaction });
+        
+        // No AR needed for DEBIT card (money received immediately)
+        
+      } else if (paymentType === 'CREDIT_CARD') {
+        // ✅ CREDIT CARD SALE: Generic credit card payment (no specific card selection needed)
+        // Create Accounts Receivable for credit card company
+        await AccountsReceivable.create({
+          registrationNumber: registrationNumber,
+          registrationDate: new Date(),
+          type: 'CREDIT_CARD_SALE',
+          relatedDocumentType: 'Sale',
+          relatedDocumentId: sale.id,
+          relatedDocumentNumber: registrationNumber,
+          clientName: `Credit Card Company`,
+          clientRnc: data.clientRnc || '',
+          ncf: data.ncf || '',
+          saleOf: data.saleType || 'Merchandise for sale',
+          amount: total,
+          receivedAmount: 0,
+          balanceAmount: total,
+          status: 'Pending',
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days for card company
+          notes: `CREDIT card sale ${registrationNumber} - Card company owes you`,
+        }, { transaction });
+        
+      } else if (paymentType === 'CREDIT') {
+        // CREDIT Sale: Client owes YOU money
+        await AccountsReceivable.create({
+          registrationNumber: registrationNumber,
+          registrationDate: new Date(),
+          type: 'CLIENT_CREDIT',
+          relatedDocumentType: 'Sale',
+          relatedDocumentId: sale.id,
+          relatedDocumentNumber: registrationNumber,
+          clientId: data.clientId,
+          clientName: client?.name || '',
+          clientRnc: data.clientRnc || '',
+          ncf: data.ncf || '',
+          saleOf: data.saleType || 'Merchandise for sale',
+          amount: total,
+          receivedAmount: 0,
+          balanceAmount: total,
+          status: 'Pending',
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days for client
+          notes: `Credit sale to ${client?.name || 'client'} - ${registrationNumber}`,
+        }, { transaction });
+      }
     }
     
     if (data.items && data.items.length > 0) {

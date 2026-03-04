@@ -39,3 +39,13 @@ export const remove = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+// Phase 4: Get pending AP invoices for supplier
+export const getPendingInvoices = async (req: Request, res: Response) => {
+  try {
+    const invoices = await bankRegisterService.getPendingAPInvoices(parseInt(req.params.supplierId));
+    res.json(invoices);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

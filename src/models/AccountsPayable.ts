@@ -12,6 +12,7 @@ interface AccountsPayableAttributes {
   supplierId?: number;
   supplierName?: string;
   supplierRnc?: string; // Invoice supplier RNC
+  cardId?: number; // Card ID for CREDIT_CARD purchases
   cardIssuer?: string; // 'Bank Name', 'Credit Card Company', etc.
   ncf?: string; // Invoice NCF
   purchaseDate?: Date; // Invoice date
@@ -41,6 +42,7 @@ class AccountsPayable extends Model<AccountsPayableAttributes, AccountsPayableCr
   public supplierId?: number;
   public supplierName?: string;
   public supplierRnc?: string;
+  public cardId?: number;
   public cardIssuer?: string;
   public ncf?: string;
   public purchaseDate?: Date;
@@ -99,6 +101,10 @@ AccountsPayable.init(
     },
     supplierRnc: {
       type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    cardId: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
     cardIssuer: {
