@@ -46,16 +46,29 @@ export const createCard = async (data: any) => {
   
   const code = `CD${String(nextNumber).padStart(4, '0')}`;
   
-  return await Card.create({
+  // Clean up data - convert empty strings to null for integer fields
+  const cleanData = {
     ...data,
     code,
-  });
+    bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
+    creditLimit: data.creditLimit || 0,
+  };
+  
+  return await Card.create(cleanData);
 };
 
 export const updateCard = async (id: number, data: any) => {
   const card = await Card.findByPk(id);
   if (!card) throw new Error('Card not found');
-  return await card.update(data);
+  
+  // Clean up data - convert empty strings to null for integer fields
+  const cleanData = {
+    ...data,
+    bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
+    creditLimit: data.creditLimit || 0,
+  };
+  
+  return await card.update(cleanData);
 };
 
 export const deleteCard = async (id: number) => {

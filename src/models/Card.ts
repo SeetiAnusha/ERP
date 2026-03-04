@@ -5,6 +5,7 @@ class Card extends Model {
   public id!: number;
   public code!: string;
   public bankName!: string;
+  public cardName!: string; // NEW: User-friendly card name
   public cardNumberLast4!: string;
   public cardType!: 'CREDIT' | 'DEBIT';
   public cardBrand!: string;
@@ -31,6 +32,11 @@ Card.init(
     bankName: {
       type: DataTypes.STRING(255),
       allowNull: false,
+    },
+    cardName: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      field: 'card_name', // Maps to snake_case database column
     },
     cardNumberLast4: {
       type: DataTypes.STRING(4),
