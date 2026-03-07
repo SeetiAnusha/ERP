@@ -375,6 +375,21 @@ export const createPurchase = async (data: any) => {
               }
             }
             
+            // ✅ FIX: Look up supplier ID by supplier name for invoices
+            let invoiceSupplierId: number | undefined = undefined;
+            if (invoicePaymentType === 'CREDIT' && invoice.supplierName) {
+              const Supplier = (await import('../models/Supplier')).default;
+              const foundSupplier = await Supplier.findOne({
+                where: {
+                  name: invoice.supplierName
+                },
+                transaction
+              });
+              if (foundSupplier) {
+                invoiceSupplierId = foundSupplier.id;
+              }
+            }
+            
             const AccountsPayable = (await import('../models/AccountsPayable')).default;
             
             // Use the purchase registration number (CP####) for invoice AP entries too
@@ -382,9 +397,10 @@ export const createPurchase = async (data: any) => {
               registrationNumber: registrationNumber, // Use purchase registration number
               registrationDate: new Date(),
               type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
-              relatedDocumentType: 'Purchase',
+              relatedDocumentType: 'InvoiceAssociate',
               relatedDocumentId: purchase.id,
               relatedDocumentNumber: registrationNumber,
+              supplierId: invoiceSupplierId, // ✅ FIX: Set supplier ID for credit invoices
               supplierName: invoicePaymentType === 'CREDIT_CARD' ? (invoiceCardInfo || 'Credit Card Company') : (invoice.supplierName || 'Unknown Supplier'),
               supplierRnc: invoice.supplierRnc || '',
               ncf: invoice.ncf || '',
@@ -444,6 +460,21 @@ export const createPurchase = async (data: any) => {
             }
           }
           
+          // ✅ FIX: Look up supplier ID by supplier name for invoices
+          let invoiceSupplierId: number | undefined = undefined;
+          if (invoicePaymentType === 'CREDIT' && invoice.supplierName) {
+            const Supplier = (await import('../models/Supplier')).default;
+            const foundSupplier = await Supplier.findOne({
+              where: {
+                name: invoice.supplierName
+              },
+              transaction
+            });
+            if (foundSupplier) {
+              invoiceSupplierId = foundSupplier.id;
+            }
+          }
+          
           await AccountsPayable.create({
             registrationNumber: registrationNumber, // Use purchase registration number (CP####)
             registrationDate: new Date(),
@@ -451,6 +482,7 @@ export const createPurchase = async (data: any) => {
             relatedDocumentType: 'Purchase',
             relatedDocumentId: purchase.id,
             relatedDocumentNumber: registrationNumber,
+            supplierId: invoiceSupplierId, // ✅ FIX: Set supplier ID for credit invoices
             supplierName: invoicePaymentType === 'CREDIT_CARD' ? (invoiceCardInfo || 'Credit Card Company') : (invoice.supplierName || 'Unknown Supplier'),
             supplierRnc: invoice.supplierRnc || '',
             ncf: invoice.ncf || '',

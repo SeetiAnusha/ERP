@@ -26,7 +26,23 @@ export const getPendingAPInvoices = async (supplierId: number) => {
     order: [['registrationDate', 'ASC']]
   });
   
-  return pendingInvoices;
+  // Transform the data to include invoice details for frontend display
+  return pendingInvoices.map(ap => ({
+    id: ap.id,
+    registrationNumber: ap.registrationNumber,
+    amount: ap.amount,
+    balanceAmount: ap.balanceAmount,
+    invoiceDate: ap.purchaseDate || ap.registrationDate, // Use purchase date (invoice date) or registration date
+    description: `${ap.relatedDocumentType} - ${ap.relatedDocumentNumber}${ap.ncf ? ` (NCF: ${ap.ncf})` : ''}${ap.supplierRnc ? ` - RNC: ${ap.supplierRnc}` : ''} - ${ap.purchaseType || 'Purchase'}`,
+    // Include additional invoice details for reference
+    invoiceNumber: ap.relatedDocumentNumber,
+    ncf: ap.ncf,
+    supplierRnc: ap.supplierRnc,
+    purchaseType: ap.purchaseType,
+    paymentType: ap.paymentType,
+    type: ap.type,
+    relatedDocumentType: ap.relatedDocumentType
+  }));
 };
 
 // Phase 4: Auto-generate cheque number

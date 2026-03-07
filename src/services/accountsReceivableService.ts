@@ -68,8 +68,14 @@ export const createAccountsReceivable = async (data: any) => {
   }
 };
 
-export const recordPayment = async (id: number, paymentData: { amount: number; receivedDate?: Date; notes?: string }) => {
-  const transaction = await sequelize.transaction();
+export const recordPayment = async (id: number, paymentData: { 
+  amount: number; 
+  receivedDate?: Date; 
+  notes?: string;
+  bankAccountId?: number;
+  isCardSale?: boolean;
+}) => {
+    const transaction = await sequelize.transaction();
   let committed = false;
   
   try {
@@ -84,6 +90,69 @@ export const recordPayment = async (id: number, paymentData: { amount: number; r
       status = 'Received';
     } else if (newReceivedAmount > 0) {
       status = 'Partial';
+    }
+
+    if (paymentData.isCardSale && paymentData.bankAccountId) {
+      const BankRegister = (await import('../models/BankRegister')).default;
+      const BankAccount = (await import('../models/BankAccount')).default;
+      
+      // Get and validate bank account
+      const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
+      if (!bankAccount) {
+        throw new Error('Bank account not found');
+      }
+      
+      // Generate bank register number
+      const lastBankTransaction = await BankRegister.findOne({
+        where: {
+          registrationNumber: {
+            [Op.like]: 'BR%'
+          }
+        },
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      let nextBankNumber = 1;
+      if (lastBankTransaction) {
+        const lastBankNumber = parseInt(lastBankTransaction.registrationNumber.substring(2));
+        nextBankNumber = lastBankNumber + 1;
+      }
+      
+      const bankRegistrationNumber = `BR${String(nextBankNumber).padStart(4, '0')}`;
+      
+      // Get last bank balance for this specific bank account
+      const lastBankBalance = await BankRegister.findOne({
+        where: { bankAccountId: paymentData.bankAccountId },
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      const previousBalance = lastBankBalance ? Number(lastBankBalance.balance) : Number(bankAccount.balance);
+      const newBankBalance = previousBalance + paymentData.amount;
+      
+      // Create bank register entry
+      await BankRegister.create({
+        registrationNumber: bankRegistrationNumber,
+        registrationDate: paymentData.receivedDate || new Date(),
+        transactionType: 'INFLOW',
+        amount: paymentData.amount,
+        paymentMethod: 'CREDIT_CARD_COLLECTION',
+        relatedDocumentType: 'AR_COLLECTION',
+        relatedDocumentNumber: ar.registrationNumber,
+        clientName: ar.clientName || ar.cardNetwork || 'Credit Card Collection',
+        clientRnc: ar.clientRnc || '',
+        ncf: ar.ncf || '',
+        description: `Credit Card Collection - ${ar.relatedDocumentNumber} - ${ar.clientName || ar.cardNetwork}`,
+        balance: newBankBalance,
+        bankAccountId: paymentData.bankAccountId,
+      }, { transaction });
+      
+      // Update bank account balance
+      const newBankAccountBalance = Number(bankAccount.balance) + paymentData.amount;
+      await bankAccount.update({
+        balance: newBankAccountBalance,
+      }, { transaction });
     }
     
     await ar.update({
