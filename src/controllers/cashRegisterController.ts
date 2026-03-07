@@ -48,10 +48,10 @@ export const getCashRegisterBalance = async (req: Request, res: Response) => {
   }
 };
 
-// Phase 3: Get pending AR invoices for customer
-export const getPendingInvoices = async (req: Request, res: Response) => {
+// Get pending Credit Sale and Credit Card Sale invoices for customer
+export const getPendingCreditSaleInvoices = async (req: Request, res: Response) => {
   try {
-    const invoices = await cashRegisterService.getPendingARInvoices(parseInt(req.params.customerId));
+    const invoices = await cashRegisterService.getPendingCreditSaleInvoices(parseInt(req.params.customerId));
     res.json(invoices);
   } catch (error: any) {
     res.status(500).json({ error: error.message });

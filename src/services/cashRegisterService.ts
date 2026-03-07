@@ -60,9 +60,9 @@ export const createCashTransaction = async (data: any) => {
     // Phase 3: Handle different transaction types
     if (data.transactionType === 'INFLOW') {
       // INFLOW: Money coming into cash register
-      // Validate based on relatedDocumentType
+      // Allow AR_COLLECTION (for Credit Sales and Credit Card Sales with customer info), CONTRIBUTION, and LOAN
       if (data.relatedDocumentType === 'AR_COLLECTION') {
-        // AR Collection: Require customer and invoices
+        // AR Collection: For Credit Sales and Credit Card Sales with customer info
         if (!data.customerId) {
           throw new Error('Customer is required for AR Collection');
         }
@@ -70,14 +70,25 @@ export const createCashTransaction = async (data: any) => {
           throw new Error('At least one invoice must be selected for AR Collection');
         }
         
-        // Update AR invoices
+        // Update AR invoices - Credit Sales and Credit Card Sales with customer info
         const invoiceIdsArray = JSON.parse(data.invoiceIds);
         for (const invoiceId of invoiceIdsArray) {
           const arInvoice = await AccountsReceivable.findByPk(invoiceId);
           if (arInvoice) {
+            // Verify this is from a Credit Sale or Credit Card Sale with customer info
+            const allowedTypes = ['CREDIT_SALE', 'CLIENT_CREDIT', 'CREDIT_CARD_SALE', 'DEBIT_CARD_SALE'];
+            if (!allowedTypes.includes(arInvoice.type)) {
+              throw new Error(`Invoice ${arInvoice.registrationNumber} is not from a Credit Sale or Credit Card Sale. Only Credit Sales and Credit Card Sales with customer information can be collected through Cash Register.`);
+            }
+            
+            // For credit card sales, ensure customer information is available
+            if ((arInvoice.type === 'CREDIT_CARD_SALE' || arInvoice.type === 'DEBIT_CARD_SALE') && !arInvoice.clientId) {
+              throw new Error(`Invoice ${arInvoice.registrationNumber} is a Credit Card Sale without customer information. Only Credit Card Sales with customer information can be collected through Cash Register.`);
+            }
+            
             const receivedAmount = parseFloat(arInvoice.receivedAmount.toString()) + parseFloat(data.amount);
             const balanceAmount = parseFloat(arInvoice.amount.toString()) - receivedAmount;
-            const status = balanceAmount <= 0 ? 'Received' : 'Partial';  // Fixed: Use correct status values
+            const status = balanceAmount <= 0 ? 'Received' : 'Partial';
             
             await arInvoice.update({
               receivedAmount,
@@ -86,6 +97,43 @@ export const createCashTransaction = async (data: any) => {
             }, { transaction });
           }
         }
+      }
+      
+      if (data.relatedDocumentType === 'CONTRIBUTION' || data.relatedDocumentType === 'LOAN') {
+        // CONTRIBUTION/LOAN: Require investment agreement instead of just financer
+        if (!data.investmentAgreementId) {
+          throw new Error('Investment Agreement is required for Contribution/Loan');
+        }
+        
+        // Get and validate investment agreement
+        const InvestmentAgreement = require('../models/InvestmentAgreement').default;
+        const agreement = await InvestmentAgreement.findByPk(data.investmentAgreementId);
+        if (!agreement) {
+          throw new Error('Investment Agreement not found');
+        }
+        
+        if (agreement.status !== 'ACTIVE') {
+          throw new Error('Investment Agreement is not active');
+        }
+        
+        const receivingAmount = parseFloat(data.amount);
+        const currentBalance = parseFloat(agreement.balanceAmount.toString());
+        
+        if (receivingAmount > currentBalance) {
+          throw new Error(
+            `Cannot receive more than remaining balance. ` +
+            `Agreement balance: ${currentBalance}, ` +
+            `Trying to receive: ${receivingAmount}`
+          );
+        }
+        
+        // Update investment agreement
+        const investmentAgreementService = require('../services/investmentAgreementService');
+        await investmentAgreementService.updateAgreementOnPayment(data.investmentAgreementId, receivingAmount);
+        
+        // ✅ COMPLETELY REMOVED: No AccountsPayable creation for CONTRIBUTION/LOAN transactions
+        // These transactions are tracked through CashRegister + InvestmentAgreement only
+        // AccountsPayable is only for credit/unpaid transactions, not cash transactions
       }
       
       // Calculate new balance (INFLOW increases balance)
@@ -110,6 +158,16 @@ export const createCashTransaction = async (data: any) => {
       // OUTFLOW: Money leaving cash register
       // Phase 3: Only allow BANK_DEPOSIT or CORRECTION
       
+      // ✅ CRITICAL VALIDATION: Check if cash register has sufficient balance
+      const outflowAmount = parseFloat(data.amount);
+      if (lastBalance < outflowAmount) {
+        throw new Error(
+          `Insufficient balance in cash register "${cashRegisterMaster.name}". ` +
+          `Available: ${lastBalance.toFixed(2)}, Required: ${outflowAmount.toFixed(2)}. ` +
+          `Cannot perform transaction that would result in negative balance.`
+        );
+      }
+      
       if (data.paymentMethod === 'BANK_DEPOSIT') {
         // Bank Deposit: Require bank account
         if (!data.bankAccountId) {
@@ -123,7 +181,7 @@ export const createCashTransaction = async (data: any) => {
         }
         
         // Calculate new cash register balance (OUTFLOW decreases balance)
-        const newCashBalance = lastBalance - parseFloat(data.amount);
+        const newCashBalance = lastBalance - outflowAmount;
         
         // Create cash register OUTFLOW transaction
         const cashTransaction = await CashRegister.create({
@@ -183,7 +241,17 @@ export const createCashTransaction = async (data: any) => {
         
       } else if (data.paymentMethod === 'CORRECTION') {
         // Correction: Just adjust balance
-        const newBalance = lastBalance - parseFloat(data.amount);
+        // ✅ VALIDATION: Also check balance for corrections to prevent negative
+        const correctionAmount = parseFloat(data.amount);
+        const newBalance = lastBalance - correctionAmount;
+        
+        if (newBalance < 0) {
+          throw new Error(
+            `Correction would result in negative balance in cash register "${cashRegisterMaster.name}". ` +
+            `Current balance: ${lastBalance.toFixed(2)}, Correction amount: ${correctionAmount.toFixed(2)}. ` +
+            `Resulting balance would be: ${newBalance.toFixed(2)}. Cannot proceed.`
+          );
+        }
         
         const cashTransaction = await CashRegister.create({
           ...data,
@@ -237,13 +305,17 @@ export const getCashRegisterBalance = async (cashRegisterId: number) => {
   };
 };
 
-// Phase 3: Get pending AR invoices for a customer
-export const getPendingARInvoices = async (customerId: number) => {
+// Get pending AR invoices for a customer - ONLY Credit Sales
+// Get pending Credit Sale and Credit Card Sale invoices for customer
+export const getPendingCreditSaleInvoices = async (customerId: number) => {
   const pendingInvoices = await AccountsReceivable.findAll({
     where: {
       clientId: customerId,
+      type: {
+        [Op.in]: ['CREDIT_SALE', 'CLIENT_CREDIT', 'CREDIT_CARD_SALE', 'DEBIT_CARD_SALE'] // Include both credit sales and card sales with customer info
+      },
       status: {
-        [Op.in]: ['Pending', 'Partial']  // Fixed: Status values are capitalized in the model
+        [Op.in]: ['Pending', 'Partial']
       }
     },
     order: [['registrationDate', 'ASC']]

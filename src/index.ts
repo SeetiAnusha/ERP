@@ -11,6 +11,13 @@ import productRoutes from './routes/productRoutes';
 import productPriceRoutes from './routes/productPriceRoutes';
 import fixedAssetRoutes from './routes/fixedAssetRoutes';
 import investmentRoutes from './routes/investmentRoutes';
+import investmentAgreementRoutes from './routes/investmentAgreementRoutes';
+import investorRoutes from './routes/investorRoutes';
+import cardPaymentNetworkRoutes from './routes/cardPaymentNetworkRoutes';
+import cardTransactionRoutes from './routes/cardTransactionRoutes';
+import bankRoutes from './routes/bankRoutes';
+import investmentSummaryRoutes from './routes/investmentSummaryRoutes';
+import recentActivityRoutes from './routes/recentActivityRoutes';
 import prepaidExpenseRoutes from './routes/prepaidExpenseRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import cashRegisterRoutes from './routes/cashRegisterRoutes';
@@ -41,6 +48,13 @@ app.use('/api/products', productRoutes);
 app.use('/api/product-prices', productPriceRoutes);
 app.use('/api/fixed-assets', fixedAssetRoutes);
 app.use('/api/investments', investmentRoutes);
+app.use('/api/investment-agreements', investmentAgreementRoutes);
+app.use('/api/investors', investorRoutes);
+app.use('/api/card-payment-networks', cardPaymentNetworkRoutes);
+app.use('/api/card-transactions', cardTransactionRoutes);
+app.use('/api/banks', bankRoutes);
+app.use('/api/investment-summary', investmentSummaryRoutes);
+app.use('/api/recent-activity', recentActivityRoutes);
 app.use('/api/prepaid-expenses', prepaidExpenseRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/cash-register', cashRegisterRoutes);
@@ -91,14 +105,18 @@ const startServer = async () => {
 
     // Sync database to create tables
     console.log('Synchronizing database...');
-    // Use alter: true to update existing tables without dropping data
-    await sequelize.sync({ alter: true });
-    console.log('✓ Database synchronized - all tables created/updated');
+    
+    // Use basic sync to avoid ALTER TABLE issues with ENUM columns
+    // This will create missing tables but won't alter existing ones
+    await sequelize.sync({ force: false });
+    console.log('✓ Database synchronized - all tables created');
     
     // Update price active status based on current date
     console.log('Updating product price active status...');
     await productPriceService.updatePriceActiveStatus();
     console.log('✓ Product prices synchronized with current date');
+    
+    console.log('\n🎉 Server and database are fully operational!');
   } catch (error: any) {
     console.error('❌ Database connection error:');
     console.error('Error name:', error.name);
@@ -107,12 +125,22 @@ const startServer = async () => {
       console.error('Parent error:', error.parent.message);
     }
     console.error('Full error:', error);
+    
+    // Check if it's the specific ENUM syntax error
+    if (error.message && error.message.includes('USING')) {
+      console.log('\n💡 This appears to be the ENUM column syntax error.');
+      console.log('To fix this, run the SQL script: ERP/fix-enum-column.sql');
+      console.log('Or connect to your database and run:');
+      console.log('COMMENT ON COLUMN "card_payment_networks"."type" IS NULL;');
+    }
+    
     console.log('\n⚠️  Server is running but database is not connected!');
     console.log('Please check:');
     console.log('1. DATABASE_URL environment variable is set correctly');
     console.log('2. Database credentials are correct');
     console.log('3. Database server is accessible');
     console.log('4. SSL settings are correct for your database');
+    console.log('5. Run the fix-enum-column.sql script if you see ENUM syntax errors');
   }
 };
 

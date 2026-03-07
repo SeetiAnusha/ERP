@@ -5,6 +5,14 @@ import Product from '../models/Product';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 
+// Helper function for currency formatting
+const formatCurrency = (amount: number): string => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(amount);
+};
+
 export const getAllSales = async () => {
   return await Sale.findAll({
     include: [
@@ -65,12 +73,12 @@ export const createSale = async (data: any) => {
       }
     }
     
-    // ✅ VALIDATION: For DEBIT_CARD, require card selection (CREDIT_CARD doesn't need card selection)
-    if (paymentType === 'DEBIT_CARD') {
-      if (!data.cardId) {
+    // ✅ VALIDATION: For DEBIT_CARD/CREDIT_CARD, require payment network selection
+    if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD') {
+      if (!data.cardPaymentNetworkId) {
         throw new Error(
-          `Card selection is required for debit card payments. ` +
-          `Please select a card to process this sale.`
+          `Payment network selection is required for ${paymentType.toLowerCase().replace('_', ' ')} payments. ` +
+          `Please select a payment network (Visa, Mastercard, etc.).`
         );
       }
     }
@@ -89,10 +97,10 @@ export const createSale = async (data: any) => {
       // Will create CashRegister entry (INFLOW) below after sale is created
     }
     else if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD') {
-      // DEBIT/CREDIT CARD: Marked as collected (you made the sale), but card company owes you
-      collectedAmount = total;
-      balanceAmount = 0;
-      collectionStatus = 'Collected';
+      // DEBIT/CREDIT CARD: Creates Accounts Receivable from payment network
+      collectedAmount = 0; // Not collected yet - payment network owes you
+      balanceAmount = total;
+      collectionStatus = 'Not Collected';
     }
     else if (paymentType === 'CREDIT') {
       // CREDIT: Not collected yet, client will pay later
@@ -227,96 +235,52 @@ export const createSale = async (data: any) => {
     // Create Accounts Receivable for debit/credit card and credit sales
     if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
       const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
-      const Card = (await import('../models/Card')).default;
-      const BankAccount = (await import('../models/BankAccount')).default;
-      const BankRegister = (await import('../models/BankRegister')).default;
+      const CardPaymentNetwork = (await import('../models/CardPaymentNetwork')).default;
       
       // Get client info
       const client = await Client.findByPk(data.clientId, { transaction });
       
-      if (paymentType === 'DEBIT_CARD') {
-        // ✅ DEBIT CARD SALE: Handle debit card payments (requires card selection)
-        const card = await Card.findByPk(data.cardId, { transaction });
-        if (!card) {
-          throw new Error('Card not found');
+      if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD') {
+        // ✅ CARD PAYMENT: Handle payment network (Visa, Mastercard, etc.)
+        const network = await CardPaymentNetwork.findByPk(data.cardPaymentNetworkId, { transaction });
+        if (!network) {
+          throw new Error('Payment network not found');
         }
         
-        // ✅ Validate card type matches payment type
-        if (card.cardType !== 'DEBIT') {
+        // ✅ Validate network type matches payment type
+        const expectedType = paymentType === 'DEBIT_CARD' ? 'DEBIT' : 'CREDIT';
+        if (network.type !== expectedType) {
           throw new Error(
-            `Selected card ****${card.cardNumberLast4} is a ${card.cardType} card, not a DEBIT card. ` +
-            `Please select a DEBIT card or change payment type to CREDIT_CARD.`
+            `Selected payment network "${network.name}" is a ${network.type} network, not a ${expectedType} network. ` +
+            `Please select a ${expectedType} payment network.`
           );
         }
         
-        const cardInfo = `${card.cardBrand || 'Card'} ****${card.cardNumberLast4}`;
+        // Calculate processing fee
+        const processingFee = total * Number(network.processingFee);
+        const netAmount = total - processingFee;
         
-        // DEBIT Card Sale: Money goes to YOUR bank account immediately
-        if (!card.bankAccountId) {
-          throw new Error(
-            `DEBIT card ****${card.cardNumberLast4} is not linked to a bank account. ` +
-            `Please link this card to a bank account before processing sales.`
-          );
-        }
-        
-        const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
-        if (!bankAccount) {
-          throw new Error(
-            `Bank account not found for DEBIT card ****${card.cardNumberLast4}.`
-          );
-        }
-        
-        // Add money to bank account
-        const newBankBalance = Number(bankAccount.balance) + total;
-        await bankAccount.update({ balance: newBankBalance }, { transaction });
-        
-        // Create Bank Register INFLOW entry
-        const lastBankTransaction = await BankRegister.findOne({
-          order: [['id', 'DESC']],
-          transaction
-        });
-        
-        const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
-        const newBalance = lastBalance + total;
-        
-        await BankRegister.create({
-          registrationNumber: registrationNumber,
-          registrationDate: new Date(),
-          transactionType: 'INFLOW',
-          amount: total,
-          paymentMethod: 'Debit Card',
-          relatedDocumentType: 'Sale',
-          relatedDocumentNumber: registrationNumber,
-          clientRnc: data.clientRnc || '',
-          clientName: client?.name || '',
-          ncf: data.ncf || '',
-          description: `Sale ${registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
-          balance: newBalance,
-          bankAccountId: card.bankAccountId,
-        }, { transaction });
-        
-        // No AR needed for DEBIT card (money received immediately)
-        
-      } else if (paymentType === 'CREDIT_CARD') {
-        // ✅ CREDIT CARD SALE: Generic credit card payment (no specific card selection needed)
-        // Create Accounts Receivable for credit card company
+        // Create Accounts Receivable for payment network
+        const networkName = `${network.name} ${network.type}`;
         await AccountsReceivable.create({
           registrationNumber: registrationNumber,
           registrationDate: new Date(),
-          type: 'CREDIT_CARD_SALE',
+          type: paymentType === 'DEBIT_CARD' ? 'DEBIT_CARD_SALE' : 'CREDIT_CARD_SALE',
           relatedDocumentType: 'Sale',
           relatedDocumentId: sale.id,
           relatedDocumentNumber: registrationNumber,
-          clientName: `Credit Card Company`,
+          clientId: data.clientId, // ✅ Store customer ID for credit card sales
+          clientName: client?.name || '', // ✅ Store actual customer name
+          cardNetwork: networkName, // ✅ Store card network separately
           clientRnc: data.clientRnc || '',
           ncf: data.ncf || '',
           saleOf: data.saleType || 'Merchandise for sale',
-          amount: total,
+          amount: netAmount, // Amount after processing fee
           receivedAmount: 0,
-          balanceAmount: total,
+          balanceAmount: netAmount,
           status: 'Pending',
-          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days for card company
-          notes: `CREDIT card sale ${registrationNumber} - Card company owes you`,
+          dueDate: new Date(Date.now() + network.settlementDays * 24 * 60 * 60 * 1000),
+          notes: `${networkName} payment - Customer: ${client?.name || 'N/A'} - Fee: ${(Number(network.processingFee) * 100).toFixed(2)}% (${formatCurrency(processingFee)}) - Settlement: ${network.settlementDays} days`,
         }, { transaction });
         
       } else if (paymentType === 'CREDIT') {

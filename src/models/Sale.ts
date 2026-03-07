@@ -13,6 +13,7 @@ interface SaleAttributes {
   ncf?: string;
   saleType: string;
   paymentType: string;
+  cardPaymentNetworkId?: number; // New field for payment networks
   collectionStatus: string;  // Changed from paymentStatus
   subtotal: number;
   tax: number;
@@ -38,6 +39,7 @@ class Sale extends Model<SaleAttributes, SaleCreationAttributes> implements Sale
   public ncf?: string;
   public saleType!: string;
   public paymentType!: string;
+  public cardPaymentNetworkId?: number; // New field for payment networks
   public collectionStatus!: string;  // Changed from paymentStatus
   public subtotal!: number;
   public tax!: number;
@@ -98,6 +100,15 @@ Sale.init(
     paymentType: {
       type: DataTypes.STRING(50),
       allowNull: false,
+    },
+    cardPaymentNetworkId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'card_payment_network_id',
+      references: {
+        model: 'card_payment_networks',
+        key: 'id',
+      },
     },
     collectionStatus: {  // Changed from paymentStatus
       type: DataTypes.STRING(50),

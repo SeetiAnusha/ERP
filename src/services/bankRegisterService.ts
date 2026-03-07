@@ -102,9 +102,25 @@ export const createBankRegister = async (data: any) => {
     
     // Phase 4: Handle INFLOW
     if (data.transactionType === 'INFLOW') {
-      // Only allow BANK_CREDIT or CORRECTION
-      if (data.paymentMethod !== 'BANK_CREDIT' && data.paymentMethod !== 'CORRECTION') {
-        throw new Error('INFLOW only allows BANK_CREDIT or CORRECTION payment methods');
+      // Allow CHEQUE, BANK_TRANSFER, DEPOSIT, CASH, BANK_CREDIT, or CORRECTION for INFLOW
+      const allowedInflowMethods = ['CHEQUE', 'BANK_TRANSFER', 'DEPOSIT', 'CASH', 'BANK_CREDIT', 'CORRECTION'];
+      if (!allowedInflowMethods.includes(data.paymentMethod)) {
+        throw new Error(`INFLOW only allows these payment methods: ${allowedInflowMethods.join(', ')}`);
+      }
+      
+      let chequeNumber = null;
+      let transferNumber = null;
+      
+      // For CHEQUE payments
+      if (data.paymentMethod === 'CHEQUE') {
+        // Auto-generate cheque number if not provided
+        chequeNumber = data.chequeNumber || await generateChequeNumber(data.bankAccountId);
+      }
+      
+      // For BANK_TRANSFER payments
+      if (data.paymentMethod === 'BANK_TRANSFER') {
+        // Auto-generate transfer number if not provided
+        transferNumber = data.transferNumber || await generateTransferNumber(data.bankAccountId);
       }
       
       // Create bank register entry
@@ -112,6 +128,8 @@ export const createBankRegister = async (data: any) => {
         ...data,
         registrationNumber,
         balance: newBalance,
+        chequeNumber,
+        transferNumber,
       }, { transaction });
       
       // Update bank account balance (INFLOW increases balance)
@@ -135,18 +153,39 @@ export const createBankRegister = async (data: any) => {
         // If supplier and invoices selected, update AP
         if (data.supplierId && data.invoiceIds) {
           const invoiceIdsArray = JSON.parse(data.invoiceIds);
-          for (const invoiceId of invoiceIdsArray) {
-            const apInvoice = await AccountsPayable.findByPk(invoiceId, { transaction });
+          
+          // If there's only one invoice (like from Accounts Payable), pay the full amount to that invoice
+          if (invoiceIdsArray.length === 1) {
+            const apInvoice = await AccountsPayable.findByPk(invoiceIdsArray[0], { transaction });
             if (apInvoice) {
-              const paidAmount = parseFloat(apInvoice.paidAmount.toString()) + amount;
-              const balanceAmount = parseFloat(apInvoice.amount.toString()) - paidAmount;
-              const status = balanceAmount <= 0 ? 'Paid' : 'Partial';
+              const currentPaidAmount = parseFloat(apInvoice.paidAmount.toString());
+              const paymentAmount = amount;
+              const newPaidAmount = currentPaidAmount + paymentAmount;
+              const totalAmount = parseFloat(apInvoice.amount.toString());
+              const newBalanceAmount = totalAmount - newPaidAmount;
+              const status = newBalanceAmount <= 0.01 ? 'Paid' : 'Partial'; // Use 0.01 to handle floating point precision
               
               await apInvoice.update({
-                paidAmount,
-                balanceAmount,
+                paidAmount: newPaidAmount,
+                balanceAmount: Math.max(0, newBalanceAmount), // Ensure balance doesn't go negative
                 status,
               }, { transaction });
+            }
+          } else {
+            // Multiple invoices - distribute amount proportionally or handle as before
+            for (const invoiceId of invoiceIdsArray) {
+              const apInvoice = await AccountsPayable.findByPk(invoiceId, { transaction });
+              if (apInvoice) {
+                const paidAmount = parseFloat(apInvoice.paidAmount.toString()) + amount;
+                const balanceAmount = parseFloat(apInvoice.amount.toString()) - paidAmount;
+                const status = balanceAmount <= 0 ? 'Paid' : 'Partial';
+                
+                await apInvoice.update({
+                  paidAmount,
+                  balanceAmount,
+                  status,
+                }, { transaction });
+              }
             }
           }
         }
@@ -160,18 +199,39 @@ export const createBankRegister = async (data: any) => {
         // If supplier and invoices selected, update AP
         if (data.supplierId && data.invoiceIds) {
           const invoiceIdsArray = JSON.parse(data.invoiceIds);
-          for (const invoiceId of invoiceIdsArray) {
-            const apInvoice = await AccountsPayable.findByPk(invoiceId, { transaction });
+          
+          // If there's only one invoice (like from Accounts Payable), pay the full amount to that invoice
+          if (invoiceIdsArray.length === 1) {
+            const apInvoice = await AccountsPayable.findByPk(invoiceIdsArray[0], { transaction });
             if (apInvoice) {
-              const paidAmount = parseFloat(apInvoice.paidAmount.toString()) + amount;
-              const balanceAmount = parseFloat(apInvoice.amount.toString()) - paidAmount;
-              const status = balanceAmount <= 0 ? 'Paid' : 'Partial';
+              const currentPaidAmount = parseFloat(apInvoice.paidAmount.toString());
+              const paymentAmount = amount;
+              const newPaidAmount = currentPaidAmount + paymentAmount;
+              const totalAmount = parseFloat(apInvoice.amount.toString());
+              const newBalanceAmount = totalAmount - newPaidAmount;
+              const status = newBalanceAmount <= 0.01 ? 'Paid' : 'Partial'; // Use 0.01 to handle floating point precision
               
               await apInvoice.update({
-                paidAmount,
-                balanceAmount,
+                paidAmount: newPaidAmount,
+                balanceAmount: Math.max(0, newBalanceAmount), // Ensure balance doesn't go negative
                 status,
               }, { transaction });
+            }
+          } else {
+            // Multiple invoices - distribute amount proportionally or handle as before
+            for (const invoiceId of invoiceIdsArray) {
+              const apInvoice = await AccountsPayable.findByPk(invoiceId, { transaction });
+              if (apInvoice) {
+                const paidAmount = parseFloat(apInvoice.paidAmount.toString()) + amount;
+                const balanceAmount = parseFloat(apInvoice.amount.toString()) - paidAmount;
+                const status = balanceAmount <= 0 ? 'Paid' : 'Partial';
+                
+                await apInvoice.update({
+                  paidAmount,
+                  balanceAmount,
+                  status,
+                }, { transaction });
+              }
             }
           }
         }

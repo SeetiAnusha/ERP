@@ -14,6 +14,25 @@ import SupplierCredit from './SupplierCredit';
 import ClientCredit from './ClientCredit';
 import Card from './Card';
 import BankAccount from './BankAccount';
+import CashRegister from './CashRegister';
+import CashRegisterMaster from './CashRegisterMaster';
+import AccountsPayable from './AccountsPayable';
+import Financer from './Financer';
+import InvestmentAgreement from './InvestmentAgreement';
+import CardPaymentNetwork from './CardPaymentNetwork';
+import ClientPaymentMethod from './ClientPaymentMethod';
+
+// Investment Summary associations
+CashRegister.belongsTo(CashRegisterMaster, { foreignKey: 'cashRegisterId', as: 'cashRegisterMaster' });
+CashRegisterMaster.hasMany(CashRegister, { foreignKey: 'cashRegisterId', as: 'transactions' });
+
+// Remove problematic foreign key constraint - keep as optional reference only
+// AccountsPayable.belongsTo(Financer, { foreignKey: 'supplierId', as: 'financer' });
+// Financer.hasMany(AccountsPayable, { foreignKey: 'supplierId', as: 'payables' });
+
+// Investment Agreement associations
+InvestmentAgreement.belongsTo(Financer, { foreignKey: 'investorId', as: 'investor' });
+Financer.hasMany(InvestmentAgreement, { foreignKey: 'investorId', as: 'agreements' });
 
 // Card associations
 Card.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'BankAccount' });
@@ -59,6 +78,17 @@ Product.hasMany(ProductPrice, { foreignKey: 'product_id', as: 'priceHistory' });
 // ProductPrice associations
 ProductPrice.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 
+// Client Payment Method associations
+ClientPaymentMethod.belongsTo(Client, { foreignKey: 'clientId', as: 'client' });
+ClientPaymentMethod.belongsTo(CardPaymentNetwork, { foreignKey: 'cardPaymentNetworkId', as: 'CardPaymentNetwork' });
+ClientPaymentMethod.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'BankAccount' });
+
+// Client associations
+Client.hasMany(ClientPaymentMethod, { foreignKey: 'clientId', as: 'paymentMethods' });
+
+// Card Payment Network associations
+CardPaymentNetwork.hasMany(ClientPaymentMethod, { foreignKey: 'cardPaymentNetworkId', as: 'clientPaymentMethods' });
+
 // Product associations (if any)
 // Product.hasMany(PurchaseItem, { foreignKey: 'productId', as: 'purchaseItems' });
 // Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
@@ -79,4 +109,6 @@ export default {
   ClientCredit,
   Card,
   BankAccount,
+  CardPaymentNetwork,
+  ClientPaymentMethod,
 };

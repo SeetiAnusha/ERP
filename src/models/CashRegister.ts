@@ -20,8 +20,9 @@ interface CashRegisterAttributes {
   bankAccountId?: number;        // For bank deposits
   chequeNumber?: string;         // For cheque payments
   receiptNumber?: string;        // For receipt tracking
-  customerId?: number;           // For AR collections
-  invoiceIds?: string;           // JSON array of invoice IDs being paid
+  customerId?: number;           // For AR collections (Credit Sales only)
+  invoiceIds?: string;           // JSON array of invoice IDs being paid (Credit Sales only)
+  investmentAgreementId?: number; // For CONTRIBUTION/LOAN transactions
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -49,6 +50,7 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public receiptNumber?: string;
   public customerId?: number;
   public invoiceIds?: string;
+  public investmentAgreementId?: number;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -138,13 +140,21 @@ CashRegister.init(
       type: DataTypes.INTEGER,
       allowNull: true,
       references: {
-        model: 'clients',  // Fixed: Changed from 'customers' to 'clients'
+        model: 'clients',
         key: 'id',
       },
     },
     invoiceIds: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    investmentAgreementId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'investment_agreements',
+        key: 'id',
+      },
     },
   },
   {
