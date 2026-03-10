@@ -312,7 +312,7 @@ export const getPendingCreditSaleInvoices = async (customerId: number) => {
     where: {
       clientId: customerId,
       type: {
-        [Op.in]: ['CREDIT_SALE', 'CLIENT_CREDIT', 'CREDIT_CARD_SALE', 'DEBIT_CARD_SALE'] // Include both credit sales and card sales with customer info
+        [Op.in]: ['CREDIT_SALE', 'CLIENT_CREDIT', 'DEBIT_CARD_SALE'] // Include both credit sales and card sales with customer info
       },
       status: {
         [Op.in]: ['Pending', 'Partial']

@@ -1,38 +1,24 @@
 import CashRegister from '../models/CashRegister';
-import AccountsPayable from '../models/AccountsPayable';
 import Financer from '../models/Financer';
 import CashRegisterMaster from '../models/CashRegisterMaster';
-import { Op } from 'sequelize';
+import InvestmentAgreement from '../models/InvestmentAgreement';
 import { fixInvestmentStatus } from '../scripts/fixInvestmentStatus';
 
-// Get all investors with their investment and loan details
+// Get all investors with their investment details (CONTRIBUTION only)
 export const getAllInvestors = async () => {
   try {
-    // Get all CONTRIBUTION and LOAN transactions
-    const financialTransactions = await CashRegister.findAll({
+    // Get all CONTRIBUTION transactions from Cash Register (investors only contribute, banks loan)
+    const contributionTransactions = await CashRegister.findAll({
       where: {
-        relatedDocumentType: {
-          [Op.in]: ['CONTRIBUTION', 'LOAN']
-        }
+        relatedDocumentType: 'CONTRIBUTION' // Only CONTRIBUTION for investors
       },
       order: [['registrationDate', 'DESC']]
     });
 
-    // Get corresponding Accounts Payable entries for both types
-    const financialAP = await AccountsPayable.findAll({
-      where: {
-        type: {
-          [Op.in]: ['CONTRIBUTION', 'LOAN']
-        }
-      }
-    });
-
-    // Get all investor and bank financers (both can provide money)
+    // Get all investor financers (only INVESTOR type)
     const financers = await Financer.findAll({
       where: { 
-        type: {
-          [Op.in]: ['INVESTOR', 'BANK', 'OTHER']
-        },
+        type: 'INVESTOR', // Only get INVESTOR type, not BANK or OTHER
         status: 'ACTIVE'
       }
     });
@@ -42,44 +28,58 @@ export const getAllInvestors = async () => {
       where: { status: 'ACTIVE' }
     });
 
-    // Process financer data (investors, banks, lenders)
+    // Get all investment agreements for investors
+    const investmentAgreements = await InvestmentAgreement.findAll({
+      where: {
+        agreementType: 'INVESTMENT' // Only INVESTMENT agreements for investors
+      }
+    });
+
+    // Process investor data (INVESTOR type only)
     const financerData = financers.map(financer => {
-      // Find all AP entries for this financer
-      const financerAP = financialAP.filter(ap => ap.supplierId === financer.id);
+      // Find all investment agreements for this financer
+      const financerAgreements = investmentAgreements.filter(agreement => agreement.investorId === financer.id);
       
       let totalProvided = 0;
       let outstandingDebt = 0;
       const transactions: any[] = [];
 
-      financerAP.forEach(ap => {
-        totalProvided += parseFloat(ap.amount.toString());
-        outstandingDebt += parseFloat(ap.balanceAmount.toString());
-
-        // Find corresponding cash register transaction
-        const cashTransaction = financialTransactions.find(t => 
-          t.registrationNumber === ap.relatedDocumentNumber
+      // Process each investment agreement
+      financerAgreements.forEach(agreement => {
+        // Find all cash register transactions for this agreement
+        const agreementTransactions = contributionTransactions.filter(t => 
+          t.investmentAgreementId === agreement.id
         );
 
-        if (cashTransaction) {
+        agreementTransactions.forEach(cashTransaction => {
           // Find store details
           const store = cashRegisterMasters.find(s => s.id === cashTransaction.cashRegisterId);
           
           if (store) {
+            const amount = parseFloat(cashTransaction.amount.toString());
+            totalProvided += amount;
+            
+            // For cash transactions, they are immediately "paid" when received
+            // Outstanding debt is tracked at agreement level (balanceAmount)
             transactions.push({
-              id: ap.id,
-              amount: parseFloat(ap.amount.toString()),
-              paidAmount: parseFloat(ap.paidAmount.toString()),
-              date: ap.registrationDate,
+              id: cashTransaction.id,
+              amount: amount,
+              paidAmount: amount, // Cash transactions are immediately paid
+              date: cashTransaction.registrationDate,
               storeName: store.name,
               storeLocation: store.location,
-              registrationNumber: ap.registrationNumber,
-              status: ap.status,
-              notes: ap.notes,
-              type: ap.type, // CONTRIBUTION or LOAN
-              transactionType: cashTransaction.relatedDocumentType
+              registrationNumber: cashTransaction.registrationNumber,
+              status: 'Paid', // Cash transactions are immediately paid
+              notes: cashTransaction.description,
+              type: 'CONTRIBUTION', // CONTRIBUTION only for investors
+              transactionType: cashTransaction.relatedDocumentType,
+              agreementNumber: agreement.agreementNumber
             });
           }
-        }
+        });
+
+        // Outstanding debt is the remaining balance on the agreement
+        outstandingDebt += parseFloat(agreement.balanceAmount.toString());
       });
 
       // Group transactions by store
@@ -110,7 +110,7 @@ export const getAllInvestors = async () => {
         id: financer.id,
         code: financer.code,
         name: financer.name,
-        type: financer.type, // INVESTOR, BANK, OTHER
+        type: financer.type, // INVESTOR only
         contactPerson: financer.contactPerson,
         phone: financer.phone,
         email: financer.email,
@@ -137,111 +137,101 @@ export const getAllInvestors = async () => {
   }
 };
 
-// Get specific financer details (investor, bank, or lender)
+// Get specific investor details (CONTRIBUTION only)
 export const getInvestorById = async (investorId: number) => {
   try {
     const financer = await Financer.findByPk(investorId);
-    if (!financer) {
-      throw new Error('Financer not found');
+    if (!financer || financer.type !== 'INVESTOR') {
+      throw new Error('Investor not found');
     }
 
-    // Get all transactions for this financer (both CONTRIBUTION and LOAN)
-    const apEntries = await AccountsPayable.findAll({
+    // Get all investment agreements for this investor
+    const agreements = await InvestmentAgreement.findAll({
       where: {
-        supplierId: investorId,
-        type: {
-          [Op.in]: ['CONTRIBUTION', 'LOAN']
-        }
+        investorId: investorId,
+        agreementType: 'INVESTMENT' // Only INVESTMENT for investors
       },
-      order: [['registrationDate', 'DESC']]
+      order: [['agreementDate', 'DESC']]
     });
 
     const transactions = [];
-    for (const ap of apEntries) {
-      const cashTransaction = await CashRegister.findOne({
-        where: { registrationNumber: ap.relatedDocumentNumber }
+    for (const agreement of agreements) {
+      // Get all cash register transactions for this agreement
+      const cashTransactions = await CashRegister.findAll({
+        where: { 
+          investmentAgreementId: agreement.id,
+          relatedDocumentType: 'CONTRIBUTION'
+        }
       });
 
-      if (cashTransaction) {
+      for (const cashTransaction of cashTransactions) {
         const store = await CashRegisterMaster.findByPk(cashTransaction.cashRegisterId);
         transactions.push({
-          ...ap.toJSON(),
+          id: cashTransaction.id,
+          amount: parseFloat(cashTransaction.amount.toString()),
+          paidAmount: parseFloat(cashTransaction.amount.toString()), // Cash transactions are immediately paid
+          registrationDate: cashTransaction.registrationDate,
+          registrationNumber: cashTransaction.registrationNumber,
+          status: 'Paid', // Cash transactions are immediately paid
+          notes: cashTransaction.description,
+          type: 'CONTRIBUTION',
           cashTransaction: cashTransaction.toJSON(),
-          store: store?.toJSON()
+          store: store?.toJSON(),
+          agreement: agreement.toJSON()
         });
       }
     }
 
     return {
       financer: financer.toJSON(),
-      transactions
+      investments: transactions // Renamed from transactions to investments for clarity
     };
   } catch (error: any) {
-    throw new Error(`Error getting financer details: ${error.message}`);
+    throw new Error(`Error getting investor details: ${error.message}`);
   }
 };
 
-// Update investment payment status
+// Update investment payment status (for manual corrections only)
 export const updateInvestmentPaymentStatus = async (investmentId: number, paidAmount: number, status: string) => {
   try {
-    const apEntry = await AccountsPayable.findByPk(investmentId);
-    if (!apEntry) {
-      throw new Error('Investment not found');
+    // For cash register transactions, this is mainly for manual corrections
+    // Since cash transactions are immediately "paid" when received
+    const cashTransaction = await CashRegister.findByPk(investmentId);
+    if (!cashTransaction) {
+      throw new Error('Investment transaction not found');
     }
 
-    // Calculate new balance
-    const newPaidAmount = parseFloat(paidAmount.toString());
-    const totalAmount = parseFloat(apEntry.amount.toString());
-    const newBalanceAmount = totalAmount - newPaidAmount;
-
-    // Determine status based on payment
-    let newStatus = status;
-    if (newPaidAmount === 0) {
-      newStatus = 'Pending';
-    } else if (newPaidAmount >= totalAmount) {
-      newStatus = 'Paid';
-    } else {
-      newStatus = 'Partial';
-    }
-
-    // Update the record
-    await apEntry.update({
-      paidAmount: newPaidAmount,
-      balanceAmount: newBalanceAmount,
-      status: newStatus,
-      paidDate: newStatus === 'Paid' ? new Date() : undefined
-    });
-
-    return apEntry;
+    // Note: For cash transactions, we don't typically update payment status
+    // as they are immediately paid when received. This is for manual corrections only.
+    console.log(`Manual correction requested for cash transaction ${cashTransaction.registrationNumber}`);
+    
+    return cashTransaction;
   } catch (error: any) {
     throw new Error(`Error updating payment status: ${error.message}`);
   }
 };
 
-// Mark investment as fully paid
+// Mark investment as fully paid (for manual corrections only)
 export const markInvestmentAsPaid = async (investmentId: number) => {
   try {
-    const apEntry = await AccountsPayable.findByPk(investmentId);
-    if (!apEntry) {
-      throw new Error('Investment not found');
+    // For cash register transactions, this is mainly for manual corrections
+    // Since cash transactions are immediately "paid" when received
+    const cashTransaction = await CashRegister.findByPk(investmentId);
+    if (!cashTransaction) {
+      throw new Error('Investment transaction not found');
     }
 
-    const totalAmount = parseFloat(apEntry.amount.toString());
+    // Note: For cash transactions, we don't typically update payment status
+    // as they are immediately paid when received. This is for manual corrections only.
+    console.log(`Manual mark as paid requested for cash transaction ${cashTransaction.registrationNumber}`);
     
-    await apEntry.update({
-      paidAmount: totalAmount,
-      balanceAmount: 0,
-      status: 'Paid',
-      paidDate: new Date()
-    });
-
-    return apEntry;
+    return cashTransaction;
   } catch (error: any) {
     throw new Error(`Error marking investment as paid: ${error.message}`);
   }
 };
 
-// Get financer summary statistics (investors, banks, lenders)
+// Get investor summary statistics (INVESTOR type only)
 export const getInvestorSummary = async () => {
   try {
     const financers = await getAllInvestors();
@@ -264,10 +254,8 @@ export const getInvestorSummary = async () => {
       )
     );
 
-    // Separate by type
+    // Separate by type (only investors now)
     const investors = financers.filter(f => f.type === 'INVESTOR');
-    const banks = financers.filter(f => f.type === 'BANK');
-    const others = financers.filter(f => f.type === 'OTHER');
 
     return {
       totalFinancers,
@@ -277,16 +265,16 @@ export const getInvestorSummary = async () => {
       topFinancer,
       recentTransactionsCount: recentTransactions.length,
       recentTransactionsAmount: recentTransactions.reduce((sum, txn) => sum + txn.amount, 0),
-      // Breakdown by type
+      // Breakdown by type (only investors)
       investorCount: investors.length,
-      bankCount: banks.length,
-      otherCount: others.length,
+      bankCount: 0, // No banks in investor service
+      otherCount: 0, // No others in investor service
       investorAmount: investors.reduce((sum, inv) => sum + inv.totalProvided, 0),
-      bankAmount: banks.reduce((sum, bank) => sum + bank.totalProvided, 0),
-      otherAmount: others.reduce((sum, other) => sum + other.totalProvided, 0)
+      bankAmount: 0, // No banks in investor service
+      otherAmount: 0 // No others in investor service
     };
   } catch (error: any) {
-    throw new Error(`Error getting financer summary: ${error.message}`);
+    throw new Error(`Error getting investor summary: ${error.message}`);
   }
 };
 
