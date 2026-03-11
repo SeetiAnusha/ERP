@@ -158,6 +158,18 @@ export const createBankRegister = async (data: any) => {
     
     // Phase 4: Handle OUTFLOW
     if (data.transactionType === 'OUTFLOW') {
+      // ✅ CRITICAL VALIDATION: Check if bank account has sufficient balance
+      const currentBankBalance = parseFloat(bankAccount.balance.toString());
+      const outflowAmount = parseFloat(data.amount);
+      
+      if (currentBankBalance < outflowAmount) {
+        throw new Error(
+          `Insufficient balance in bank account "${bankAccount.bankName} - ${bankAccount.accountNumber}". ` +
+          `Available: ${currentBankBalance.toFixed(2)}, Required: ${outflowAmount.toFixed(2)}. ` +
+          `Cannot perform transaction that would result in negative balance.`
+        );
+      }
+      
       let chequeNumber = null;
       let transferNumber = null;
       
