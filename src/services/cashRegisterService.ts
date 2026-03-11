@@ -18,15 +18,23 @@ export const createCashTransaction = async (data: any) => {
   const transaction = await sequelize.transaction();
   
   try {
-    // Phase 3: Validate cashRegisterId is provided
-    if (!data.cashRegisterId) {
-      throw new Error('Cash Register selection is required');
+    // Phase 3: Conditional Cash Register Validation
+    const needsCashRegister = 
+      data.relatedDocumentType === 'CONTRIBUTION' || 
+      data.relatedDocumentType === 'LOAN' ||
+      (data.relatedDocumentType === 'AR_COLLECTION' && data.paymentMethod === 'CASH');
+    
+    if (needsCashRegister && !data.cashRegisterId) {
+      throw new Error('Cash Register selection is required for this transaction type');
     }
 
-    // Get cash register master
-    const cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId);
-    if (!cashRegisterMaster) {
-      throw new Error('Cash Register not found');
+    // Get cash register master (only if needed)
+    let cashRegisterMaster = null;
+    if (needsCashRegister) {
+      cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId);
+      if (!cashRegisterMaster) {
+        throw new Error('Cash Register not found');
+      }
     }
 
     // Generate registration number
@@ -47,15 +55,18 @@ export const createCashTransaction = async (data: any) => {
     
     const registrationNumber = `CJ${String(nextNumber).padStart(4, '0')}`;
     
-    // Get last balance for this specific cash register
-    const lastRegisterTransaction = await CashRegister.findOne({
-      where: { cashRegisterId: data.cashRegisterId },
-      order: [['id', 'DESC']]
-    });
-    
-    const lastBalance = lastRegisterTransaction 
-      ? parseFloat(lastRegisterTransaction.balance.toString()) 
-      : parseFloat(cashRegisterMaster.balance.toString());
+    // Get last balance for this specific cash register (only if cash register is involved)
+    let lastBalance = 0;
+    if (needsCashRegister && cashRegisterMaster) {
+      const lastRegisterTransaction = await CashRegister.findOne({
+        where: { cashRegisterId: data.cashRegisterId },
+        order: [['id', 'DESC']]
+      });
+      
+      lastBalance = lastRegisterTransaction 
+        ? parseFloat(lastRegisterTransaction.balance.toString()) 
+        : parseFloat(cashRegisterMaster.balance.toString());
+    }
     
     // Phase 3: Handle different transaction types
     if (data.transactionType === 'INFLOW') {
@@ -136,20 +147,27 @@ export const createCashTransaction = async (data: any) => {
         // AccountsPayable is only for credit/unpaid transactions, not cash transactions
       }
       
-      // Calculate new balance (INFLOW increases balance)
-      const newBalance = lastBalance + parseFloat(data.amount);
+      // Calculate new balance (INFLOW increases balance, but only if cash register is involved)
+      let newBalance = lastBalance;
+      if (needsCashRegister) {
+        newBalance = lastBalance + parseFloat(data.amount);
+      }
       
       // Create cash register transaction
       const cashTransaction = await CashRegister.create({
         ...data,
         registrationNumber,
         balance: newBalance,
+        // Set cashRegisterId to null if not needed
+        cashRegisterId: needsCashRegister ? data.cashRegisterId : null,
       }, { transaction });
       
-      // Update cash register master balance
-      await cashRegisterMaster.update({
-        balance: newBalance,
-      }, { transaction });
+      // Update cash register master balance (only if cash register is involved)
+      if (needsCashRegister && cashRegisterMaster) {
+        await cashRegisterMaster.update({
+          balance: newBalance,
+        }, { transaction });
+      }
       
       await transaction.commit();
       return cashTransaction;
@@ -157,6 +175,28 @@ export const createCashTransaction = async (data: any) => {
     } else if (data.transactionType === 'OUTFLOW') {
       // OUTFLOW: Money leaving cash register
       // Phase 3: Only allow BANK_DEPOSIT or CORRECTION
+      
+      // For OUTFLOW, cash register is always required (money must leave from somewhere)
+      if (!data.cashRegisterId) {
+        throw new Error('Cash Register selection is required for OUTFLOW transactions');
+      }
+      
+      if (!cashRegisterMaster) {
+        cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId);
+        if (!cashRegisterMaster) {
+          throw new Error('Cash Register not found');
+        }
+        
+        // Get last balance for OUTFLOW
+        const lastRegisterTransaction = await CashRegister.findOne({
+          where: { cashRegisterId: data.cashRegisterId },
+          order: [['id', 'DESC']]
+        });
+        
+        lastBalance = lastRegisterTransaction 
+          ? parseFloat(lastRegisterTransaction.balance.toString()) 
+          : parseFloat(cashRegisterMaster.balance.toString());
+      }
       
       // ✅ CRITICAL VALIDATION: Check if cash register has sufficient balance
       const outflowAmount = parseFloat(data.amount);
