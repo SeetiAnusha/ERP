@@ -79,6 +79,9 @@ export const recordPayment = async (id: number, paymentData: {
   notes?: string;
   cardId?: number;
   paymentMethod?: string;
+  bankAccountId?: number;
+  reference?: string;
+  description?: string;
 }) => {
   const transaction = await sequelize.transaction();
   let committed = false;
@@ -86,6 +89,73 @@ export const recordPayment = async (id: number, paymentData: {
   try {
     const ap = await AccountsPayable.findByPk(id, { transaction });
     if (!ap) throw new Error('Accounts Payable not found');
+    
+    // ✅ NEW: Handle bank account payments for credit card bills
+    if (paymentData.bankAccountId && paymentData.paymentMethod === 'BANK_TRANSFER') {
+      const BankAccount = (await import('../models/BankAccount')).default;
+      const BankRegister = (await import('../models/BankRegister')).default;
+      const Card = (await import('../models/Card')).default;
+      
+      const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
+      if (!bankAccount) {
+        throw new Error('Selected bank account not found');
+      }
+      
+      const paymentAmount = paymentData.amount;
+      const currentBalance = Number(bankAccount.balance);
+      
+      // Validate sufficient balance
+      if (currentBalance < paymentAmount) {
+        throw new Error(
+          `Insufficient balance in bank account ${bankAccount.bankName} - ${bankAccount.accountNumber}. ` +
+          `Available: $${currentBalance.toFixed(2)}, Required: $${paymentAmount.toFixed(2)}. ` +
+          `You need $${(paymentAmount - currentBalance).toFixed(2)} more to complete this payment.`
+        );
+      }
+      
+      // Deduct from bank account
+      const newBankBalance = currentBalance - paymentAmount;
+      await bankAccount.update({ balance: newBankBalance }, { transaction });
+      
+      // If this is a credit card payment, restore credit limit
+      if (ap.type === 'CREDIT_CARD_PURCHASE' && ap.cardId) {
+        const card = await Card.findByPk(ap.cardId, { transaction });
+        if (card && card.cardType === 'CREDIT') {
+          const usedCredit = Number(card.usedCredit || 0);
+          const newUsedCredit = Math.max(0, usedCredit - paymentAmount);
+          
+          await card.update({ usedCredit: newUsedCredit }, { transaction });
+          
+          console.log(`✅ Credit restored via bank payment: $${usedCredit.toFixed(2)} -> $${newUsedCredit.toFixed(2)}`);
+        }
+      }
+      
+      // Create Bank Register entry
+      const lastBankTransaction = await BankRegister.findOne({
+        order: [['id', 'DESC']],
+        transaction
+      });
+      
+      const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+      const newBalance = lastBalance - paymentAmount;
+      
+      await BankRegister.create({
+        registrationNumber: ap.registrationNumber,
+        registrationDate: paymentData.paidDate || new Date(),
+        transactionType: 'OUTFLOW',
+        amount: paymentAmount,
+        paymentMethod: 'Bank Transfer',
+        relatedDocumentType: 'Accounts Payable Payment',
+        relatedDocumentNumber: ap.registrationNumber,
+        clientRnc: ap.supplierRnc || '',
+        clientName: ap.supplierName || ap.cardIssuer || '',
+        ncf: ap.ncf || '',
+        description: paymentData.description || `AP Payment ${ap.registrationNumber} - ${ap.supplierName || ap.cardIssuer}`,
+        balance: newBalance,
+        bankAccountId: paymentData.bankAccountId,
+        referenceNumber: paymentData.reference || undefined,
+      }, { transaction });
+    }
     
     // ✅ VALIDATION: If paying with card, validate balance/limit
     if (paymentData.cardId) {
@@ -241,7 +311,7 @@ export const recordPayment = async (id: number, paymentData: {
       balanceAmount: newBalanceAmount,
       status,
       paidDate: status === 'Paid' ? (paymentData.paidDate || new Date()) : ap.paidDate,
-      notes: paymentData.notes || ap.notes,
+      notes: paymentData.description || paymentData.notes || ap.notes,
     }, { transaction });
     
     await transaction.commit();

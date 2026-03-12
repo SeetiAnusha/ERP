@@ -256,11 +256,12 @@ export const createSale = async (data: any) => {
           );
         }
         
-        // Calculate processing fee
+        // Calculate processing fee (for reference only)
         const processingFee = total * Number(network.processingFee);
         const netAmount = total - processingFee;
         
         // Create Accounts Receivable for payment network
+        // ✅ CLIENT REQUIREMENT: AR should be for FULL AMOUNT, processing fee recorded during collection
         const networkName = `${network.name} ${network.type}`;
         await AccountsReceivable.create({
           registrationNumber: registrationNumber,
@@ -275,12 +276,13 @@ export const createSale = async (data: any) => {
           clientRnc: data.clientRnc || '',
           ncf: data.ncf || '',
           saleOf: data.saleType || 'Merchandise for sale',
-          amount: netAmount, // Amount after processing fee
+          amount: total, // ✅ FULL SALE AMOUNT (not net amount)
           receivedAmount: 0,
-          balanceAmount: netAmount,
+          balanceAmount: total, // ✅ FULL AMOUNT as balance
+          expectedBankDeposit: netAmount, // ✅ NEW: Expected amount after processing fee
           status: 'Pending',
           dueDate: new Date(Date.now() + network.settlementDays * 24 * 60 * 60 * 1000),
-          notes: `${networkName} payment - Customer: ${client?.name || 'N/A'} - Fee: ${(Number(network.processingFee) * 100).toFixed(2)}% (${formatCurrency(processingFee)}) - Settlement: ${network.settlementDays} days`,
+          notes: `${networkName} payment - Customer: ${client?.name || 'N/A'} - Expected processing fee: ${(Number(network.processingFee) * 100).toFixed(2)}% (${formatCurrency(processingFee)}) - Settlement: ${network.settlementDays} days`,
         }, { transaction });
         
       } else if (paymentType === 'CREDIT') {
@@ -300,6 +302,7 @@ export const createSale = async (data: any) => {
           amount: total,
           receivedAmount: 0,
           balanceAmount: total,
+          expectedBankDeposit: total, // For credit sales, expected deposit = full amount
           status: 'Pending',
           dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days for client
           notes: `Credit sale to ${client?.name || 'client'} - ${registrationNumber}`,

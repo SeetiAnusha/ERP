@@ -1,11 +1,41 @@
 import AccountsReceivable from '../models/AccountsReceivable';
+import Expense from '../models/Expense';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 
 export const getAllAccountsReceivable = async () => {
-  return await AccountsReceivable.findAll({
+  // First get all AR records
+  const arRecords = await AccountsReceivable.findAll({
     order: [['registrationDate', 'DESC']],
   });
+
+  // Then get related expense records for each AR
+  const arWithExpenses = await Promise.all(
+    arRecords.map(async (ar) => {
+      // Find expense records related to this AR
+      const relatedExpenses = await Expense.findAll({
+        where: {
+          relatedDocumentType: 'AR_COLLECTION',
+          relatedDocumentNumber: ar.registrationNumber
+        },
+        attributes: ['id', 'registrationNumber', 'amount', 'expenseType', 'status', 'description']
+      });
+
+      // Calculate total expense amount for this AR
+      const totalExpenseAmount = relatedExpenses.reduce((sum, expense) => {
+        return sum + parseFloat(expense.amount.toString());
+      }, 0);
+
+      // Return AR record with expense data
+      return {
+        ...ar.toJSON(),
+        relatedExpenses: relatedExpenses,
+        totalExpenseAmount: totalExpenseAmount
+      };
+    })
+  );
+
+  return arWithExpenses;
 };
 
 export const getAccountsReceivableById = async (id: number) => {
@@ -161,6 +191,8 @@ export const recordPayment = async (id: number, paymentData: {
       status,
       receivedDate: status === 'Received' ? (paymentData.receivedDate || new Date()) : ar.receivedDate,
       notes: paymentData.notes || ar.notes,
+      actualBankDeposit: paymentData.isCardSale ? paymentData.amount : undefined, // ✅ NEW: Store actual bank deposit for card sales
+      bankAccountId: paymentData.bankAccountId || undefined, // ✅ NEW: Store bank account ID
     }, { transaction });
     
     await transaction.commit();

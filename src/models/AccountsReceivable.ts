@@ -18,10 +18,17 @@ interface AccountsReceivableAttributes {
   amount: number;
   receivedAmount: number;
   balanceAmount: number;
+  expectedBankDeposit: number; // New field for expected bank deposit
+  actualBankDeposit?: number; // New field for actual amount deposited to bank
+  bankAccountId?: number; // Which bank account received the deposit
   status: string; // 'Pending', 'Partial', 'Received'
   dueDate?: Date;
   receivedDate?: Date;
   notes?: string;
+  // New fields for collection details
+  collectionDate?: Date;
+  transferReference?: string;
+  collectionNotes?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -45,10 +52,17 @@ class AccountsReceivable extends Model<AccountsReceivableAttributes, AccountsRec
   public amount!: number;
   public receivedAmount!: number;
   public balanceAmount!: number;
+  public expectedBankDeposit!: number; // New field for expected bank deposit
+  public actualBankDeposit?: number; // New field for actual amount deposited to bank
+  public bankAccountId?: number; // Which bank account received the deposit
   public status!: string;
   public dueDate?: Date;
   public receivedDate?: Date;
   public notes?: string;
+  // New fields for collection details
+  public collectionDate?: Date;
+  public transferReference?: string;
+  public collectionNotes?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -122,6 +136,18 @@ AccountsReceivable.init(
       type: DataTypes.DECIMAL(15, 2),
       allowNull: false,
     },
+    expectedBankDeposit: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+    },
+    actualBankDeposit: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+    },
+    bankAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     status: {
       type: DataTypes.STRING(50),
       allowNull: false,
@@ -136,6 +162,19 @@ AccountsReceivable.init(
       allowNull: true,
     },
     notes: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    // New fields for collection details
+    collectionDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    transferReference: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    collectionNotes: {
       type: DataTypes.TEXT,
       allowNull: true,
     },

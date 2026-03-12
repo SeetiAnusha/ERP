@@ -8,6 +8,7 @@ router.get('/pending', accountsReceivableController.getPendingAccountsReceivable
 router.get('/:id', accountsReceivableController.getAccountsReceivableById);
 router.post('/', accountsReceivableController.createAccountsReceivable);
 router.post('/:id/record-payment', accountsReceivableController.recordPayment);
+router.post('/:id/collect-with-fees', accountsReceivableController.collectPaymentWithFees);
 router.delete('/:id', accountsReceivableController.deleteAccountsReceivable);
 
 export default router;

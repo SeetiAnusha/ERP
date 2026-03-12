@@ -30,6 +30,7 @@ import bankAccountRoutes from './routes/bankAccountRoutes';
 import cashRegisterMasterRoutes from './routes/cashRegisterMasterRoutes';
 import cardRoutes from './routes/cardRoutes';
 import financerRoutes from './routes/financerRoutes';
+import expenseRoutes from './routes/expenseRoutes';
 import * as productPriceService from './services/productPriceService';
 
 dotenv.config();
@@ -67,6 +68,7 @@ app.use('/api/bank-accounts', bankAccountRoutes);
 app.use('/api/cash-register-masters', cashRegisterMasterRoutes);
 app.use('/api/cards', cardRoutes);
 app.use('/api/financers', financerRoutes);
+app.use('/api/expenses', expenseRoutes);
 
 // Root route
 app.get('/', (req, res) => {

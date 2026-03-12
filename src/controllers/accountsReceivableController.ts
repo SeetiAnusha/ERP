@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as accountsReceivableService from '../services/accountsReceivableService';
+import * as accountsReceivableCollectionService from '../services/accountsReceivableCollectionService';
 
 export const getAllAccountsReceivable = async (req: Request, res: Response) => {
   try {
@@ -55,6 +56,18 @@ export const recordPayment = async (req: Request, res: Response) => {
 export const deleteAccountsReceivable = async (req: Request, res: Response) => {
   try {
     const result = await accountsReceivableService.deleteAccountsReceivable(parseInt(req.params.id));
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const collectPaymentWithFees = async (req: Request, res: Response) => {
+  try {
+    const arId = parseInt(req.params.id);
+    const collectionData = req.body;
+    
+    const result = await accountsReceivableCollectionService.collectPaymentWithFees(arId, collectionData);
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
