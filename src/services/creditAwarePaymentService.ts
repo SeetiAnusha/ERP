@@ -80,13 +80,25 @@ export const processCreditAwarePayment = async (
         
         creditUsed = creditApplication.totalCreditUsed;
         
-        // Recalculate bank payment needed after credit application
+        // ✅ CRITICAL FIX: Don't reduce bank payment for overpayment scenarios
+        // Check if this is an overpayment scenario first
         const remainingBalance = creditApplication.remainingInvoiceBalance;
-        bankPaymentNeeded = Math.min(request.requestedPaymentAmount, remainingBalance);
+        // Check if payment amount is more than original invoice (true overpayment)
+        const isOverpayment = request.requestedPaymentAmount > totalInvoiceBalance;
+        
+        if (isOverpayment) {
+        // Overpayment: Bank pays the FULL requested amount
+        bankPaymentNeeded = request.requestedPaymentAmount;
+        console.log(`💰 Overpayment scenario: Bank will pay FULL amount: ₹${bankPaymentNeeded}`);
+         } else {
+        // Normal payment: Bank pays only what's needed after credit
+        bankPaymentNeeded = Math.max(0, Math.min(request.requestedPaymentAmount, remainingBalance));
+        console.log(`💰 Normal payment: Bank payment needed: ₹${bankPaymentNeeded}`);
+      }
+
         
         await creditTransaction.commit();
         console.log(`✅ Applied ₹${creditUsed} from credit balances`);
-        console.log(`💰 Remaining bank payment needed: ₹${bankPaymentNeeded}`);
       } catch (error) {
         await creditTransaction.rollback();
         throw error;
@@ -94,9 +106,11 @@ export const processCreditAwarePayment = async (
     }
     
     // Step 4: Check for overpayment and create credit balance (if needed) - separate transaction
-    const remainingInvoiceBalance = totalInvoiceBalance - creditUsed;
-    if (request.requestedPaymentAmount > remainingInvoiceBalance && remainingInvoiceBalance > 0) {
-      const overpaymentAmount = request.requestedPaymentAmount - remainingInvoiceBalance;
+    const originalInvoiceBalance = totalInvoiceBalance; // Store original balance before credit application
+    const isOverpayment = request.requestedPaymentAmount > originalInvoiceBalance;
+    
+    if (isOverpayment) {
+      const overpaymentAmount = request.requestedPaymentAmount - originalInvoiceBalance;
       console.log(`💰 Overpayment detected: ₹${overpaymentAmount} will become credit balance`);
       
       // Create credit balance for overpayment - separate transaction
@@ -116,8 +130,10 @@ export const processCreditAwarePayment = async (
       newCreditCreated = overpaymentAmount;
       console.log(`✅ Created credit balance: ${creditBalance.registrationNumber} for ₹${overpaymentAmount}`);
       
-      // Adjust bank payment to only pay the remaining balance after credit usage
-      bankPaymentNeeded = remainingInvoiceBalance;
+      // ✅ CRITICAL FIX: Bank payment should be the FULL requested amount, not just the remaining balance
+      // The bank account should be debited the full amount the user is paying
+      bankPaymentNeeded = request.requestedPaymentAmount;
+      console.log(`🏦 Bank will be debited the FULL requested amount: ₹${bankPaymentNeeded}`);
     }
     
     // Step 5: Process bank payment (if needed) - separate transaction
@@ -227,12 +243,22 @@ export const getPaymentPreview = async (
   // Calculate remaining balance after credit application
   const remainingBalanceAfterCredit = totalInvoiceBalance - creditWillBeUsed;
   
-  // Calculate bank payment needed (minimum of requested amount and remaining balance)
-  const bankPaymentNeeded = Math.min(requestedAmount, remainingBalanceAfterCredit);
+  // ✅ CRITICAL FIX: Bank payment should be the FULL requested amount when there's overpayment
+  // Only reduce bank payment if there's no overpayment
+  let bankPaymentNeeded;
+  const isOverpayment = requestedAmount > totalInvoiceBalance;
+  const willCreateNewCredit = isOverpayment;
   
-  // Check for overpayment (requested amount > remaining balance after credit)
-  const willCreateNewCredit = requestedAmount > remainingBalanceAfterCredit;
-  const newCreditAmount = willCreateNewCredit ? requestedAmount - remainingBalanceAfterCredit : 0;
+  if (willCreateNewCredit) {
+    // Overpayment scenario: Bank pays the FULL requested amount
+    bankPaymentNeeded = requestedAmount;
+  } else {
+    // Normal scenario: Bank pays only what's needed after credit
+    bankPaymentNeeded = Math.min(requestedAmount, remainingBalanceAfterCredit);
+  }
+  
+  // ✅ FIX: New credit amount should be based on original invoice balance, not remaining after credit
+  const newCreditAmount = willCreateNewCredit ? requestedAmount - totalInvoiceBalance : 0;
   
   console.log('💡 Payment Preview Calculation:', {
     totalInvoiceBalance,
