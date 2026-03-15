@@ -281,12 +281,12 @@ export const applyCreditToInvoices = async (
     const creditToApplyToThisInvoice = Math.min(invoiceBalance, remainingCreditToApply);
     
     if (creditToApplyToThisInvoice > 0) {
-      const newReceivedAmount = parseFloat(invoice.receivedAmount.toString()) + creditToApplyToThisInvoice;
-      const newBalanceAmount = parseFloat(invoice.amount.toString()) - newReceivedAmount;
-      const newStatus = newBalanceAmount <= 0.01 ? 'Received' : 'Partial';
+      const newPaidAmount = parseFloat(invoice.paidAmount.toString()) + creditToApplyToThisInvoice;
+      const newBalanceAmount = parseFloat(invoice.amount.toString()) - newPaidAmount;
+      const newStatus = newBalanceAmount <= 0.01 ? 'Paid' : 'Partial';
       
       await invoice.update({
-        receivedAmount: newReceivedAmount,
+        paidAmount: newPaidAmount,
         balanceAmount: Math.max(0, newBalanceAmount),
         status: newStatus
       }, { transaction });
@@ -294,7 +294,7 @@ export const applyCreditToInvoices = async (
       updatedInvoices.push(invoice);
       remainingCreditToApply -= creditToApplyToThisInvoice;
       
-      console.log(`📄 Invoice ${invoice.registrationNumber} updated: Received ₹${newReceivedAmount}, Balance ₹${newBalanceAmount}, Status: ${newStatus}`);
+      console.log(`📄 Invoice ${invoice.registrationNumber} updated: Paid ₹${newPaidAmount}, Balance ₹${newBalanceAmount}, Status: ${newStatus}`);
     }
   }
   
