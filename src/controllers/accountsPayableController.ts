@@ -42,12 +42,26 @@ export const createAccountsPayable = async (req: Request, res: Response) => {
 
 export const recordPayment = async (req: Request, res: Response) => {
   try {
-    const accountsPayable = await accountsPayableService.recordPayment(
+    const result = await accountsPayableService.recordPayment(
       parseInt(req.params.id),
       req.body
     );
-    res.json(accountsPayable);
+    res.json(result);
   } catch (error: any) {
+    // 🎯 PHASE 1: Handle overpayment detection errors
+    if (error.code === 'OVERPAYMENT_DETECTED') {
+      return res.status(400).json({
+        error: 'Overpayment detected',
+        message: error.message,
+        code: 'OVERPAYMENT_DETECTED',
+        overpaymentAmount: error.overpaymentAmount,
+        outstandingBalance: error.outstandingBalance,
+        paymentAmount: error.paymentAmount,
+        supplierName: error.supplierName,
+        allowOverpayment: false // Frontend can set this to true and retry
+      });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 };

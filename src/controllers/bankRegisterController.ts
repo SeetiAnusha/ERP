@@ -23,10 +23,16 @@ export const getById = async (req: Request, res: Response) => {
 };
 
 export const create = async (req: Request, res: Response) => {
+  console.log("🎯 BANK REGISTER CONTROLLER - Create request received!");
+  console.log("📥 Request body:", JSON.stringify(req.body, null, 2));
+  
   try {
     const register = await bankRegisterService.createBankRegister(req.body);
+    console.log("✅ BANK REGISTER CONTROLLER - Transaction created successfully:", register.id);
     res.status(201).json(register);
   } catch (error: any) {
+    console.error("❌ BANK REGISTER CONTROLLER - Error:", error.message);
+    console.error("🔍 Full error:", error);
     res.status(400).json({ error: error.message });
   }
 };

@@ -1,3 +1,4 @@
+import './config/sequelize-fix'; // Must be first!
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -27,10 +28,13 @@ import reportRoutes from './routes/reportRoutes';
 import accountsReceivableRoutes from './routes/accountsReceivableRoutes';
 import accountsPayableRoutes from './routes/accountsPayableRoutes';
 import bankAccountRoutes from './routes/bankAccountRoutes';
+import creditAwarePaymentRoutes from './routes/creditAwarePaymentRoutes';
 import cashRegisterMasterRoutes from './routes/cashRegisterMasterRoutes';
 import cardRoutes from './routes/cardRoutes';
 import financerRoutes from './routes/financerRoutes';
 import expenseRoutes from './routes/expenseRoutes';
+import creditBalanceRoutes from './routes/creditBalanceRoutes';
+import customerCreditAwarePaymentRoutes from './routes/customerCreditAwarePaymentRoutes';
 import * as productPriceService from './services/productPriceService';
 
 dotenv.config();
@@ -69,6 +73,9 @@ app.use('/api/cash-register-masters', cashRegisterMasterRoutes);
 app.use('/api/cards', cardRoutes);
 app.use('/api/financers', financerRoutes);
 app.use('/api/expenses', expenseRoutes);
+app.use('/api/credit-balances', creditBalanceRoutes);
+app.use('/api/credit-aware-payment', creditAwarePaymentRoutes);
+app.use('/api/customer-credit-aware-payment', customerCreditAwarePaymentRoutes);
 
 // Root route
 app.get('/', (req, res) => {

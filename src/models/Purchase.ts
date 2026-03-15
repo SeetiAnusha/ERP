@@ -193,6 +193,9 @@ Purchase.init(
     sequelize,
     tableName: 'purchases',
     timestamps: true,
+    // Explicitly set define options to avoid globalOptions.define issue
+    underscored: true,
+    freezeTableName: true,
   }
 );
 

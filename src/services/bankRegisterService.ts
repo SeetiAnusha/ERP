@@ -79,8 +79,9 @@ async function generateTransferNumber(bankAccountId: number): Promise<string> {
   return `TF${nextNumber.toString().padStart(4, '0')}`;
 }
 
-export const createBankRegister = async (data: any) => {
-  const transaction = await sequelize.transaction();
+export const createBankRegister = async (data: any, externalTransaction?: any) => {
+  const transaction = externalTransaction || await sequelize.transaction();
+  const shouldCommit = !externalTransaction; // Only commit if we created the transaction
   
   try {
     // Phase 4: Validate bankAccountId is required
@@ -152,7 +153,7 @@ export const createBankRegister = async (data: any) => {
       const newBankBalance = parseFloat(bankAccount.balance.toString()) + amount;
       await bankAccount.update({ balance: newBankBalance }, { transaction });
       
-      await transaction.commit();
+      if (shouldCommit) await transaction.commit();
       return bankRegister;
     }
     
@@ -278,14 +279,14 @@ export const createBankRegister = async (data: any) => {
       const newBankBalance = parseFloat(bankAccount.balance.toString()) - amount;
       await bankAccount.update({ balance: newBankBalance }, { transaction });
       
-      await transaction.commit();
+      if (shouldCommit) await transaction.commit();
       return bankRegister;
     }
     
     throw new Error('Invalid transaction type');
     
   } catch (error) {
-    await transaction.rollback();
+    if (shouldCommit) await transaction.rollback();
     throw error;
   }
 };

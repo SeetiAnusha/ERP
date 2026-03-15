@@ -2,6 +2,7 @@ import AccountsReceivable from '../models/AccountsReceivable';
 import Expense from '../models/Expense';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import * as creditBalanceService from './creditBalanceService';
 
 export const getAllAccountsReceivable = async () => {
   // First get all AR records
@@ -104,6 +105,7 @@ export const recordPayment = async (id: number, paymentData: {
   notes?: string;
   bankAccountId?: number;
   isCardSale?: boolean;
+  allowOverpayment?: boolean; // NEW: Flag to allow overpayment after user confirmation
 }) => {
     const transaction = await sequelize.transaction();
   let committed = false;
@@ -112,7 +114,37 @@ export const recordPayment = async (id: number, paymentData: {
     const ar = await AccountsReceivable.findByPk(id, { transaction });
     if (!ar) throw new Error('Accounts Receivable not found');
     
-    const newReceivedAmount = Number(ar.receivedAmount) + paymentData.amount;
+    // 🎯 PHASE 1: OVERPAYMENT DETECTION & VALIDATION
+    const outstandingBalance = Number(ar.balanceAmount);
+    const paymentAmount = paymentData.amount;
+    
+    // Get customer name for validation message
+    const customerName = ar.clientName || ar.cardNetwork || 'Unknown Customer';
+    
+    // Validate payment amount
+    const validation = await creditBalanceService.validatePaymentAmount(
+      outstandingBalance,
+      paymentAmount,
+      'CLIENT',
+      customerName
+    );
+    
+    // If overpayment detected and not explicitly allowed, throw error with details
+    if (validation.isOverpayment && !paymentData.allowOverpayment) {
+      const error = new Error(validation.message) as any;
+      error.code = 'OVERPAYMENT_DETECTED';
+      error.overpaymentAmount = validation.overpaymentAmount;
+      error.outstandingBalance = outstandingBalance;
+      error.paymentAmount = paymentAmount;
+      error.customerName = customerName;
+      throw error;
+    }
+    
+    // Calculate payment amounts
+    const actualPaymentToAR = Math.min(paymentAmount, outstandingBalance);
+    const overpaymentAmount = Math.max(0, paymentAmount - outstandingBalance);
+    
+    const newReceivedAmount = Number(ar.receivedAmount) + actualPaymentToAR;
     const newBalanceAmount = Number(ar.amount) - newReceivedAmount;
     
     let status = 'Pending';
@@ -159,14 +191,14 @@ export const recordPayment = async (id: number, paymentData: {
       });
       
       const previousBalance = lastBankBalance ? Number(lastBankBalance.balance) : Number(bankAccount.balance);
-      const newBankBalance = previousBalance + paymentData.amount;
+      const newBankBalance = previousBalance + actualPaymentToAR; // Use actual payment amount, not total
       
       // Create bank register entry
       await BankRegister.create({
         registrationNumber: bankRegistrationNumber,
         registrationDate: paymentData.receivedDate || new Date(),
         transactionType: 'INFLOW',
-        amount: paymentData.amount,
+        amount: actualPaymentToAR, // Use actual payment amount, not total
         paymentMethod: 'CREDIT_CARD_COLLECTION',
         relatedDocumentType: 'AR_COLLECTION',
         relatedDocumentNumber: ar.registrationNumber,
@@ -179,7 +211,7 @@ export const recordPayment = async (id: number, paymentData: {
       }, { transaction });
       
       // Update bank account balance
-      const newBankAccountBalance = Number(bankAccount.balance) + paymentData.amount;
+      const newBankAccountBalance = Number(bankAccount.balance) + actualPaymentToAR; // Use actual payment amount, not total
       await bankAccount.update({
         balance: newBankAccountBalance,
       }, { transaction });
@@ -191,14 +223,37 @@ export const recordPayment = async (id: number, paymentData: {
       status,
       receivedDate: status === 'Received' ? (paymentData.receivedDate || new Date()) : ar.receivedDate,
       notes: paymentData.notes || ar.notes,
-      actualBankDeposit: paymentData.isCardSale ? paymentData.amount : undefined, // ✅ NEW: Store actual bank deposit for card sales
-      bankAccountId: paymentData.bankAccountId || undefined, // ✅ NEW: Store bank account ID
+      actualBankDeposit: paymentData.isCardSale ? actualPaymentToAR : undefined, // Use actual payment amount
+      bankAccountId: paymentData.bankAccountId || undefined,
     }, { transaction });
+    
+    // 🎯 PHASE 1: CREATE CREDIT BALANCE IF OVERPAYMENT
+    let creditBalance = null;
+    if (overpaymentAmount > 0 && ar.clientId) {
+      creditBalance = await creditBalanceService.createCreditBalance({
+        type: 'CUSTOMER_CREDIT',
+        relatedEntityType: 'CLIENT',
+        relatedEntityId: ar.clientId,
+        relatedEntityName: customerName,
+        originalTransactionType: 'AR',
+        originalTransactionId: ar.id,
+        originalTransactionNumber: ar.registrationNumber,
+        creditAmount: overpaymentAmount,
+        notes: `Overpayment of ₹${overpaymentAmount.toFixed(2)} on AR ${ar.registrationNumber}`
+      });
+    }
     
     await transaction.commit();
     committed = true;
     
-    return ar;
+    return {
+      accountsReceivable: ar,
+      creditBalance,
+      overpaymentAmount,
+      message: overpaymentAmount > 0 
+        ? `Payment processed. Credit balance of ₹${overpaymentAmount.toFixed(2)} created for customer.`
+        : 'Payment processed successfully.'
+    };
   } catch (error) {
     if (!committed) {
       await transaction.rollback();

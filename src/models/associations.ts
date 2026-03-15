@@ -21,6 +21,7 @@ import Financer from './Financer';
 import InvestmentAgreement from './InvestmentAgreement';
 import CardPaymentNetwork from './CardPaymentNetwork';
 import ClientPaymentMethod from './ClientPaymentMethod';
+import CreditBalance from './CreditBalance';
 
 // Investment Summary associations
 CashRegister.belongsTo(CashRegisterMaster, { foreignKey: 'cashRegisterId', as: 'cashRegisterMaster' });
@@ -111,4 +112,5 @@ export default {
   BankAccount,
   CardPaymentNetwork,
   ClientPaymentMethod,
+  CreditBalance,
 };

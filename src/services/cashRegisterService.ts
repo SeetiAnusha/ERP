@@ -5,6 +5,7 @@ import BankRegister from '../models/BankRegister';
 import AccountsReceivable from '../models/AccountsReceivable';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import * as creditBalanceService from './creditBalanceService';
 
 export const getAllCashTransactions = async () => {
   return await CashRegister.findAll({ order: [['registrationDate', 'DESC']] });
@@ -14,8 +15,9 @@ export const getCashTransactionById = async (id: number) => {
   return await CashRegister.findByPk(id);
 };
 
-export const createCashTransaction = async (data: any) => {
-  const transaction = await sequelize.transaction();
+export const createCashTransaction = async (data: any, externalTransaction?: any) => {
+  const transaction = externalTransaction || await sequelize.transaction();
+  const shouldCommit = !externalTransaction;
   
   try {
     // Phase 3: Conditional Cash Register Validation
@@ -31,7 +33,7 @@ export const createCashTransaction = async (data: any) => {
     // Get cash register master (only if needed)
     let cashRegisterMaster = null;
     if (needsCashRegister) {
-      cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId);
+      cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId, { transaction });
       if (!cashRegisterMaster) {
         throw new Error('Cash Register not found');
       }
@@ -44,7 +46,8 @@ export const createCashTransaction = async (data: any) => {
           [Op.like]: 'CJ%'
         }
       },
-      order: [['id', 'DESC']]
+      order: [['id', 'DESC']],
+      transaction
     });
     
     let nextNumber = 1;
@@ -60,7 +63,8 @@ export const createCashTransaction = async (data: any) => {
     if (needsCashRegister && cashRegisterMaster) {
       const lastRegisterTransaction = await CashRegister.findOne({
         where: { cashRegisterId: data.cashRegisterId },
-        order: [['id', 'DESC']]
+        order: [['id', 'DESC']],
+        transaction
       });
       
       lastBalance = lastRegisterTransaction 
@@ -81,10 +85,14 @@ export const createCashTransaction = async (data: any) => {
           throw new Error('At least one invoice must be selected for AR Collection');
         }
         
-        // Update AR invoices - Credit Sales and Credit Card Sales with customer info
+        // Phase 1: Overpayment Detection & Credit Balance Creation
         const invoiceIdsArray = JSON.parse(data.invoiceIds);
+        let totalOutstandingBalance = 0;
+        const invoicesToUpdate = [];
+        
+        // Calculate total outstanding balance and validate invoices
         for (const invoiceId of invoiceIdsArray) {
-          const arInvoice = await AccountsReceivable.findByPk(invoiceId);
+          const arInvoice = await AccountsReceivable.findByPk(invoiceId, { transaction });
           if (arInvoice) {
             // Verify this is from a Credit Sale or Credit Card Sale with customer info
             const allowedTypes = ['CREDIT_SALE', 'CLIENT_CREDIT', 'CREDIT_CARD_SALE', 'DEBIT_CARD_SALE'];
@@ -97,16 +105,70 @@ export const createCashTransaction = async (data: any) => {
               throw new Error(`Invoice ${arInvoice.registrationNumber} is a Credit Card Sale without customer information. Only Credit Card Sales with customer information can be collected through Cash Register.`);
             }
             
-            const receivedAmount = parseFloat(arInvoice.receivedAmount.toString()) + parseFloat(data.amount);
-            const balanceAmount = parseFloat(arInvoice.amount.toString()) - receivedAmount;
-            const status = balanceAmount <= 0 ? 'Received' : 'Partial';
-            
-            await arInvoice.update({
-              receivedAmount,
-              balanceAmount,
-              status,
-            }, { transaction });
+            totalOutstandingBalance += parseFloat(arInvoice.balanceAmount.toString());
+            invoicesToUpdate.push(arInvoice);
           }
+        }
+        
+        // Check for overpayment using existing service
+        const paymentAmount = parseFloat(data.amount);
+        if (paymentAmount > totalOutstandingBalance) {
+          // Get customer name for overpayment validation
+          const firstInvoice = invoicesToUpdate[0];
+          const customerName = firstInvoice ? firstInvoice.clientName : 'Customer';
+          
+          const validation = await creditBalanceService.validatePaymentAmount(
+            totalOutstandingBalance,
+            paymentAmount,
+            'CLIENT',
+            customerName || 'Customer'
+          );
+          
+          if (validation.isOverpayment) {
+            // Create credit balance for overpayment
+            const overpaymentAmount = validation.overpaymentAmount;
+            const firstInvoice = invoicesToUpdate[0];
+            
+            await creditBalanceService.createCreditBalance({
+              type: 'CUSTOMER_CREDIT',
+              relatedEntityType: 'CLIENT',
+              relatedEntityId: data.customerId,
+              relatedEntityName: customerName || 'Customer',
+              originalTransactionType: 'AR',
+              originalTransactionId: firstInvoice.id,
+              originalTransactionNumber: firstInvoice.registrationNumber,
+              creditAmount: overpaymentAmount,
+              notes: `Credit created from overpayment in Cash Register transaction ${registrationNumber}`
+            });
+          }
+        }
+        
+        // Update AR invoices - Credit Sales and Credit Card Sales with customer info
+        for (const arInvoice of invoicesToUpdate) {
+          const currentReceived = parseFloat(arInvoice.receivedAmount.toString());
+          const invoiceTotal = parseFloat(arInvoice.amount.toString());
+          const invoiceBalance = parseFloat(arInvoice.balanceAmount.toString());
+          
+          // Calculate how much to apply to this invoice (proportional if multiple invoices)
+          let amountToApply = paymentAmount;
+          if (invoicesToUpdate.length > 1) {
+            // Proportional distribution based on balance amount
+            const proportion = invoiceBalance / totalOutstandingBalance;
+            amountToApply = Math.min(paymentAmount * proportion, invoiceBalance);
+          } else {
+            // Single invoice - apply up to the balance amount
+            amountToApply = Math.min(paymentAmount, invoiceBalance);
+          }
+          
+          const newReceivedAmount = currentReceived + amountToApply;
+          const newBalanceAmount = invoiceTotal - newReceivedAmount;
+          const newStatus = newBalanceAmount <= 0.01 ? 'Received' : 'Partial'; // Allow small rounding differences
+          
+          await arInvoice.update({
+            receivedAmount: newReceivedAmount,
+            balanceAmount: Math.max(0, newBalanceAmount), // Ensure no negative balance
+            status: newStatus,
+          }, { transaction });
         }
       }
       
@@ -169,7 +231,7 @@ export const createCashTransaction = async (data: any) => {
         }, { transaction });
       }
       
-      await transaction.commit();
+      if (shouldCommit) await transaction.commit();
       return cashTransaction;
       
     } else if (data.transactionType === 'OUTFLOW') {
@@ -182,7 +244,7 @@ export const createCashTransaction = async (data: any) => {
       }
       
       if (!cashRegisterMaster) {
-        cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId);
+        cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId, { transaction });
         if (!cashRegisterMaster) {
           throw new Error('Cash Register not found');
         }
@@ -190,7 +252,8 @@ export const createCashTransaction = async (data: any) => {
         // Get last balance for OUTFLOW
         const lastRegisterTransaction = await CashRegister.findOne({
           where: { cashRegisterId: data.cashRegisterId },
-          order: [['id', 'DESC']]
+          order: [['id', 'DESC']],
+          transaction
         });
         
         lastBalance = lastRegisterTransaction 
@@ -215,7 +278,7 @@ export const createCashTransaction = async (data: any) => {
         }
         
         // Get bank account
-        const bankAccount = await BankAccount.findByPk(data.bankAccountId);
+        const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
         if (!bankAccount) {
           throw new Error('Bank Account not found');
         }
@@ -242,7 +305,8 @@ export const createCashTransaction = async (data: any) => {
               [Op.like]: 'BR%'
             }
           },
-          order: [['id', 'DESC']]
+          order: [['id', 'DESC']],
+          transaction
         });
         
         let nextBankNumber = 1;
@@ -276,7 +340,7 @@ export const createCashTransaction = async (data: any) => {
           balance: newBankAccountBalance,
         }, { transaction });
         
-        await transaction.commit();
+        if (shouldCommit) await transaction.commit();
         return cashTransaction;
         
       } else if (data.paymentMethod === 'CORRECTION') {
@@ -304,7 +368,7 @@ export const createCashTransaction = async (data: any) => {
           balance: newBalance,
         }, { transaction });
         
-        await transaction.commit();
+        if (shouldCommit) await transaction.commit();
         return cashTransaction;
         
       } else {
@@ -315,7 +379,7 @@ export const createCashTransaction = async (data: any) => {
     throw new Error('Invalid transaction type');
     
   } catch (error) {
-    await transaction.rollback();
+    if (shouldCommit) await transaction.rollback();
     throw error;
   }
 };
