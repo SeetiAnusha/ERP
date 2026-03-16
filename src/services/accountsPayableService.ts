@@ -3,6 +3,7 @@ import Purchase from '../models/Purchase';
 import Supplier from '../models/Supplier';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import { TransactionType } from '../types/TransactionType';
 
 export const getAllAccountsPayable = async () => {
   const aps = await AccountsPayable.findAll({
@@ -264,6 +265,7 @@ export const recordPayment = async (id: number, paymentData: {
           registrationNumber: `${ap.registrationNumber}-CC`,
           registrationDate: new Date(),
           type: 'CREDIT_CARD_PURCHASE',
+          sourceTransactionType: TransactionType.PAYMENT, // NEW FIELD
           relatedDocumentType: 'AP Payment',
           relatedDocumentId: ap.id,
           relatedDocumentNumber: ap.registrationNumber,

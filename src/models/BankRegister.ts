@@ -1,11 +1,13 @@
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../config/database';
+import { TransactionType } from '../types/TransactionType';
 
 class BankRegister extends Model {
   public id!: number;
   public registrationNumber!: string;
   public registrationDate!: Date;
   public transactionType!: 'INFLOW' | 'OUTFLOW';
+  public sourceTransactionType!: TransactionType; // NEW FIELD
   public amount!: number;
   public paymentMethod!: string; // 'Bank Transfer', 'Deposit'
   public relatedDocumentType!: string; // 'Purchase', 'Sale', 'Payment'
@@ -47,6 +49,16 @@ BankRegister.init(
     transactionType: {
       type: DataTypes.ENUM('INFLOW', 'OUTFLOW'),
       allowNull: false,
+    },
+    sourceTransactionType: {
+      type: DataTypes.ENUM('PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER'),
+      allowNull: false,
+      validate: {
+        isIn: {
+          args: [['PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER']],
+          msg: 'Source transaction type must be a valid TransactionType enum value'
+        }
+      }
     },
     amount: {
       type: DataTypes.DECIMAL(15, 2),

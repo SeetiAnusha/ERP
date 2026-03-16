@@ -5,6 +5,7 @@ import Supplier from '../models/Supplier';
 import Product from '../models/Product';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import { TransactionType } from '../types/TransactionType';
 
 export const getAllPurchases = async () => {
   return await Purchase.findAll({
@@ -172,6 +173,7 @@ export const createPurchase = async (data: any) => {
         transactionType: 'OUTFLOW',
         amount: mainPurchaseAmount,
         paymentMethod: paymentMethodLabel,
+        sourceTransactionType:TransactionType.PURCHASE,
         relatedDocumentType: 'Purchase',
         relatedDocumentNumber: registrationNumber,
         clientRnc: data.supplierRnc || '',
@@ -263,6 +265,7 @@ export const createPurchase = async (data: any) => {
             transactionType: 'OUTFLOW',
             amount: mainPurchaseAmount,
             paymentMethod: 'Debit Card',
+            sourceTransactionType:TransactionType.PURCHASE,
             relatedDocumentType: 'Purchase',
             relatedDocumentNumber: registrationNumber,
             clientRnc: data.supplierRnc || '',
@@ -322,6 +325,7 @@ export const createPurchase = async (data: any) => {
         registrationNumber: registrationNumber, // Use purchase registration number
         registrationDate: new Date(),
         type: paymentType === 'CREDIT_CARD' || paymentType === 'DEBIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+        sourceTransactionType: TransactionType.PURCHASE, // NEW FIELD
         relatedDocumentType: 'Purchase',
         relatedDocumentId: purchase.id,
         relatedDocumentNumber: registrationNumber,
@@ -397,6 +401,7 @@ export const createPurchase = async (data: any) => {
               registrationNumber: registrationNumber, // Use purchase registration number
               registrationDate: new Date(),
               type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+              sourceTransactionType: TransactionType.PURCHASE, // NEW FIELD
               relatedDocumentType: 'InvoiceAssociate',
               relatedDocumentId: purchase.id,
               relatedDocumentNumber: registrationNumber,
@@ -479,6 +484,7 @@ export const createPurchase = async (data: any) => {
             registrationNumber: registrationNumber, // Use purchase registration number (CP####)
             registrationDate: new Date(),
             type: invoicePaymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'SUPPLIER_CREDIT',
+            sourceTransactionType: TransactionType.PURCHASE, // NEW FIELD
             relatedDocumentType: 'Purchase',
             relatedDocumentId: purchase.id,
             relatedDocumentNumber: registrationNumber,

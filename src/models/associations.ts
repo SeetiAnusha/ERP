@@ -22,6 +22,8 @@ import InvestmentAgreement from './InvestmentAgreement';
 import CardPaymentNetwork from './CardPaymentNetwork';
 import ClientPaymentMethod from './ClientPaymentMethod';
 import CreditBalance from './CreditBalance';
+import ExpenseCategory from './ExpenseCategory';
+import ExpenseType from './ExpenseType';
 
 // Investment Summary associations
 CashRegister.belongsTo(CashRegisterMaster, { foreignKey: 'cashRegisterId', as: 'cashRegisterMaster' });
@@ -43,6 +45,9 @@ BankAccount.hasMany(Card, { foreignKey: 'bankAccountId', as: 'Cards' });
 Purchase.belongsTo(Supplier, { foreignKey: 'supplierId', as: 'supplier' });
 Purchase.hasMany(PurchaseItem, { foreignKey: 'purchaseId', as: 'items' });
 Purchase.hasMany(AssociatedInvoice, { foreignKey: 'purchaseId', as: 'associatedInvoices' });
+// Expense Management associations
+Purchase.belongsTo(ExpenseCategory, { foreignKey: 'expenseCategoryId', as: 'expenseCategory' });
+Purchase.belongsTo(ExpenseType, { foreignKey: 'expenseTypeId', as: 'expenseType' });
 
 // PurchaseItem associations
 PurchaseItem.belongsTo(Purchase, { foreignKey: 'purchaseId', as: 'purchase' });
@@ -94,6 +99,16 @@ CardPaymentNetwork.hasMany(ClientPaymentMethod, { foreignKey: 'cardPaymentNetwor
 // Product.hasMany(PurchaseItem, { foreignKey: 'productId', as: 'purchaseItems' });
 // Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
 
+// Expense Category associations
+ExpenseCategory.belongsTo(ExpenseCategory, { foreignKey: 'parentCategoryId', as: 'parentCategory' });
+ExpenseCategory.hasMany(ExpenseCategory, { foreignKey: 'parentCategoryId', as: 'subCategories' });
+ExpenseCategory.hasMany(ExpenseType, { foreignKey: 'categoryId', as: 'expenseTypes' });
+ExpenseCategory.hasMany(Purchase, { foreignKey: 'expenseCategoryId', as: 'purchases' });
+
+// Expense Type associations
+ExpenseType.belongsTo(ExpenseCategory, { foreignKey: 'categoryId', as: 'category' });
+ExpenseType.hasMany(Purchase, { foreignKey: 'expenseTypeId', as: 'purchases' });
+
 export default {
   Purchase,
   PurchaseItem,
@@ -113,4 +128,6 @@ export default {
   CardPaymentNetwork,
   ClientPaymentMethod,
   CreditBalance,
+  ExpenseCategory,
+  ExpenseType,
 };

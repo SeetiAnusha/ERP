@@ -1,11 +1,13 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
+import { TransactionType } from '../types/TransactionType';
 
 interface AccountsPayableAttributes {
   id: number;
   registrationNumber: string;
   registrationDate: Date;
   type: string; // 'CREDIT_CARD_PURCHASE', 'SUPPLIER_CREDIT', etc.
+  sourceTransactionType: TransactionType; // NEW FIELD
   relatedDocumentType: string; // 'Purchase', 'Invoice', etc.
   relatedDocumentId: number;
   relatedDocumentNumber: string;
@@ -36,6 +38,7 @@ class AccountsPayable extends Model<AccountsPayableAttributes, AccountsPayableCr
   public registrationNumber!: string;
   public registrationDate!: Date;
   public type!: string;
+  public sourceTransactionType!: TransactionType; // NEW FIELD
   public relatedDocumentType!: string;
   public relatedDocumentId!: number;
   public relatedDocumentNumber!: string;
@@ -78,6 +81,16 @@ AccountsPayable.init(
     type: {
       type: DataTypes.STRING(50),
       allowNull: false,
+    },
+    sourceTransactionType: {
+      type: DataTypes.ENUM('PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER'),
+      allowNull: false,
+      validate: {
+        isIn: {
+          args: [['PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER']],
+          msg: 'Source transaction type must be a valid TransactionType enum value'
+        }
+      }
     },
     relatedDocumentType: {
       type: DataTypes.STRING(50),
