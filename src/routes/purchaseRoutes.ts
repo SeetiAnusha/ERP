@@ -4,6 +4,9 @@ import * as purchaseController from '../controllers/purchaseController';
 const router = Router();
 
 router.get('/', purchaseController.getAll);
+router.get('/:id/details', purchaseController.getPurchaseWithDetails);
+router.get('/:id/items', purchaseController.getPurchaseItems);
+router.get('/:id/invoices', purchaseController.getAssociatedInvoices);
 router.get('/:id', purchaseController.getById);
 router.post('/', purchaseController.create);
 router.put('/:id', purchaseController.update);

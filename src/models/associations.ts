@@ -44,7 +44,8 @@ BankAccount.hasMany(Card, { foreignKey: 'bankAccountId', as: 'Cards' });
 // Purchase associations
 Purchase.belongsTo(Supplier, { foreignKey: 'supplierId', as: 'supplier' });
 Purchase.hasMany(PurchaseItem, { foreignKey: 'purchaseId', as: 'items' });
-Purchase.hasMany(AssociatedInvoice, { foreignKey: 'purchaseId', as: 'associatedInvoices' });
+// Temporarily disable AssociatedInvoice association due to schema issues
+// Purchase.hasMany(AssociatedInvoice, { foreignKey: 'purchaseId', as: 'associatedInvoices' });
 // Expense Management associations
 Purchase.belongsTo(ExpenseCategory, { foreignKey: 'expenseCategoryId', as: 'expenseCategory' });
 Purchase.belongsTo(ExpenseType, { foreignKey: 'expenseTypeId', as: 'expenseType' });
@@ -53,8 +54,8 @@ Purchase.belongsTo(ExpenseType, { foreignKey: 'expenseTypeId', as: 'expenseType'
 PurchaseItem.belongsTo(Purchase, { foreignKey: 'purchaseId', as: 'purchase' });
 PurchaseItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 
-// AssociatedInvoice associations
-AssociatedInvoice.belongsTo(Purchase, { foreignKey: 'purchaseId', as: 'purchase' });
+// AssociatedInvoice associations - temporarily disabled due to schema issues
+// AssociatedInvoice.belongsTo(Purchase, { foreignKey: 'purchaseId', as: 'purchase' });
 
 // Sale associations
 Sale.belongsTo(Client, { foreignKey: 'clientId', as: 'client' });

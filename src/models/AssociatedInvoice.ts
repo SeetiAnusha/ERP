@@ -1,5 +1,6 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
+import { TransactionType } from '../types/TransactionType';
 
 interface AssociatedInvoiceAttributes {
   id: number;
@@ -14,6 +15,7 @@ interface AssociatedInvoiceAttributes {
   amount: number;
   purchaseType: string;
   paymentType?: string;
+  // sourceTransactionType: TransactionType; // Temporarily removed - column doesn't exist in DB
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -33,6 +35,7 @@ class AssociatedInvoice extends Model<AssociatedInvoiceAttributes, AssociatedInv
   public amount!: number;
   public purchaseType!: string;
   public paymentType?: string;
+  // public sourceTransactionType!: TransactionType; // Temporarily removed - column doesn't exist in DB
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -92,11 +95,42 @@ AssociatedInvoice.init(
       type: DataTypes.STRING(50),
       allowNull: true,
     },
+    // sourceTransactionType: {
+    //   type: DataTypes.ENUM('PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER'),
+    //   allowNull: false,
+    //   defaultValue: 'PURCHASE',
+    //   validate: {
+    //     isIn: {
+    //       args: [['PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER']],
+    //       msg: 'Source transaction type must be a valid TransactionType'
+    //     }
+    //   },
+    //   comment: 'Tracks which system created this associated invoice entry'
+    // },
   },
   {
     sequelize,
     tableName: 'associated_invoices',
     timestamps: true,
+    indexes: [
+      {
+        fields: ['purchase_id'],
+        name: 'idx_associated_invoices_purchase_id'
+      },
+      // Temporarily commented out until database column is added
+      // {
+      //   fields: ['source_transaction_type'],
+      //   name: 'idx_associated_invoices_source_transaction_type'
+      // },
+      // {
+      //   fields: ['source_transaction_type', 'payment_type'],
+      //   name: 'idx_associated_invoices_source_payment_type'
+      // },
+      {
+        fields: ['supplier_rnc', 'date'],
+        name: 'idx_associated_invoices_supplier_date'
+      }
+    ]
   }
 );
 
