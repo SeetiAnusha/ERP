@@ -6,14 +6,15 @@ import * as customerCreditAwarePaymentService from '../services/customerCreditAw
  */
 export const getCustomerPaymentPreview = async (req: Request, res: Response) => {
   try {
-    const { customerId, invoiceIds, requestedAmount } = req.body;
+    const { customerId, invoiceIds, requestedAmount, useExistingCredit = true } = req.body;
     
-    console.log('🔍 Getting customer payment preview for:', { customerId, invoiceIds, requestedAmount });
+    console.log('🔍 Getting customer payment preview for:', { customerId, invoiceIds, requestedAmount, useExistingCredit });
     
     const preview = await customerCreditAwarePaymentService.getCustomerPaymentPreview(
       customerId,
       invoiceIds,
-      requestedAmount
+      requestedAmount,
+      useExistingCredit
     );
     
     res.json(preview);
@@ -25,6 +26,7 @@ export const getCustomerPaymentPreview = async (req: Request, res: Response) => 
 
 /**
  * Process customer credit-aware payment
+ * Supports both simple and complex scenarios via useExistingCredit flag
  */
 export const processCustomerPayment = async (req: Request, res: Response) => {
   try {
@@ -40,6 +42,33 @@ export const processCustomerPayment = async (req: Request, res: Response) => {
     }
   } catch (error: any) {
     console.error('❌ Error processing customer credit-aware payment:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Process simple customer payment (no existing credit usage)
+ * This is just a wrapper that sets useExistingCredit to false
+ */
+export const processSimpleCustomerPayment = async (req: Request, res: Response) => {
+  try {
+    console.log('🎯 Processing SIMPLE customer credit-aware payment...');
+    
+    // Force disable existing credit usage for simple mode
+    const requestWithSimpleMode = {
+      ...req.body,
+      useExistingCredit: false
+    };
+    
+    const result = await customerCreditAwarePaymentService.processCustomerCreditAwarePayment(requestWithSimpleMode);
+    
+    if (result.success) {
+      res.status(201).json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error: any) {
+    console.error('❌ Error processing simple customer payment:', error);
     res.status(500).json({ error: error.message });
   }
 };

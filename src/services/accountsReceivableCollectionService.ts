@@ -4,6 +4,7 @@ import BankAccount from '../models/BankAccount';
 import Expense from '../models/Expense';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import { TransactionType } from '../types/TransactionType';
 
 interface CollectionData {
   amountReceived: number;
@@ -132,7 +133,8 @@ export const collectPaymentWithFees = async (arId: number, collectionData: Colle
       description: `Credit Card Collection: ${arRecord.registrationNumber} - Received: ${receivedAmount.toFixed(2)} of ${fullAmount.toFixed(2)}${description ? ` - ${description}` : ''}`,
       transferNumber: transferReference || null,
       bankAccountId,
-      balance: newBankBalance
+      balance: newBankBalance,
+      sourceTransactionType: TransactionType.AR_COLLECTION, // ✅ FIXED: Added missing sourceTransactionType
     }, { transaction });
 
     // 6. Create Expense entry (processing fee) - ALWAYS if there's a difference

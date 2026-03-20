@@ -1,10 +1,10 @@
-// Credit-Aware Payment Service
-// This service automatically applies existing credit balances before processing bank payments
-
-import * as creditBalanceService from './creditBalanceService';
-import * as bankRegisterService from './bankRegisterService';
-import AccountsPayable from '../models/AccountsPayable';
+import { Transaction } from 'sequelize';
+import { BaseService } from '../core/BaseService';
+import { ValidationError, NotFoundError, InsufficientBalanceError, BusinessLogicError } from '../core/AppError';
+import { TransactionType } from '../types/TransactionType';
 import sequelize from '../config/database';
+import { creditBalanceService } from './creditBalanceService';
+import bankRegisterService from './bankRegisterService';
 
 export interface CreditAwarePaymentRequest {
   supplierId: number;
@@ -28,255 +28,397 @@ export interface CreditAwarePaymentResult {
   message: string;
 }
 
-/**
- * Process payment with automatic credit balance application
- */
-export const processCreditAwarePayment = async (
-  request: CreditAwarePaymentRequest
-): Promise<CreditAwarePaymentResult> => {
-  console.log('🎯 Starting credit-aware payment processing...');
-  console.log('📋 Request:', JSON.stringify(request, null, 2));
-  
-  // Use separate transactions for each operation to avoid timeout issues
-  try {
-    // Step 1: Get available credit balances for supplier (no transaction needed for read)
-    const availableCredits = await creditBalanceService.getAvailableCreditBalances(
+export class CreditAwarePaymentService extends BaseService {
+
+  async processCreditAwarePayment(
+    request: CreditAwarePaymentRequest
+  ): Promise<CreditAwarePaymentResult> {
+    console.log('🎯 Starting SMART credit-aware payment processing...');
+    console.log('📋 Request:', JSON.stringify(request, null, 2));
+    
+    // Validate request
+    this.validatePaymentRequest(request);
+
+    try {
+      const AccountsPayable = (await import('../models/AccountsPayable')).default;
+
+      // Step 1: Get available credit balances for supplier
+      const availableCredits = await creditBalanceService.getCreditBalancesByEntity(
+        'SUPPLIER',
+        request.supplierId
+      );
+
+      const totalAvailableCredit = availableCredits.reduce((sum: number, credit: any) => 
+        sum + parseFloat(credit.availableAmount.toString()), 0
+      );
+
+      console.log(`💳 Available credit for supplier: ₹${totalAvailableCredit}`);
+
+      // Step 2: Get invoice details
+      const invoices = await AccountsPayable.findAll({
+        where: { id: request.invoiceIds }
+      });
+
+      const totalInvoiceBalance = invoices.reduce((sum: number, invoice: any) => 
+        sum + parseFloat(invoice.balanceAmount.toString()), 0
+      );
+
+      console.log(`📄 Total invoice balance: ₹${totalInvoiceBalance}`);
+
+      // Step 3: 🚫 SMART OVERPAYMENT PREVENTION
+      if (request.requestedPaymentAmount > totalInvoiceBalance && totalAvailableCredit > 0) {
+        const overpaymentAmount = request.requestedPaymentAmount - totalInvoiceBalance;
+        throw new ValidationError(
+          `🚫 OVERPAYMENT BLOCKED: Credit balance exists (₹${totalAvailableCredit.toFixed(2)}). ` +
+          `Please pay only the invoice amount: ₹${totalInvoiceBalance.toFixed(2)}. ` +
+          `Overpayment of ₹${overpaymentAmount.toFixed(2)} is not allowed when credit balance is available. ` +
+          `💡 SMART SUGGESTION: Use the existing credit balance to pay this invoice instead.`
+        );
+      }
+
+      // Step 4: 💡 SMART PAYMENT CALCULATION (Credit-First Logic)
+      const actualPaymentAmount = Math.min(request.requestedPaymentAmount, totalInvoiceBalance);
+      const creditToUse = Math.min(totalAvailableCredit, actualPaymentAmount);
+      let bankPaymentNeeded = Math.max(0, actualPaymentAmount - creditToUse);
+
+      console.log(`💡 SMART CALCULATION:`);
+      console.log(`   Requested: ₹${request.requestedPaymentAmount}`);
+      console.log(`   Invoice Balance: ₹${totalInvoiceBalance}`);
+      console.log(`   Actual Payment: ₹${actualPaymentAmount}`);
+      console.log(`   Credit to use: ₹${creditToUse}`);
+      console.log(`   Bank payment needed: ₹${bankPaymentNeeded}`);
+
+      let creditUsed = 0;
+      let newCreditCreated = 0;
+
+      // Step 5: Apply credit balances first (if available)
+      if (creditToUse > 0) {
+        console.log('🔄 Applying existing credit balances...');
+        
+        const creditTransaction = await sequelize.transaction();
+        try {
+          const creditApplication = await creditBalanceService.applyCreditToInvoices({
+            entityType: 'SUPPLIER',
+            entityId: request.supplierId,
+            invoicesToUpdate: invoices
+          });
+          
+          creditUsed = Math.min(creditApplication.totalCreditUsed, creditToUse);
+          await creditTransaction.commit();
+          console.log(`✅ Applied ₹${creditUsed} from credit balances`);
+        } catch (error) {
+          await creditTransaction.rollback();
+          throw error;
+        }
+      }
+
+      // Step 6: Handle overpayment for zero credit balance case ONLY
+      if (request.requestedPaymentAmount > totalInvoiceBalance && totalAvailableCredit === 0) {
+        const overpaymentAmount = request.requestedPaymentAmount - totalInvoiceBalance;
+        console.log(`💰 Creating credit balance for overpayment: ₹${overpaymentAmount} (no existing credit)`);
+        
+        const creditData = {
+          type: 'SUPPLIER_CREDIT' as const,
+          relatedEntityType: 'SUPPLIER' as const,
+          relatedEntityId: request.supplierId,
+          relatedEntityName: request.supplierName,
+          originalTransactionType: 'AP' as const,
+          originalTransactionId: invoices[0]?.id || 0,
+          originalTransactionNumber: invoices[0]?.registrationNumber || 'MULTI',
+          creditAmount: overpaymentAmount,
+          notes: `Overpayment credit from payment: ${request.description}`
+        };
+        
+        const creditBalance = await creditBalanceService.createCreditBalance(creditData);
+        newCreditCreated = overpaymentAmount;
+        console.log(`✅ Created credit balance: ${creditBalance.registrationNumber} for ₹${overpaymentAmount}`);
+        
+        // 🚨 CRITICAL FIX: Bank should pay the FULL requested amount for overpayment
+        bankPaymentNeeded = request.requestedPaymentAmount; // FULL amount, not just invoice amount
+        console.log(`🏦 OVERPAYMENT SCENARIO: Bank will pay FULL requested amount: ₹${bankPaymentNeeded}`);
+      }
+
+      // Step 7: 🏦 SMART BANK BALANCE VALIDATION (with credit balance info)
+      if (bankPaymentNeeded > 0) {
+        console.log(`🔍 Validating bank account balance for payment of ₹${bankPaymentNeeded}...`);
+        
+        const BankAccount = (await import('../models/BankAccount')).default;
+        const bankAccount = await BankAccount.findByPk(request.bankAccountId);
+        
+        if (!bankAccount) {
+          throw new Error(`Bank account with ID ${request.bankAccountId} not found`);
+        }
+        
+        const currentBankBalance = parseFloat(bankAccount.balance.toString());
+        
+        if (currentBankBalance < bankPaymentNeeded) {
+          // 💡 SMART ERROR MESSAGE with credit balance info
+          const errorMessage = totalAvailableCredit > 0 
+            ? `🏦 Insufficient bank balance: Available ₹${currentBankBalance.toFixed(2)}, Required ₹${bankPaymentNeeded.toFixed(2)}. ` +
+              `💡 SMART SUGGESTION: You have ₹${totalAvailableCredit.toFixed(2)} credit balance available. ` +
+              `Use credit payment instead to avoid bank overdraft.`
+            : `🏦 Insufficient bank balance: Available ₹${currentBankBalance.toFixed(2)}, Required ₹${bankPaymentNeeded.toFixed(2)}. ` +
+              `Please add funds to your bank account.`;
+          
+          throw new InsufficientBalanceError(errorMessage);
+        }
+        
+        console.log(`✅ Bank account validation passed. Available: ₹${currentBankBalance}, Required: ₹${bankPaymentNeeded}`);
+      }
+
+      // Step 8: Process bank payment (if needed)
+      let bankRegisterEntry = null;
+      
+      if (bankPaymentNeeded > 0) {
+        console.log(`💸 Processing bank payment of ₹${bankPaymentNeeded}...`);
+        
+        const bankPaymentData = {
+          registrationDate: new Date(request.registrationDate),
+          transactionType: 'OUTFLOW' as const,
+          sourceTransactionType: TransactionType.PAYMENT,
+          amount: bankPaymentNeeded,
+          paymentMethod: request.paymentMethod,
+          relatedDocumentType: 'AP',
+          relatedDocumentNumber: invoices[0]?.registrationNumber || 'MULTI',
+          description: `${request.description} (Smart Payment: ₹${creditUsed} credit + ₹${bankPaymentNeeded} bank)`,
+          supplierId: request.supplierId,
+          supplierName: request.supplierName,
+          bankAccountId: request.bankAccountId,
+          invoiceIds: JSON.stringify(request.invoiceIds),
+          allowOverpayment: true
+        };
+        
+        // Use existing bank register service
+        bankRegisterEntry = await bankRegisterService.createBankRegister(bankPaymentData);
+        console.log(`✅ Bank payment processed: ${bankRegisterEntry.registrationNumber}`);
+      }
+
+      // Step 9: Calculate final results
+      const updatedInvoices = await AccountsPayable.findAll({
+        where: { id: request.invoiceIds }
+      });
+
+      const finalInvoiceBalance = updatedInvoices.reduce((sum: number, invoice: any) => {
+        return sum + parseFloat(invoice.balanceAmount.toString());
+      }, 0);
+
+      const result: CreditAwarePaymentResult = {
+        success: true,
+        creditUsed,
+        bankPaymentMade: bankPaymentNeeded,
+        totalPaymentProcessed: creditUsed + bankPaymentNeeded,
+        remainingInvoiceBalance: finalInvoiceBalance,
+        newCreditCreated,
+        bankRegisterEntry,
+        message: this.generateSmartPaymentMessage(creditUsed, bankPaymentNeeded, newCreditCreated)
+      };
+
+      console.log('🎉 SMART credit-aware payment completed successfully:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('❌ SMART credit-aware payment failed:', error);
+      
+      return {
+        success: false,
+        creditUsed: 0,
+        bankPaymentMade: 0,
+        totalPaymentProcessed: 0,
+        remainingInvoiceBalance: 0,
+        message: `Payment failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
+  /**
+   * Generate smart payment success message
+   */
+  private generateSmartPaymentMessage(creditUsed: number, bankPaymentMade: number, newCreditCreated: number): string {
+    if (newCreditCreated > 0) {
+      return `✅ Overpayment processed: ₹${bankPaymentMade} from bank account (FULL requested amount). ₹${newCreditCreated} overpayment created as new credit balance.`;
+    } else if (creditUsed > 0 && bankPaymentMade > 0) {
+      return `✅ Smart Payment processed: ₹${creditUsed} from credit balance + ₹${bankPaymentMade} from bank account. Optimal cash flow achieved!`;
+    } else if (creditUsed > 0) {
+      return `✅ Payment processed entirely from credit balance: ₹${creditUsed}. No bank payment needed - excellent cash flow management!`;
+    } else {
+      return `✅ Payment processed from bank account: ₹${bankPaymentMade}. Bank register entry created successfully.`;
+    }
+  }
+
+  /**
+   * Get payment preview (shows how much credit will be used vs bank payment)
+   */
+  async getPaymentPreview(
+    supplierId: number,
+    invoiceIds: number[],
+    requestedAmount: number,
+    bankAccountId?: number
+  ): Promise<{
+    totalInvoiceBalance: number;
+    availableCredit: number;
+    creditWillBeUsed: number;
+    bankPaymentNeeded: number;
+    willCreateNewCredit: boolean;
+    newCreditAmount: number;
+    overpaymentBlocked?: boolean;
+    overpaymentBlockReason?: string;
+    smartSuggestion?: string;
+    bankBalanceValidation?: {
+      hasSufficientBalance: boolean;
+      availableBalance: number;
+      errorMessage?: string;
+    };
+  }> {
+    // Get available credits
+    const availableCredits = await creditBalanceService.getCreditBalancesByEntity(
       'SUPPLIER',
-      request.supplierId
+      supplierId
     );
     
-    const totalAvailableCredit = availableCredits.reduce((sum, credit) => 
+    const totalAvailableCredit = availableCredits.reduce((sum: number, credit: any) => 
       sum + parseFloat(credit.availableAmount.toString()), 0
     );
     
-    console.log(`💳 Available credit for supplier: ₹${totalAvailableCredit}`);
-    
-    // Step 2: Get invoice details (no transaction needed for read)
+    // Get invoice balances
+    const AccountsPayable = (await import('../models/AccountsPayable')).default;
     const invoices = await AccountsPayable.findAll({
-      where: { id: request.invoiceIds }
+      where: { id: invoiceIds }
     });
     
-    const totalInvoiceBalance = invoices.reduce((sum, invoice) => 
+    const totalInvoiceBalance = invoices.reduce((sum: number, invoice: any) => 
       sum + parseFloat(invoice.balanceAmount.toString()), 0
     );
     
-    console.log(`📄 Total invoice balance: ₹${totalInvoiceBalance}`);
+    // 🚫 SMART OVERPAYMENT PREVENTION CHECK
+    const isOverpayment = requestedAmount > totalInvoiceBalance;
+    const overpaymentBlocked = isOverpayment && totalAvailableCredit > 0;
     
-    let creditUsed = 0;
-    let bankPaymentNeeded = request.requestedPaymentAmount;
-    let newCreditCreated = 0;
+    let overpaymentBlockReason;
+    let smartSuggestion;
     
-    // Step 3: Apply credit balances first (if available) - separate transaction
-    if (totalAvailableCredit > 0 && totalInvoiceBalance > 0) {
-      console.log('🔄 Applying existing credit balances...');
-      
-      const creditTransaction = await sequelize.transaction();
+    if (overpaymentBlocked) {
+      const overpaymentAmount = requestedAmount - totalInvoiceBalance;
+      overpaymentBlockReason = `Overpayment of ₹${overpaymentAmount.toFixed(2)} blocked because credit balance exists (₹${totalAvailableCredit.toFixed(2)})`;
+      smartSuggestion = `Pay only the invoice amount: ₹${totalInvoiceBalance.toFixed(2)}. Use existing credit balance instead of creating more credit.`;
+    }
+    
+    // 💡 SMART PAYMENT CALCULATION (Credit-First Logic)
+    let actualPaymentAmount, creditWillBeUsed, bankPaymentNeeded;
+    
+    if (isOverpayment && totalAvailableCredit === 0) {
+      // 🚨 OVERPAYMENT WITH ZERO CREDIT: Bank pays FULL requested amount
+      actualPaymentAmount = requestedAmount;
+      creditWillBeUsed = 0;
+      bankPaymentNeeded = requestedAmount; // FULL amount from bank
+      console.log(`💰 OVERPAYMENT SCENARIO (Zero Credit): Bank pays FULL ₹${bankPaymentNeeded}`);
+    } else {
+      // Normal scenario: Credit-first logic
+      actualPaymentAmount = Math.min(requestedAmount, totalInvoiceBalance);
+      creditWillBeUsed = Math.min(totalAvailableCredit, actualPaymentAmount);
+      bankPaymentNeeded = Math.max(0, actualPaymentAmount - creditWillBeUsed);
+      console.log(`💡 NORMAL SCENARIO: Credit ₹${creditWillBeUsed} + Bank ₹${bankPaymentNeeded}`);
+    }
+    
+    // Handle overpayment for zero credit balance case ONLY
+    const willCreateNewCredit = isOverpayment && totalAvailableCredit === 0;
+    const newCreditAmount = willCreateNewCredit ? requestedAmount - totalInvoiceBalance : 0;
+    
+    // 🏦 SMART BANK BALANCE VALIDATION (with credit balance info)
+    let bankBalanceValidation;
+    if (bankPaymentNeeded > 0 && bankAccountId && !overpaymentBlocked) {
       try {
-        const creditApplication = await creditBalanceService.applyCreditToInvoices(
-          availableCredits,
-          invoices,
-          creditTransaction
-        );
+        const BankAccount = (await import('../models/BankAccount')).default;
+        const bankAccount = await BankAccount.findByPk(bankAccountId);
         
-        creditUsed = creditApplication.totalCreditUsed;
-        
-        // ✅ CRITICAL FIX: Don't reduce bank payment for overpayment scenarios
-        // Check if this is an overpayment scenario first
-        const remainingBalance = creditApplication.remainingInvoiceBalance;
-        // Check if payment amount is more than original invoice (true overpayment)
-        const isOverpayment = request.requestedPaymentAmount > totalInvoiceBalance;
-        
-        if (isOverpayment) {
-        // Overpayment: Bank pays the FULL requested amount
-        bankPaymentNeeded = request.requestedPaymentAmount;
-        console.log(`💰 Overpayment scenario: Bank will pay FULL amount: ₹${bankPaymentNeeded}`);
-         } else {
-        // Normal payment: Bank pays only what's needed after credit
-        bankPaymentNeeded = Math.max(0, Math.min(request.requestedPaymentAmount, remainingBalance));
-        console.log(`💰 Normal payment: Bank payment needed: ₹${bankPaymentNeeded}`);
-      }
-
-        
-        await creditTransaction.commit();
-        console.log(`✅ Applied ₹${creditUsed} from credit balances`);
+        if (bankAccount) {
+          const availableBalance = parseFloat(bankAccount.balance.toString());
+          const hasSufficientBalance = availableBalance >= bankPaymentNeeded;
+          
+          let errorMessage;
+          if (!hasSufficientBalance) {
+            errorMessage = totalAvailableCredit > 0 
+              ? `🏦 Insufficient bank balance: Available ₹${availableBalance.toFixed(2)}, Required ₹${bankPaymentNeeded.toFixed(2)}. ` +
+                `💡 SMART SUGGESTION: You have ₹${totalAvailableCredit.toFixed(2)} credit balance available. Use credit payment instead.`
+              : `🏦 Insufficient bank balance: Available ₹${availableBalance.toFixed(2)}, Required ₹${bankPaymentNeeded.toFixed(2)}. Please add funds.`;
+          }
+          
+          bankBalanceValidation = {
+            hasSufficientBalance,
+            availableBalance,
+            errorMessage
+          };
+        }
       } catch (error) {
-        await creditTransaction.rollback();
-        throw error;
+        console.error('Error validating bank balance:', error);
       }
     }
     
-    // Step 4: Check for overpayment and create credit balance (if needed) - separate transaction
-    const originalInvoiceBalance = totalInvoiceBalance; // Store original balance before credit application
-    const isOverpayment = request.requestedPaymentAmount > originalInvoiceBalance;
-    
-    if (isOverpayment) {
-      const overpaymentAmount = request.requestedPaymentAmount - originalInvoiceBalance;
-      console.log(`💰 Overpayment detected: ₹${overpaymentAmount} will become credit balance`);
-      
-      // Create credit balance for overpayment - separate transaction
-      const creditData = {
-        type: 'SUPPLIER_CREDIT' as const,
-        relatedEntityType: 'SUPPLIER' as const,
-        relatedEntityId: request.supplierId,
-        relatedEntityName: request.supplierName,
-        originalTransactionType: 'AP' as const,
-        originalTransactionId: invoices[0]?.id || 0,
-        originalTransactionNumber: invoices[0]?.registrationNumber || 'MULTI',
-        creditAmount: overpaymentAmount,
-        notes: `Overpayment credit from payment: ${request.description}`
-      };
-      
-      const creditBalance = await creditBalanceService.createCreditBalance(creditData);
-      newCreditCreated = overpaymentAmount;
-      console.log(`✅ Created credit balance: ${creditBalance.registrationNumber} for ₹${overpaymentAmount}`);
-      
-      // ✅ CRITICAL FIX: Bank payment should be the FULL requested amount, not just the remaining balance
-      // The bank account should be debited the full amount the user is paying
-      bankPaymentNeeded = request.requestedPaymentAmount;
-      console.log(`🏦 Bank will be debited the FULL requested amount: ₹${bankPaymentNeeded}`);
-    }
-    
-    // Step 5: Process bank payment (if needed) - separate transaction
-    let bankRegisterEntry = null;
-    
-    if (bankPaymentNeeded > 0) {
-      console.log(`💸 Processing bank payment of ₹${bankPaymentNeeded}...`);
-      
-      const bankPaymentData = {
-        registrationDate: request.registrationDate,
-        transactionType: 'OUTFLOW',
-        amount: bankPaymentNeeded,
-        paymentMethod: request.paymentMethod,
-        relatedDocumentType: 'AP',
-        relatedDocumentNumber: invoices[0]?.registrationNumber || 'MULTI',
-        description: request.description,
-        supplierId: request.supplierId,
-        supplierName: request.supplierName,
-        bankAccountId: request.bankAccountId,
-        invoiceIds: JSON.stringify(request.invoiceIds),
-        allowOverpayment: true
-      };
-      
-      // Use existing bank register service without external transaction
-      bankRegisterEntry = await bankRegisterService.createBankRegister(bankPaymentData);
-      console.log(`✅ Bank payment processed: ${bankRegisterEntry.registrationNumber}`);
-    }
-    
-    // Step 6: Calculate final results
-    const updatedInvoices = await AccountsPayable.findAll({
-      where: { id: request.invoiceIds }
+    console.log('💡 SMART Payment Preview Calculation:', {
+      totalInvoiceBalance,
+      totalAvailableCredit,
+      requestedAmount,
+      actualPaymentAmount,
+      creditWillBeUsed,
+      bankPaymentNeeded,
+      willCreateNewCredit,
+      newCreditAmount,
+      overpaymentBlocked,
+      overpaymentBlockReason,
+      smartSuggestion,
+      bankBalanceValidation
     });
     
-    const finalInvoiceBalance = updatedInvoices.reduce((sum, invoice) => {
-      return sum + parseFloat(invoice.balanceAmount.toString());
-    }, 0);
-    
-    const result: CreditAwarePaymentResult = {
-      success: true,
-      creditUsed,
-      bankPaymentMade: bankPaymentNeeded,
-      totalPaymentProcessed: creditUsed + bankPaymentNeeded,
-      remainingInvoiceBalance: finalInvoiceBalance,
-      newCreditCreated,
-      bankRegisterEntry,
-      message: newCreditCreated > 0
-        ? `Payment processed: ₹${creditUsed} from credit balance + ₹${bankPaymentNeeded} from bank account. ₹${newCreditCreated} overpayment created as new credit.`
-        : creditUsed > 0 
-        ? `Payment processed: ₹${creditUsed} from credit balance + ₹${bankPaymentNeeded} from bank account`
-        : `Payment processed: ₹${bankPaymentNeeded} from bank account`
-    };
-    
-    console.log('🎉 Credit-aware payment completed successfully:', result);
-    return result;
-    
-  } catch (error) {
-    console.error('❌ Credit-aware payment failed:', error);
-    
     return {
-      success: false,
-      creditUsed: 0,
-      bankPaymentMade: 0,
-      totalPaymentProcessed: 0,
-      remainingInvoiceBalance: 0,
-      message: `Payment failed: ${error instanceof Error ? error.message : String(error)}`
+      totalInvoiceBalance,
+      availableCredit: totalAvailableCredit,
+      creditWillBeUsed,
+      bankPaymentNeeded,
+      willCreateNewCredit,
+      newCreditAmount,
+      overpaymentBlocked,
+      overpaymentBlockReason,
+      smartSuggestion,
+      bankBalanceValidation
     };
   }
-};
 
-/**
- * Get payment preview (shows how much credit will be used vs bank payment)
- */
-export const getPaymentPreview = async (
+  private validatePaymentRequest(request: CreditAwarePaymentRequest): void {
+    if (!request.supplierId) {
+      throw new ValidationError('Supplier ID is required');
+    }
+    if (!request.supplierName) {
+      throw new ValidationError('Supplier name is required');
+    }
+    if (!request.invoiceIds || request.invoiceIds.length === 0) {
+      throw new ValidationError('Invoice IDs are required');
+    }
+    if (!request.requestedPaymentAmount || request.requestedPaymentAmount <= 0) {
+      throw new ValidationError('Payment amount must be greater than 0');
+    }
+    if (!request.paymentMethod) {
+      throw new ValidationError('Payment method is required');
+    }
+    if (!request.bankAccountId) {
+      throw new ValidationError('Bank account ID is required');
+    }
+    if (!request.registrationDate) {
+      throw new ValidationError('Registration date is required');
+    }
+  }
+}
+
+// Export singleton instance
+export const creditAwarePaymentService = new CreditAwarePaymentService();
+
+// Export individual methods for backward compatibility
+export const processCreditAwarePayment = (request: CreditAwarePaymentRequest) =>
+  creditAwarePaymentService.processCreditAwarePayment(request);
+
+export const getPaymentPreview = (
   supplierId: number,
   invoiceIds: number[],
-  requestedAmount: number
-): Promise<{
-  totalInvoiceBalance: number;
-  availableCredit: number;
-  creditWillBeUsed: number;
-  bankPaymentNeeded: number;
-  willCreateNewCredit: boolean;
-  newCreditAmount: number;
-}> => {
-  // Get available credits
-  const availableCredits = await creditBalanceService.getAvailableCreditBalances(
-    'SUPPLIER',
-    supplierId
-  );
-  
-  const totalAvailableCredit = availableCredits.reduce((sum, credit) => 
-    sum + parseFloat(credit.availableAmount.toString()), 0
-  );
-  
-  // Get invoice balances
-  const invoices = await AccountsPayable.findAll({
-    where: { id: invoiceIds }
-  });
-  
-  const totalInvoiceBalance = invoices.reduce((sum, invoice) => 
-    sum + parseFloat(invoice.balanceAmount.toString()), 0
-  );
-  
-  // Calculate credit usage (FIFO - use available credit first)
-  const creditWillBeUsed = Math.min(totalAvailableCredit, totalInvoiceBalance);
-  
-  // Calculate remaining balance after credit application
-  const remainingBalanceAfterCredit = totalInvoiceBalance - creditWillBeUsed;
-  
-  // ✅ CRITICAL FIX: Bank payment should be the FULL requested amount when there's overpayment
-  // Only reduce bank payment if there's no overpayment
-  let bankPaymentNeeded;
-  const isOverpayment = requestedAmount > totalInvoiceBalance;
-  const willCreateNewCredit = isOverpayment;
-  
-  if (willCreateNewCredit) {
-    // Overpayment scenario: Bank pays the FULL requested amount
-    bankPaymentNeeded = requestedAmount;
-  } else {
-    // Normal scenario: Bank pays only what's needed after credit
-    bankPaymentNeeded = Math.min(requestedAmount, remainingBalanceAfterCredit);
-  }
-  
-  // ✅ FIX: New credit amount should be based on original invoice balance, not remaining after credit
-  const newCreditAmount = willCreateNewCredit ? requestedAmount - totalInvoiceBalance : 0;
-  
-  console.log('💡 Payment Preview Calculation:', {
-    totalInvoiceBalance,
-    totalAvailableCredit,
-    creditWillBeUsed,
-    remainingBalanceAfterCredit,
-    requestedAmount,
-    bankPaymentNeeded,
-    willCreateNewCredit,
-    newCreditAmount
-  });
-  
-  return {
-    totalInvoiceBalance,
-    availableCredit: totalAvailableCredit,
-    creditWillBeUsed,
-    bankPaymentNeeded,
-    willCreateNewCredit,
-    newCreditAmount
-  };
-};
+  requestedAmount: number,
+  bankAccountId?: number
+) => creditAwarePaymentService.getPaymentPreview(supplierId, invoiceIds, requestedAmount, bankAccountId);
+
+export default creditAwarePaymentService;

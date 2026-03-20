@@ -24,10 +24,12 @@ export enum SourceSystem {
  */
 export const BANK_PAYMENT_TYPES = [
   'BANK',
+  'BANK_TRANSFER',
   'DEBIT',
   'CHECK',
-  'BANK_TRANSFER',
   'CHEQUE',
+  'DEPOSIT',
+  'BANK_DEPOSIT',
   'CASH'
 ];
 

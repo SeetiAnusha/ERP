@@ -51,11 +51,11 @@ BankRegister.init(
       allowNull: false,
     },
     sourceTransactionType: {
-      type: DataTypes.ENUM('PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER'),
+      type: DataTypes.ENUM('PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER', 'AR_COLLECTION'),
       allowNull: false,
       validate: {
         isIn: {
-          args: [['PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER']],
+          args: [['PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER', 'AR_COLLECTION']],
           msg: 'Source transaction type must be a valid TransactionType enum value'
         }
       }

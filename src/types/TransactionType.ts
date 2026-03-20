@@ -14,7 +14,8 @@ export enum TransactionType {
   SALE = 'SALE',
   PAYMENT = 'PAYMENT',
   ADJUSTMENT = 'ADJUSTMENT',
-  TRANSFER = 'TRANSFER'
+  TRANSFER = 'TRANSFER',
+  AR_COLLECTION = 'AR_COLLECTION'
 }
 
 /**
@@ -31,7 +32,8 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   [TransactionType.SALE]: 'Sale',
   [TransactionType.PAYMENT]: 'Payment',
   [TransactionType.ADJUSTMENT]: 'Adjustment',
-  [TransactionType.TRANSFER]: 'Transfer'
+  [TransactionType.TRANSFER]: 'Transfer',
+  [TransactionType.AR_COLLECTION]: 'AR Collection'
 };
 
 /**

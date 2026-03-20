@@ -1,6 +1,8 @@
 import CreditBalance from '../models/CreditBalance';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import { BaseService } from '../core/BaseService';
+import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppError';
 
 export interface OverpaymentValidationResult {
   isOverpayment: boolean;
@@ -21,50 +23,359 @@ export interface CreditCreationData {
   notes?: string;
 }
 
-/**
- * Phase 1: Overpayment Detection & Alert
- * Validates if payment amount exceeds outstanding balance
- */
-export const validatePaymentAmount = async (
-  outstandingBalance: number,
-  paymentAmount: number,
-  entityType: 'CLIENT' | 'SUPPLIER',
-  entityName: string
-): Promise<OverpaymentValidationResult> => {
-  const isOverpayment = paymentAmount > outstandingBalance;
-  
-  if (!isOverpayment) {
-    return {
-      isOverpayment: false,
-      overpaymentAmount: 0,
-      message: 'Payment amount is within outstanding balance',
-      allowProceed: true
-    };
-  }
-  
-  const overpaymentAmount = paymentAmount - outstandingBalance;
-  const entityTypeText = entityType === 'CLIENT' ? 'customer' : 'supplier';
-  
-  return {
-    isOverpayment: true,
-    overpaymentAmount,
-    message: `Payment amount (₹${paymentAmount.toFixed(2)}) exceeds outstanding balance (₹${outstandingBalance.toFixed(2)}) by ₹${overpaymentAmount.toFixed(2)}. This will create a credit balance of ₹${overpaymentAmount.toFixed(2)} for ${entityTypeText} "${entityName}".`,
-    allowProceed: true // Client requirement: show alert but allow to proceed
-  };
-};
+export interface CreditApplicationRequest {
+  entityType: 'CLIENT' | 'SUPPLIER';
+  entityId: number;
+  invoicesToUpdate: any[];
+  maxCreditToUse?: number;
+}
 
 /**
- * Phase 1: Credit Balance Creation
- * Creates credit balance record when overpayment is processed
+ * Credit Balance Service - Class-based implementation following Purchase Service pattern
+ * Handles credit balance creation, validation, and application to invoices
  */
-export const createCreditBalance = async (data: CreditCreationData, externalTransaction?: any): Promise<CreditBalance> => {
-  console.log('🔄 Creating credit balance with data:', JSON.stringify(data, null, 2));
-  
-  const transaction = externalTransaction || await sequelize.transaction();
-  const shouldCommit = !externalTransaction;
-  
-  try {
-    // Generate registration number (CB format)
+class CreditBalanceService extends BaseService {
+
+  // ==================== PUBLIC API METHODS ====================
+
+  /**
+   * Get all credit balances with filtering and validation
+   */
+  async getAllCreditBalances(entityType?: 'CLIENT' | 'SUPPLIER', entityId?: number): Promise<CreditBalance[]> {
+    return this.executeWithRetry(async () => {
+      console.log('🔍 Service: getAllCreditBalances called with entityType:', entityType, 'entityId:', entityId);
+      
+      // Build where clause based on filters
+      const whereClause: any = {};
+      if (entityType) {
+        this.validateEntityType(entityType);
+        whereClause.relatedEntityType = entityType;
+      }
+      if (entityId) {
+        this.validateNumeric(entityId, 'Entity ID', { min: 1 });
+        whereClause.relatedEntityId = entityId;
+      }
+      
+      const creditBalances = await CreditBalance.findAll({
+        where: whereClause,
+        order: [['registrationDate', 'DESC']],
+      });
+      
+      console.log(`✅ Retrieved ${creditBalances.length} credit balances successfully`);
+      return creditBalances;
+    });
+  }
+
+  /**
+   * Get credit balance by ID with validation
+   */
+  async getCreditBalanceById(id: number): Promise<CreditBalance> {
+    return this.executeWithRetry(async () => {
+      this.validateNumeric(id, 'Credit Balance ID', { min: 1 });
+      
+      const creditBalance = await CreditBalance.findByPk(id);
+      if (!creditBalance) {
+        throw new NotFoundError(`Credit Balance with ID ${id} not found`);
+      }
+      
+      return creditBalance;
+    });
+  }
+
+  /**
+   * Get all active credit balances with available amounts
+   */
+  async getActiveCreditBalances(): Promise<CreditBalance[]> {
+    return this.executeWithRetry(async () => {
+      return await CreditBalance.findAll({
+        where: {
+          status: 'ACTIVE',
+          availableAmount: {
+            [Op.gt]: 0
+          }
+        },
+        order: [['registrationDate', 'DESC']]
+      });
+    });
+  }
+
+  /**
+   * Get available credit balance amount for entity
+   */
+  async getAvailableCreditAmount(entityType: 'CLIENT' | 'SUPPLIER', entityId: number): Promise<number> {
+    return this.executeWithRetry(async () => {
+      this.validateEntityType(entityType);
+      this.validateNumeric(entityId, 'Entity ID', { min: 1 });
+      
+      const credits = await CreditBalance.findAll({
+        where: {
+          relatedEntityType: entityType,
+          relatedEntityId: entityId,
+          status: 'ACTIVE',
+          availableAmount: {
+            [Op.gt]: 0
+          }
+        }
+      });
+      
+      const totalAvailable = credits.reduce((total, credit) => total + Number(credit.availableAmount), 0);
+      console.log(`💰 Total available credit for ${entityType} ${entityId}: ₹${totalAvailable}`);
+      
+      return totalAvailable;
+    });
+  }
+
+  /**
+   * Get credit balances by entity with validation
+   */
+  async getCreditBalancesByEntity(entityType: 'CLIENT' | 'SUPPLIER', entityId: number): Promise<CreditBalance[]> {
+    return this.executeWithRetry(async () => {
+      this.validateEntityType(entityType);
+      this.validateNumeric(entityId, 'Entity ID', { min: 1 });
+      
+      return await CreditBalance.findAll({
+        where: {
+          relatedEntityType: entityType,
+          relatedEntityId: entityId
+        },
+        order: [['registrationDate', 'DESC']]
+      });
+    });
+  }
+
+  /**
+   * Validate payment amount for overpayment detection
+   */
+  async validatePaymentAmount(
+    outstandingBalance: number,
+    paymentAmount: number,
+    entityType: 'CLIENT' | 'SUPPLIER',
+    entityName: string
+  ): Promise<OverpaymentValidationResult> {
+    return this.executeWithRetry(async () => {
+      // Validate inputs
+      this.validateNumeric(outstandingBalance, 'Outstanding balance', { min: 0 });
+      this.validateNumeric(paymentAmount, 'Payment amount', { min: 0 });
+      this.validateEntityType(entityType);
+      
+      if (!entityName || entityName.trim().length === 0) {
+        throw new ValidationError('Entity name is required');
+      }
+      
+      const isOverpayment = paymentAmount > outstandingBalance;
+      
+      if (!isOverpayment) {
+        return {
+          isOverpayment: false,
+          overpaymentAmount: 0,
+          message: 'Payment amount is within outstanding balance',
+          allowProceed: true
+        };
+      }
+      
+      const overpaymentAmount = paymentAmount - outstandingBalance;
+      const entityTypeText = entityType === 'CLIENT' ? 'customer' : 'supplier';
+      
+      return {
+        isOverpayment: true,
+        overpaymentAmount,
+        message: `Payment amount (₹${paymentAmount.toFixed(2)}) exceeds outstanding balance (₹${outstandingBalance.toFixed(2)}) by ₹${overpaymentAmount.toFixed(2)}. This will create a credit balance of ₹${overpaymentAmount.toFixed(2)} for ${entityTypeText} "${entityName}".`,
+        allowProceed: true // Client requirement: show alert but allow to proceed
+      };
+    });
+  }
+
+  /**
+   * Create credit balance with comprehensive validation and transaction management
+   */
+  async createCreditBalance(data: CreditCreationData, externalTransaction?: any): Promise<CreditBalance> {
+    return this.executeWithTransaction(async (transaction) => {
+      // Step 1: Comprehensive validation
+      this.validateCreditCreationData(data);
+      
+      // Step 2: Generate registration number
+      const registrationNumber = await this.generateCreditBalanceRegistrationNumber(transaction);
+      
+      // Step 3: Create credit balance record
+      const creditBalanceData = {
+        registrationNumber,
+        registrationDate: new Date(),
+        type: data.type,
+        relatedEntityType: data.relatedEntityType,
+        relatedEntityId: data.relatedEntityId,
+        relatedEntityName: data.relatedEntityName,
+        originalTransactionType: data.originalTransactionType,
+        originalTransactionId: data.originalTransactionId,
+        originalTransactionNumber: data.originalTransactionNumber,
+        creditAmount: data.creditAmount,
+        usedAmount: 0,
+        availableAmount: data.creditAmount,
+        status: 'ACTIVE' as const,
+        notes: data.notes || `Credit created from overpayment on ${data.originalTransactionNumber}`,
+      };
+      
+      console.log('💾 Creating credit balance record:', JSON.stringify(creditBalanceData, null, 2));
+      
+      const creditBalance = await CreditBalance.create(creditBalanceData, { transaction });
+      
+      console.log('✅ Credit balance created successfully:', {
+        id: creditBalance.id,
+        registrationNumber: creditBalance.registrationNumber,
+        creditAmount: creditBalance.creditAmount,
+        availableAmount: creditBalance.availableAmount
+      });
+      
+      return creditBalance;
+    }, externalTransaction);
+  }
+
+  /**
+   * Apply credit balances to invoices with validation and transaction management
+   */
+  async applyCreditToInvoices(request: CreditApplicationRequest): Promise<{
+    totalCreditUsed: number;
+    remainingInvoiceBalance: number;
+    updatedCredits: CreditBalance[];
+    updatedInvoices: any[];
+  }> {
+    return this.executeWithTransaction(async (transaction) => {
+      // Step 1: Validate request
+      this.validateCreditApplicationRequest(request);
+      
+      // Step 2: Get available credits
+      const availableCredits = await this.getAvailableCreditBalancesForApplication(
+        request.entityType,
+        request.entityId,
+        transaction
+      );
+      
+      if (availableCredits.length === 0) {
+        throw new BusinessLogicError(`No available credit balances found for ${request.entityType} ID ${request.entityId}`);
+      }
+      
+      // Step 3: Apply credits to invoices
+      return await this.processCreditApplication(
+        availableCredits,
+        request.invoicesToUpdate,
+        request.maxCreditToUse,
+        transaction
+      );
+    });
+  }
+
+  /**
+   * Update credit balance status
+   */
+  async updateCreditBalanceStatus(id: number, status: 'ACTIVE' | 'FULLY_USED' | 'EXPIRED'): Promise<CreditBalance> {
+    return this.executeWithTransaction(async (transaction) => {
+      this.validateNumeric(id, 'Credit Balance ID', { min: 1 });
+      
+      const creditBalance = await CreditBalance.findByPk(id, { transaction });
+      if (!creditBalance) {
+        throw new NotFoundError(`Credit Balance with ID ${id} not found`);
+      }
+      
+      // Business rule validation
+      if (creditBalance.status === 'FULLY_USED' && status === 'ACTIVE') {
+        throw new BusinessLogicError('Cannot reactivate a fully used credit balance');
+      }
+      
+      await creditBalance.update({ status }, { transaction });
+      
+      return creditBalance;
+    });
+  }
+
+  /**
+   * Delete credit balance with business rule validation
+   */
+  async deleteCreditBalance(id: number): Promise<{ message: string }> {
+    return this.executeWithTransaction(async (transaction) => {
+      this.validateNumeric(id, 'Credit Balance ID', { min: 1 });
+      
+      const creditBalance = await CreditBalance.findByPk(id, { transaction });
+      if (!creditBalance) {
+        throw new NotFoundError(`Credit Balance with ID ${id} not found`);
+      }
+      
+      // Business rule validation
+      if (Number(creditBalance.usedAmount) > 0) {
+        throw new BusinessLogicError('Cannot delete a credit balance that has been partially or fully used');
+      }
+      
+      await creditBalance.destroy({ transaction });
+      
+      return { message: 'Credit balance deleted successfully' };
+    });
+  }
+
+  // ==================== VALIDATION METHODS ====================
+
+  private validateEntityType(entityType: string): void {
+    const validTypes = ['CLIENT', 'SUPPLIER'];
+    if (!validTypes.includes(entityType)) {
+      throw new ValidationError(`Invalid entity type: ${entityType}. Must be CLIENT or SUPPLIER`);
+    }
+  }
+
+  private validateCreditCreationData(data: CreditCreationData): void {
+    // Required field validation
+    if (!data.type) {
+      throw new ValidationError('Credit type is required');
+    }
+    
+    if (!['CUSTOMER_CREDIT', 'SUPPLIER_CREDIT'].includes(data.type)) {
+      throw new ValidationError('Credit type must be CUSTOMER_CREDIT or SUPPLIER_CREDIT');
+    }
+    
+    this.validateEntityType(data.relatedEntityType);
+    
+    this.validateNumeric(data.relatedEntityId, 'Related entity ID', { min: 1 });
+    
+    if (!data.relatedEntityName || data.relatedEntityName.trim().length === 0) {
+      throw new ValidationError('Related entity name is required');
+    }
+    
+    if (!['AR', 'AP'].includes(data.originalTransactionType)) {
+      throw new ValidationError('Original transaction type must be AR or AP');
+    }
+    
+    this.validateNumeric(data.originalTransactionId, 'Original transaction ID', { min: 1 });
+    
+    if (!data.originalTransactionNumber || data.originalTransactionNumber.trim().length === 0) {
+      throw new ValidationError('Original transaction number is required');
+    }
+    
+    this.validateNumeric(data.creditAmount, 'Credit amount', { min: 0.01 });
+  }
+
+  private validateCreditApplicationRequest(request: CreditApplicationRequest): void {
+    this.validateEntityType(request.entityType);
+    this.validateNumeric(request.entityId, 'Entity ID', { min: 1 });
+    
+    if (!request.invoicesToUpdate || request.invoicesToUpdate.length === 0) {
+      throw new ValidationError('At least one invoice is required for credit application');
+    }
+    
+    // Validate each invoice
+    for (const invoice of request.invoicesToUpdate) {
+      if (!invoice.id) {
+        throw new ValidationError('All invoices must have a valid ID');
+      }
+      
+      if (!invoice.balanceAmount || Number(invoice.balanceAmount) <= 0) {
+        throw new ValidationError('All invoices must have a positive balance amount');
+      }
+    }
+    
+    if (request.maxCreditToUse !== undefined) {
+      this.validateNumeric(request.maxCreditToUse, 'Max credit to use', { min: 0 });
+    }
+  }
+
+  // ==================== UTILITY METHODS ====================
+
+  private async generateCreditBalanceRegistrationNumber(transaction?: any): Promise<string> {
     const lastCB = await CreditBalance.findOne({
       where: {
         registrationNumber: {
@@ -84,236 +395,202 @@ export const createCreditBalance = async (data: CreditCreationData, externalTran
     const registrationNumber = `CB${String(nextNumber).padStart(4, '0')}`;
     console.log('📝 Generated registration number:', registrationNumber);
     
-    const creditBalanceData = {
-      registrationNumber,
-      registrationDate: new Date(),
-      type: data.type,
-      relatedEntityType: data.relatedEntityType,
-      relatedEntityId: data.relatedEntityId,
-      relatedEntityName: data.relatedEntityName,
-      originalTransactionType: data.originalTransactionType,
-      originalTransactionId: data.originalTransactionId,
-      originalTransactionNumber: data.originalTransactionNumber,
-      creditAmount: data.creditAmount,
-      usedAmount: 0,
-      availableAmount: data.creditAmount,
-      status: 'ACTIVE' as const, // Fix: Explicitly type as literal
-      notes: data.notes || `Credit created from overpayment on ${data.originalTransactionNumber}`,
-    };
+    return registrationNumber;
+  }
+
+  private async getAvailableCreditBalancesForApplication(
+    entityType: 'CLIENT' | 'SUPPLIER',
+    entityId: number,
+    transaction?: any
+  ): Promise<CreditBalance[]> {
+    console.log(`🔍 Fetching available credit balances for ${entityType} ID: ${entityId}`);
     
-    console.log('💾 Creating credit balance record:', JSON.stringify(creditBalanceData, null, 2));
-    
-    const creditBalance = await CreditBalance.create(creditBalanceData, { transaction });
-    
-    console.log('✅ Credit balance created successfully:', {
-      id: creditBalance.id,
-      registrationNumber: creditBalance.registrationNumber,
-      creditAmount: creditBalance.creditAmount,
-      availableAmount: creditBalance.availableAmount
+    const credits = await CreditBalance.findAll({
+      where: {
+        relatedEntityType: entityType,
+        relatedEntityId: entityId,
+        status: 'ACTIVE',
+        availableAmount: {
+          [Op.gt]: 0
+        }
+      },
+      order: [['registrationDate', 'ASC']], // FIFO - First In, First Out
+      transaction
     });
     
-    if (shouldCommit) {
-      await transaction.commit();
-      console.log('✅ Transaction committed successfully');
+    console.log(`✅ Found ${credits.length} available credit balances with total: ₹${credits.reduce((sum, c) => sum + parseFloat((c.availableAmount || 0).toString()), 0)}`);
+    
+    return credits;
+  }
+
+  private async processCreditApplication(
+    availableCredits: CreditBalance[],
+    invoicesToUpdate: any[],
+    maxCreditToUse: number | undefined,
+    transaction: any
+  ): Promise<{
+    totalCreditUsed: number;
+    remainingInvoiceBalance: number;
+    updatedCredits: CreditBalance[];
+    updatedInvoices: any[];
+  }> {
+    console.log('🎯 Starting credit application to invoices...');
+    
+    let totalCreditUsed = 0;
+    const updatedCredits: CreditBalance[] = [];
+    const updatedInvoices: any[] = [];
+    
+    // Calculate total invoice balance
+    const totalInvoiceBalance = invoicesToUpdate.reduce((sum, invoice) => 
+      sum + parseFloat(invoice.balanceAmount.toString()), 0
+    );
+    
+    console.log(`💰 Total invoice balance to pay: ₹${totalInvoiceBalance}`);
+    
+    // Determine maximum credit to use
+    const totalAvailableCredit = availableCredits.reduce((sum, credit) => 
+      sum + parseFloat(credit.availableAmount.toString()), 0
+    );
+    
+    const maxCreditAllowed = maxCreditToUse !== undefined 
+      ? Math.min(maxCreditToUse, totalAvailableCredit, totalInvoiceBalance)
+      : Math.min(totalAvailableCredit, totalInvoiceBalance);
+    
+    let remainingCreditToUse = maxCreditAllowed;
+    
+    // Apply credits in FIFO order
+    for (const credit of availableCredits) {
+      if (remainingCreditToUse <= 0) break;
+      
+      const availableAmount = parseFloat((credit.availableAmount || 0).toString());
+      const amountToUse = Math.min(availableAmount, remainingCreditToUse);
+      
+      if (amountToUse > 0) {
+        console.log(`💳 Using ₹${amountToUse} from credit ${credit.registrationNumber}`);
+        
+        // Update credit balance
+        const newUsedAmount = parseFloat((credit.usedAmount || 0).toString()) + amountToUse;
+        const newAvailableAmount = parseFloat((credit.creditAmount || 0).toString()) - newUsedAmount;
+        const newStatus = newAvailableAmount <= 0.01 ? 'FULLY_USED' : 'ACTIVE';
+        
+        await credit.update({
+          usedAmount: newUsedAmount,
+          availableAmount: Math.max(0, newAvailableAmount),
+          status: newStatus
+        }, { transaction });
+        
+        updatedCredits.push(credit);
+        totalCreditUsed += amountToUse;
+        remainingCreditToUse -= amountToUse;
+        
+        console.log(`✅ Credit ${credit.registrationNumber} updated: Used ₹${newUsedAmount}, Available ₹${newAvailableAmount}, Status: ${newStatus}`);
+      }
     }
     
-    return creditBalance;
-  } catch (error) {
-    console.error('❌ Error creating credit balance:', error);
-    if (shouldCommit) {
-      await transaction.rollback();
-      console.log('🔄 Transaction rolled back');
+    // Update invoices with credit applications
+    let remainingCreditToApply = totalCreditUsed;
+    
+    for (const invoice of invoicesToUpdate) {
+      if (remainingCreditToApply <= 0) break;
+      
+      const invoiceBalance = parseFloat((invoice.balanceAmount || 0).toString());
+      const creditToApplyToThisInvoice = Math.min(invoiceBalance, remainingCreditToApply);
+      
+      if (creditToApplyToThisInvoice > 0) {
+        const newReceivedAmount = parseFloat((invoice.receivedAmount || 0).toString()) + creditToApplyToThisInvoice;
+        const newBalanceAmount = parseFloat((invoice.amount || 0).toString()) - newReceivedAmount;
+        const newStatus = newBalanceAmount <= 0.01 ? 'Received' : 'Partial';
+        
+        await invoice.update({
+          receivedAmount: newReceivedAmount,
+          balanceAmount: Math.max(0, newBalanceAmount),
+          status: newStatus
+        }, { transaction });
+        
+        updatedInvoices.push(invoice);
+        remainingCreditToApply -= creditToApplyToThisInvoice;
+        
+        console.log(`📄 Invoice ${invoice.registrationNumber} updated: Received ₹${newReceivedAmount}, Balance ₹${newBalanceAmount}, Status: ${newStatus}`);
+      }
     }
-    throw error;
+    
+    // Calculate remaining invoice balance after credit application
+    const remainingInvoiceBalance = invoicesToUpdate.reduce((sum, invoice) => {
+      const balance = invoice.balanceAmount || 0;
+      return sum + parseFloat(balance.toString());
+    }, 0);
+    
+    console.log('🎉 Credit application completed:', {
+      totalCreditUsed,
+      remainingInvoiceBalance,
+      creditsUpdated: updatedCredits.length,
+      invoicesUpdated: updatedInvoices.length
+    });
+    
+    return {
+      totalCreditUsed,
+      remainingInvoiceBalance,
+      updatedCredits,
+      updatedInvoices
+    };
   }
-};
+}
 
-/**
- * Get available credit balance for a customer or supplier
- */
-export const getAvailableCreditBalance = async (
+// Export class for testing and advanced usage
+export { CreditBalanceService };
+
+// Export singleton instance
+export const creditBalanceService = new CreditBalanceService();
+
+// Export individual methods for backward compatibility
+export const getAllCreditBalances = (entityType?: 'CLIENT' | 'SUPPLIER', entityId?: number) => 
+  creditBalanceService.getAllCreditBalances(entityType, entityId);
+
+export const getCreditBalanceById = (id: number) => 
+  creditBalanceService.getCreditBalanceById(id);
+
+export const getActiveCreditBalances = () => 
+  creditBalanceService.getActiveCreditBalances();
+
+export const getAvailableCreditBalance = (entityType: 'CLIENT' | 'SUPPLIER', entityId: number) => 
+  creditBalanceService.getAvailableCreditAmount(entityType, entityId);
+
+export const getCreditBalancesByEntity = (entityType: 'CLIENT' | 'SUPPLIER', entityId: number) => 
+  creditBalanceService.getCreditBalancesByEntity(entityType, entityId);
+
+export const validatePaymentAmount = (
+  outstandingBalance: number,
+  paymentAmount: number,
   entityType: 'CLIENT' | 'SUPPLIER',
-  entityId: number
-): Promise<number> => {
-  const credits = await CreditBalance.findAll({
-    where: {
-      relatedEntityType: entityType,
-      relatedEntityId: entityId,
-      status: 'ACTIVE',
-      availableAmount: {
-        [Op.gt]: 0
-      }
-    }
-  });
-  
-  return credits.reduce((total, credit) => total + Number(credit.availableAmount), 0);
-};
+  entityName: string
+) => creditBalanceService.validatePaymentAmount(outstandingBalance, paymentAmount, entityType, entityName);
 
-/**
- * Get all credit balances for a customer or supplier
- */
-export const getCreditBalancesByEntity = async (
-  entityType: 'CLIENT' | 'SUPPLIER',
-  entityId: number
-): Promise<CreditBalance[]> => {
-  return await CreditBalance.findAll({
-    where: {
-      relatedEntityType: entityType,
-      relatedEntityId: entityId
-    },
-    order: [['registrationDate', 'DESC']]
-  });
-};
+export const createCreditBalance = (data: CreditCreationData, externalTransaction?: any) => 
+  creditBalanceService.createCreditBalance(data, externalTransaction);
 
-/**
- * Get all active credit balances
- */
-export const getAllActiveCreditBalances = async (): Promise<CreditBalance[]> => {
-  return await CreditBalance.findAll({
-    where: {
-      status: 'ACTIVE',
-      availableAmount: {
-        [Op.gt]: 0
-      }
-    },
-    order: [['registrationDate', 'DESC']]
-  });
-};
-
-/**
- * Get credit balance by ID
- */
-export const getCreditBalanceById = async (id: number): Promise<CreditBalance | null> => {
-  return await CreditBalance.findByPk(id);
-};
-
-/**
- * Get available credit balances for auto-application
- */
-export const getAvailableCreditBalances = async (
-  entityType: 'CLIENT' | 'SUPPLIER',
-  entityId: number
-): Promise<CreditBalance[]> => {
-  console.log(`🔍 Fetching available credit balances for ${entityType} ID: ${entityId}`);
-  
-  const credits = await CreditBalance.findAll({
-    where: {
-      relatedEntityType: entityType,
-      relatedEntityId: entityId,
-      status: 'ACTIVE',
-      availableAmount: {
-        [Op.gt]: 0
-      }
-    },
-    order: [['registrationDate', 'ASC']] // FIFO - First In, First Out
-  });
-  
-  console.log(`✅ Found ${credits.length} available credit balances with total: ₹${credits.reduce((sum, c) => sum + parseFloat(c.availableAmount.toString()), 0)}`);
-  
-  return credits;
-};
-
-/**
- * Apply credit balances to invoices automatically
- */
-export const applyCreditToInvoices = async (
+export const applyCreditToInvoices = (
   availableCredits: CreditBalance[],
   invoicesToUpdate: any[],
   transaction: any
-): Promise<{
-  totalCreditUsed: number;
-  remainingInvoiceBalance: number;
-  updatedCredits: CreditBalance[];
-  updatedInvoices: any[];
-}> => {
-  console.log('🎯 Starting credit application to invoices...');
-  
-  let totalCreditUsed = 0;
-  let remainingInvoiceBalance = 0;
-  const updatedCredits: CreditBalance[] = [];
-  const updatedInvoices: any[] = [];
-  
-  // Calculate total invoice balance
-  const totalInvoiceBalance = invoicesToUpdate.reduce((sum, invoice) => 
-    sum + parseFloat(invoice.balanceAmount.toString()), 0
-  );
-  
-  console.log(`💰 Total invoice balance to pay: ₹${totalInvoiceBalance}`);
-  
-  let remainingAmountToPay = totalInvoiceBalance;
-  
-  // Apply credits in FIFO order
-  for (const credit of availableCredits) {
-    if (remainingAmountToPay <= 0) break;
-    
-    const availableAmount = parseFloat(credit.availableAmount.toString());
-    const amountToUse = Math.min(availableAmount, remainingAmountToPay);
-    
-    if (amountToUse > 0) {
-      console.log(`💳 Using ₹${amountToUse} from credit ${credit.registrationNumber}`);
-      
-      // Update credit balance
-      const newUsedAmount = parseFloat(credit.usedAmount.toString()) + amountToUse;
-      const newAvailableAmount = parseFloat(credit.creditAmount.toString()) - newUsedAmount;
-      const newStatus = newAvailableAmount <= 0.01 ? 'FULLY_USED' : 'ACTIVE';
-      
-      await credit.update({
-        usedAmount: newUsedAmount,
-        availableAmount: Math.max(0, newAvailableAmount),
-        status: newStatus
-      }, { transaction });
-      
-      updatedCredits.push(credit);
-      totalCreditUsed += amountToUse;
-      remainingAmountToPay -= amountToUse;
-      
-      console.log(`✅ Credit ${credit.registrationNumber} updated: Used ₹${newUsedAmount}, Available ₹${newAvailableAmount}, Status: ${newStatus}`);
-    }
-  }
-  
-  // Update invoices with credit applications
-  let remainingCreditToApply = totalCreditUsed;
-  
-  for (const invoice of invoicesToUpdate) {
-    if (remainingCreditToApply <= 0) break;
-    
-    const invoiceBalance = parseFloat(invoice.balanceAmount.toString());
-    const creditToApplyToThisInvoice = Math.min(invoiceBalance, remainingCreditToApply);
-    
-    if (creditToApplyToThisInvoice > 0) {
-      const newPaidAmount = parseFloat(invoice.paidAmount.toString()) + creditToApplyToThisInvoice;
-      const newBalanceAmount = parseFloat(invoice.amount.toString()) - newPaidAmount;
-      const newStatus = newBalanceAmount <= 0.01 ? 'Paid' : 'Partial';
-      
-      await invoice.update({
-        paidAmount: newPaidAmount,
-        balanceAmount: Math.max(0, newBalanceAmount),
-        status: newStatus
-      }, { transaction });
-      
-      updatedInvoices.push(invoice);
-      remainingCreditToApply -= creditToApplyToThisInvoice;
-      
-      console.log(`📄 Invoice ${invoice.registrationNumber} updated: Paid ₹${newPaidAmount}, Balance ₹${newBalanceAmount}, Status: ${newStatus}`);
-    }
-  }
-  
-  // Calculate remaining invoice balance after credit application
-  remainingInvoiceBalance = invoicesToUpdate.reduce((sum, invoice) => 
-    sum + parseFloat(invoice.balanceAmount.toString()), 0
-  );
-  
-  console.log('🎉 Credit application completed:', {
-    totalCreditUsed,
-    remainingInvoiceBalance,
-    creditsUpdated: updatedCredits.length,
-    invoicesUpdated: updatedInvoices.length
-  });
-  
-  return {
-    totalCreditUsed,
-    remainingInvoiceBalance,
-    updatedCredits,
-    updatedInvoices
+) => {
+  // Legacy method - convert to new format
+  const request: CreditApplicationRequest = {
+    entityType: 'CLIENT', // Default - this should be passed from caller
+    entityId: 0, // Default - this should be passed from caller
+    invoicesToUpdate
   };
+  
+  // Note: This legacy method doesn't have proper entity info
+  // Recommend updating callers to use the new applyCreditToInvoices method
+  console.warn('⚠️ Using legacy applyCreditToInvoices method. Consider updating to use creditBalanceService.applyCreditToInvoices()');
+  
+  return creditBalanceService['processCreditApplication'](availableCredits, invoicesToUpdate, undefined, transaction);
 };
+
+export const getAllActiveCreditBalances = () => 
+  creditBalanceService.getActiveCreditBalances();
+
+export const getAvailableCreditBalances = (entityType: 'CLIENT' | 'SUPPLIER', entityId: number) => 
+  creditBalanceService['getAvailableCreditBalancesForApplication'](entityType, entityId);
+
+export default creditBalanceService;

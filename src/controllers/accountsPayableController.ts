@@ -3,8 +3,25 @@ import * as accountsPayableService from '../services/accountsPayableService';
 
 export const getAllAccountsPayable = async (req: Request, res: Response) => {
   try {
-    const accountsPayable = await accountsPayableService.getAllAccountsPayable();
-    res.json(accountsPayable);
+    // Extract query parameters for pagination and filtering
+    const options = {
+      page: req.query.page ? parseInt(req.query.page as string) : 1,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+      transactionType: req.query.transactionType as string,
+      status: req.query.status as string,
+      dateFrom: req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined,
+      dateTo: req.query.dateTo ? new Date(req.query.dateTo as string) : undefined
+    };
+    
+    const result = await accountsPayableService.getAllAccountsPayable(options);
+    
+    // Return paginated result or just entries for backward compatibility
+    if (req.query.paginated === 'true') {
+      res.json(result);
+    } else {
+      // Backward compatibility - return just the entries array
+      res.json(result.entries || result);
+    }
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

@@ -7,9 +7,7 @@ import ExpenseCategory from '../models/ExpenseCategory';
 import ExpenseType from '../models/ExpenseType';
 import BankAccount from '../models/BankAccount';
 import Card from '../models/Card';
-import EnhancedBankRegisterService from './enhancedBankRegisterService';
-import EnhancedAccountsPayableService from './enhancedAccountsPayableService';
-import { transactionTypeTracker, BANK_PAYMENT_TYPES, ACCOUNTS_PAYABLE_PAYMENT_TYPES } from './transactionTypeTracker';
+import { TransactionType } from '../types/TransactionType';
 
 /**
  * BusinessExpenseService - Handles all business expense operations
@@ -115,22 +113,16 @@ class BusinessExpenseService {
     const transaction: Transaction = await sequelize.transaction();
     
     try {
-      // Generate registration number
+      // Step 1: Comprehensive validation
+      await this.validateBusinessExpenseData(data);
+      
+      // Step 2: Generate registration number
       const registrationNumber = await this.generateRegistrationNumber();
       
-      // Determine payment amounts based on payment type
-      // Immediate payment methods: BANK_TRANSFER, CHEQUE, DEBIT_CARD, CASH
-      // Credit payment methods: CREDIT, CREDIT_CARD
-      const immediatePaymentTypes = ['BANK_TRANSFER', 'CHEQUE', 'DEBIT_CARD', 'CASH'];
-      const isImmediatePayment = immediatePaymentTypes.includes(data.paymentType.toUpperCase());
+      // Step 3: Calculate payment status and amounts based on payment type
+      const paymentInfo = this.calculatePaymentInfo(data.paymentType, data.amount);
       
-      const actualPaidAmount = isImmediatePayment ? data.amount : 0;
-      const actualBalanceAmount = isImmediatePayment ? 0 : data.amount;
-      
-      // Calculate payment status
-      const paymentStatus = this.calculatePaymentStatus(data.amount, actualPaidAmount);
-      
-      // Create main business expense
+      // Step 4: Create main business expense record
       const businessExpense = await BusinessExpense.create({
         registrationNumber,
         date: data.date,
@@ -142,10 +134,10 @@ class BusinessExpenseService {
         amount: data.amount,
         expenseType: data.expenseType,
         paymentType: data.paymentType,
-        paidAmount: actualPaidAmount, // Use calculated amount
-        balanceAmount: actualBalanceAmount, // Use calculated amount
+        paidAmount: paymentInfo.paidAmount,
+        balanceAmount: paymentInfo.balanceAmount,
         status: data.status || 'COMPLETED',
-        paymentStatus,
+        paymentStatus: paymentInfo.paymentStatus,
         
         // Payment method specific fields
         bankAccountId: data.bankAccountId,
@@ -158,27 +150,13 @@ class BusinessExpenseService {
         voucherDate: data.voucherDate,
       }, { transaction });
 
-      // Create associated costs if provided
+      // Step 5: Process payment based on type (dual recording)
+      await this.processExpensePayment(data, businessExpense, transaction);
+
+      // Step 6: Create associated costs if provided
       if (data.associatedCosts && data.associatedCosts.length > 0) {
-        const associatedCostsData = data.associatedCosts.map(cost => ({
-          businessExpenseId: businessExpense.id,
-          supplierRnc: cost.supplierRnc,
-          supplierName: cost.supplierName,
-          concept: cost.concept,
-          ncf: cost.ncf,
-          date: cost.date,
-          amount: cost.amount,
-          expenseType: cost.expenseType,
-          paymentType: cost.paymentType,
-          bankAccountId: cost.bankAccountId,
-          cardId: cost.cardId,
-        }));
-
-        await BusinessExpenseAssociatedCost.bulkCreate(associatedCostsData, { transaction });
+        await this.processAssociatedCosts(data.associatedCosts, businessExpense.id, transaction);
       }
-
-      // Create Bank Register or Accounts Payable entry based on payment type
-      await this.createFinancialEntry(businessExpense, transaction);
 
       await transaction.commit();
       
@@ -196,63 +174,419 @@ class BusinessExpenseService {
    * Create appropriate financial entry (Bank Register or Accounts Payable)
    * based on payment type
    */
-  private static async createFinancialEntry(
-    businessExpense: BusinessExpense, 
-    transaction: Transaction
-  ): Promise<void> {
-    try {
-      // Get supplier information
-      const supplier = await Supplier.findByPk(businessExpense.supplierId, { transaction });
-      if (!supplier) {
-        throw new Error(`Supplier with ID ${businessExpense.supplierId} not found`);
-      }
-
-      const paymentTypeUpper = businessExpense.paymentType.toUpperCase();
-
-      // Determine destination based on payment type
-      if (BANK_PAYMENT_TYPES.includes(paymentTypeUpper)) {
-        // Create Bank Register entry
-        await EnhancedBankRegisterService.createFromBusinessExpense({
-          registrationNumber: businessExpense.registrationNumber,
-          date: businessExpense.date,
-          amount: businessExpense.amount,
-          paymentMethod: businessExpense.paymentType,
-          supplierId: businessExpense.supplierId,
-          supplierName: supplier.name,
-          supplierRnc: businessExpense.supplierRnc,
-          description: businessExpense.description || `Business Expense - ${businessExpense.expenseType}`,
-          bankAccountId: businessExpense.bankAccountId,
-          chequeNumber: businessExpense.chequeNumber,
-          transferNumber: businessExpense.transferNumber
-        });
-        
-        console.log(`✓ Created Bank Register entry for business expense ${businessExpense.registrationNumber}`);
-        
-      } else if (ACCOUNTS_PAYABLE_PAYMENT_TYPES.includes(paymentTypeUpper)) {
-        // Create Accounts Payable entry
-        await EnhancedAccountsPayableService.createFromBusinessExpense({
-          registrationNumber: businessExpense.registrationNumber,
-          date: businessExpense.date,
-          amount: businessExpense.amount,
-          paymentType: businessExpense.paymentType,
-          supplierId: businessExpense.supplierId,
-          supplierName: supplier.name,
-          supplierRnc: businessExpense.supplierRnc,
-          cardId: businessExpense.cardId,
-          description: businessExpense.description,
-          notes: `Business Expense - ${businessExpense.expenseType}`
-        });
-        
-        console.log(`✓ Created Accounts Payable entry for business expense ${businessExpense.registrationNumber}`);
-        
-      } else {
-        console.warn(`⚠️ Unknown payment type ${businessExpense.paymentType} for business expense ${businessExpense.registrationNumber}`);
+  /**
+   * Comprehensive validation for business expense data
+   */
+  private static async validateBusinessExpenseData(data: CreateBusinessExpenseData): Promise<void> {
+    // Basic validations
+    if (!data.supplierId) throw new Error('Supplier is required');
+    if (!data.amount || data.amount <= 0) throw new Error('Amount must be greater than 0');
+    if (!data.paymentType) throw new Error('Payment type is required');
+    if (!data.expenseCategoryId) throw new Error('Expense category is required');
+    if (!data.expenseTypeId) throw new Error('Expense type is required');
+    
+    // Payment method specific validations
+    const paymentType = data.paymentType.toUpperCase();
+    
+    // Bank payment validations
+    if (['BANK_TRANSFER', 'CHEQUE', 'DEPOSIT'].includes(paymentType)) {
+      if (!data.bankAccountId) {
+        throw new Error(`Bank account selection is mandatory for ${data.paymentType} payments`);
       }
       
-    } catch (error) {
-      console.error('Error creating financial entry for business expense:', error);
-      throw error;
+      // Validate bank account exists and has sufficient balance
+      const BankAccount = (await import('../models/BankAccount')).default;
+      const bankAccount = await BankAccount.findByPk(data.bankAccountId);
+      if (!bankAccount) {
+        throw new Error('Selected bank account not found');
+      }
+      
+      if (bankAccount.status !== 'ACTIVE') {
+        throw new Error('Selected bank account is not active');
+      }
+      
+      const currentBalance = Number(bankAccount.balance || 0);
+      if (currentBalance < data.amount) {
+        throw new Error(
+          `Insufficient balance in ${bankAccount.bankName} (${bankAccount.accountNumber}). ` +
+          `Available: ₹${currentBalance.toFixed(2)}, Required: ₹${data.amount.toFixed(2)}`
+        );
+      }
     }
+    
+    // Credit card validations
+    if (paymentType === 'CREDIT_CARD') {
+      if (!data.cardId) {
+        throw new Error('Credit card selection is mandatory for credit card payments');
+      }
+      
+      // Validate credit card exists and has sufficient limit
+      const Card = (await import('../models/Card')).default;
+      const card = await Card.findByPk(data.cardId);
+      if (!card) {
+        throw new Error('Selected credit card not found');
+      }
+      
+      if (card.status !== 'ACTIVE') {
+        throw new Error('Selected credit card is not active');
+      }
+      
+      const creditLimit = Number(card.creditLimit || 0);
+      const usedCredit = Number(card.usedCredit || 0);
+      const availableCredit = creditLimit - usedCredit;
+      
+      if (availableCredit < data.amount) {
+        throw new Error(
+          `Insufficient credit limit on ${card.cardName || 'Credit Card'}. ` +
+          `Available: ₹${availableCredit.toFixed(2)}, Required: ₹${data.amount.toFixed(2)}`
+        );
+      }
+    }
+    
+    // Supplier validation
+    const Supplier = (await import('../models/Supplier')).default;
+    const supplier = await Supplier.findByPk(data.supplierId);
+    if (!supplier) {
+      throw new Error('Selected supplier not found');
+    }
+    
+    if (supplier.status !== 'ACTIVE') {
+      throw new Error('Selected supplier is not active');
+    }
+  }
+
+  /**
+   * Calculate payment information based on payment type
+   */
+  private static calculatePaymentInfo(paymentType: string, amount: number): {
+    paidAmount: number;
+    balanceAmount: number;
+    paymentStatus: string;
+  } {
+    const paymentTypeUpper = paymentType.toUpperCase();
+    
+    // Immediate payment methods (paid immediately)
+    const immediatePaymentTypes = ['BANK_TRANSFER', 'CHEQUE', 'DEBIT_CARD', 'CASH', 'DEPOSIT'];
+    
+    if (immediatePaymentTypes.includes(paymentTypeUpper)) {
+      return {
+        paidAmount: amount,
+        balanceAmount: 0,
+        paymentStatus: 'Paid'
+      };
+    }
+    
+    // Credit payment methods (creates payable)
+    const creditPaymentTypes = ['CREDIT', 'CREDIT_CARD'];
+    
+    if (creditPaymentTypes.includes(paymentTypeUpper)) {
+      return {
+        paidAmount: 0,
+        balanceAmount: amount,
+        paymentStatus: 'Unpaid'
+      };
+    }
+    
+    // Default to unpaid
+    return {
+      paidAmount: 0,
+      balanceAmount: amount,
+      paymentStatus: 'Unpaid'
+    };
+  }
+
+  /**
+   * Process payment based on type with dual recording
+   */
+  private static async processExpensePayment(
+    data: CreateBusinessExpenseData,
+    businessExpense: BusinessExpense,
+    transaction: Transaction
+  ): Promise<void> {
+    const paymentType = data.paymentType.toUpperCase();
+    
+    switch (paymentType) {
+      case 'BANK_TRANSFER':
+      case 'CHEQUE':
+      case 'DEPOSIT':
+        await this.processBankExpensePayment(data, businessExpense, transaction);
+        break;
+        
+      case 'CREDIT_CARD':
+        await this.processCreditCardExpensePayment(data, businessExpense, transaction);
+        break;
+        
+      case 'CREDIT':
+        await this.processCreditExpensePayment(data, businessExpense, transaction);
+        break;
+        
+      case 'CASH':
+        // Cash payments are recorded in expense management only
+        console.log(`Cash payment for expense ${businessExpense.registrationNumber} - no additional recording needed`);
+        break;
+        
+      default:
+        console.log(`Payment type ${paymentType} processed as unpaid`);
+    }
+  }
+
+  /**
+   * Process bank payment (Bank Transfer, Cheque, Deposit)
+   * Records in both Expense Management and Bank Register
+   */
+  private static async processBankExpensePayment(
+    data: CreateBusinessExpenseData,
+    businessExpense: BusinessExpense,
+    transaction: Transaction
+  ): Promise<void> {
+    const BankAccount = (await import('../models/BankAccount')).default;
+    const BankRegister = (await import('../models/BankRegister')).default;
+    const Supplier = (await import('../models/Supplier')).default;
+    
+    // Get bank account and supplier info
+    const bankAccount = await BankAccount.findByPk(data.bankAccountId!, { transaction });
+    const supplier = await Supplier.findByPk(data.supplierId, { transaction });
+    
+    if (!bankAccount || !supplier) {
+      throw new Error('Bank account or supplier not found');
+    }
+    
+    // Update bank account balance (decrease for expense)
+    const newBalance = Number(bankAccount.balance) - data.amount;
+    await bankAccount.update({ balance: newBalance }, { transaction });
+    
+    // Generate bank register number
+    const lastBankRegister = await BankRegister.findOne({
+      order: [['id', 'DESC']],
+      transaction
+    });
+    
+    const nextNumber = lastBankRegister ? 
+      parseInt(lastBankRegister.registrationNumber.substring(2)) + 1 : 1;
+    const bankRegistrationNumber = `BR${String(nextNumber).padStart(4, '0')}`;
+    
+    // Create bank register entry (OUTFLOW for expense)
+    await BankRegister.create({
+      registrationNumber: bankRegistrationNumber,
+      registrationDate: businessExpense.date,
+      transactionType: 'OUTFLOW',
+      amount: data.amount,
+      paymentMethod: data.paymentType,
+      relatedDocumentType: 'Business Expense',
+      relatedDocumentNumber: businessExpense.registrationNumber,
+      clientName: supplier.name,
+      clientRnc: data.supplierRnc || '',
+      description: `Business Expense: ${businessExpense.description || businessExpense.expenseType} - ${supplier.name}`,
+      balance: newBalance,
+      bankAccountId: data.bankAccountId,
+      chequeNumber: data.chequeNumber,
+      transferNumber: data.transferNumber,
+    }, { transaction });
+    
+    console.log(`✅ Bank payment processed: Expense ${businessExpense.registrationNumber} -> Bank Register ${bankRegistrationNumber}`);
+  }
+
+  /**
+   * Process credit card payment
+   * Records in both Expense Management and Accounts Payable
+   */
+  private static async processCreditCardExpensePayment(
+    data: CreateBusinessExpenseData,
+    businessExpense: BusinessExpense,
+    transaction: Transaction
+  ): Promise<void> {
+    const Card = (await import('../models/Card')).default;
+    const AccountsPayable = (await import('../models/AccountsPayable')).default;
+    
+    // Get card info
+    const card = await Card.findByPk(data.cardId!, { transaction });
+    if (!card) {
+      throw new Error('Credit card not found');
+    }
+    
+    // Update used credit
+    const newUsedCredit = Number(card.usedCredit || 0) + data.amount;
+    await card.update({ usedCredit: newUsedCredit }, { transaction });
+    
+    // Generate AP registration number
+    const lastAP = await AccountsPayable.findOne({
+      order: [['id', 'DESC']],
+      transaction
+    });
+    
+    const nextNumber = lastAP ? 
+      parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
+    const apRegistrationNumber = `AP${String(nextNumber).padStart(4, '0')}`;
+    
+    // Create Accounts Payable entry
+    await AccountsPayable.create({
+      registrationNumber: apRegistrationNumber,
+      registrationDate: businessExpense.date,
+      type: 'CREDIT_CARD_EXPENSE',
+      sourceTransactionType: TransactionType.BUSINESS_EXPENSE,
+      relatedDocumentType: 'Business Expense',
+      relatedDocumentId: businessExpense.id,
+      relatedDocumentNumber: businessExpense.registrationNumber,
+      supplierName: card.cardName || 'Credit Card Company',
+      supplierRnc: '',
+      purchaseDate: businessExpense.date,
+      purchaseType: 'Business Expense',
+      paymentType: 'CREDIT_CARD',
+      amount: data.amount,
+      paidAmount: 0,
+      balanceAmount: data.amount,
+      status: 'Unpaid',
+      cardId: data.cardId,
+      notes: `Credit card expense: ${businessExpense.description || businessExpense.expenseType} - ${card.cardName}`,
+    }, { transaction });
+    
+    console.log(`✅ Credit card payment processed: Expense ${businessExpense.registrationNumber} -> AP ${apRegistrationNumber}`);
+  }
+
+  /**
+   * Process credit payment
+   * Records in both Expense Management and Accounts Payable
+   */
+  private static async processCreditExpensePayment(
+    data: CreateBusinessExpenseData,
+    businessExpense: BusinessExpense,
+    transaction: Transaction
+  ): Promise<void> {
+    const AccountsPayable = (await import('../models/AccountsPayable')).default;
+    const Supplier = (await import('../models/Supplier')).default;
+    
+    // Get supplier info
+    const supplier = await Supplier.findByPk(data.supplierId, { transaction });
+    if (!supplier) {
+      throw new Error('Supplier not found');
+    }
+    
+    // Generate AP registration number
+    const lastAP = await AccountsPayable.findOne({
+      order: [['id', 'DESC']],
+      transaction
+    });
+    
+    const nextNumber = lastAP ? 
+      parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
+    const apRegistrationNumber = `AP${String(nextNumber).padStart(4, '0')}`;
+    
+    // Create Accounts Payable entry
+    await AccountsPayable.create({
+      registrationNumber: apRegistrationNumber,
+      registrationDate: businessExpense.date,
+      type: 'SUPPLIER_CREDIT_EXPENSE',
+      sourceTransactionType: TransactionType.BUSINESS_EXPENSE,
+      relatedDocumentType: 'Business Expense',
+      relatedDocumentId: businessExpense.id,
+      relatedDocumentNumber: businessExpense.registrationNumber,
+      supplierId: data.supplierId,
+      supplierName: supplier.name,
+      supplierRnc: data.supplierRnc || supplier.rnc || '',
+      purchaseDate: businessExpense.date,
+      purchaseType: 'Business Expense',
+      paymentType: 'CREDIT',
+      amount: data.amount,
+      paidAmount: 0,
+      balanceAmount: data.amount,
+      status: 'Unpaid',
+      notes: `Credit expense from ${supplier.name}: ${businessExpense.description || businessExpense.expenseType}`,
+    }, { transaction });
+    
+    console.log(`✅ Credit payment processed: Expense ${businessExpense.registrationNumber} -> AP ${apRegistrationNumber}`);
+  }
+
+  /**
+   * Process associated costs with proper payment routing
+   */
+  private static async processAssociatedCosts(
+    associatedCosts: any[],
+    businessExpenseId: number,
+    transaction: Transaction
+  ): Promise<void> {
+    const associatedCostsData = associatedCosts.map(cost => ({
+      businessExpenseId,
+      supplierRnc: cost.supplierRnc,
+      supplierName: cost.supplierName,
+      concept: cost.concept,
+      ncf: cost.ncf,
+      date: cost.date,
+      amount: cost.amount,
+      expenseType: cost.expenseType,
+      paymentType: cost.paymentType,
+      bankAccountId: cost.bankAccountId,
+      cardId: cost.cardId,
+    }));
+
+    await BusinessExpenseAssociatedCost.bulkCreate(associatedCostsData, { transaction });
+    
+    // Process payment for each associated cost
+    for (const cost of associatedCosts) {
+      if (['BANK_TRANSFER', 'CHEQUE', 'DEPOSIT'].includes(cost.paymentType.toUpperCase())) {
+        // Process bank payment for associated cost
+        await this.processAssociatedCostBankPayment(cost, transaction);
+      } else if (cost.paymentType.toUpperCase() === 'CREDIT_CARD') {
+        // Process credit card payment for associated cost
+        await this.processAssociatedCostCreditCardPayment(cost, transaction);
+      }
+    }
+  }
+
+  /**
+   * Process bank payment for associated cost
+   */
+  private static async processAssociatedCostBankPayment(cost: any, transaction: Transaction): Promise<void> {
+    if (!cost.bankAccountId) return;
+    
+    const BankAccount = (await import('../models/BankAccount')).default;
+    const BankRegister = (await import('../models/BankRegister')).default;
+    
+    const bankAccount = await BankAccount.findByPk(cost.bankAccountId, { transaction });
+    if (!bankAccount) return;
+    
+    // Update bank balance
+    const newBalance = Number(bankAccount.balance) - cost.amount;
+    await bankAccount.update({ balance: newBalance }, { transaction });
+    
+    // Create bank register entry
+    const lastBankRegister = await BankRegister.findOne({
+      order: [['id', 'DESC']],
+      transaction
+    });
+    
+    const nextNumber = lastBankRegister ? 
+      parseInt(lastBankRegister.registrationNumber.substring(2)) + 1 : 1;
+    const bankRegistrationNumber = `BR${String(nextNumber).padStart(4, '0')}`;
+    
+    await BankRegister.create({
+      registrationNumber: bankRegistrationNumber,
+      registrationDate: cost.date,
+      transactionType: 'OUTFLOW',
+      amount: cost.amount,
+      paymentMethod: cost.paymentType,
+      relatedDocumentType: 'Associated Cost',
+      relatedDocumentNumber: cost.concept,
+      clientName: cost.supplierName || '',
+      clientRnc: cost.supplierRnc || '',
+      description: `Associated Cost: ${cost.concept}`,
+      balance: newBalance,
+      bankAccountId: cost.bankAccountId,
+    }, { transaction });
+  }
+
+  /**
+   * Process credit card payment for associated cost
+   */
+  private static async processAssociatedCostCreditCardPayment(cost: any, transaction: Transaction): Promise<void> {
+    if (!cost.cardId) return;
+    
+    const Card = (await import('../models/Card')).default;
+    const card = await Card.findByPk(cost.cardId, { transaction });
+    if (!card) return;
+    
+    // Update used credit
+    const newUsedCredit = Number(card.usedCredit || 0) + cost.amount;
+    await card.update({ usedCredit: newUsedCredit }, { transaction });
   }
   /**
    * Get business expense by ID with all associations
@@ -461,46 +795,93 @@ class BusinessExpenseService {
         {
           model: ExpenseCategory,
           as: 'expenseCategory',
-          attributes: ['name']
+          attributes: ['id', 'name', 'description']
         }
       ]
     });
 
     const totalAmount = expenses.reduce((sum, expense) => sum + parseFloat(expense.amount.toString()), 0);
     const paidAmount = expenses.reduce((sum, expense) => sum + parseFloat(expense.paidAmount.toString()), 0);
-    const pendingAmount = totalAmount - paidAmount;
+    const balanceAmount = totalAmount - paidAmount;
+    const paymentPercentage = totalAmount > 0 ? (paidAmount / totalAmount) * 100 : 0;
 
-    const byCategory = expenses.reduce((acc: any, expense) => {
-      const categoryName = expense.expenseCategory?.name || 'Uncategorized';
-      if (!acc[categoryName]) {
-        acc[categoryName] = 0;
+    // Group by category for topCategories
+    const categoryGroups = expenses.reduce((acc: any, expense) => {
+      const categoryId = expense.expenseCategoryId;
+      
+      if (!acc[categoryId]) {
+        acc[categoryId] = {
+          category: expense.expenseCategory || { id: 0, name: 'Uncategorized', description: '' },
+          count: 0,
+          amount: 0
+        };
       }
-      acc[categoryName] += parseFloat(expense.amount.toString());
+      
+      acc[categoryId].count += 1;
+      acc[categoryId].amount += parseFloat(expense.amount.toString());
       return acc;
     }, {});
 
-    const byStatus = expenses.reduce((acc: any, expense) => {
-      if (!acc[expense.paymentStatus]) {
-        acc[expense.paymentStatus] = 0;
+    const topCategories = Object.values(categoryGroups)
+      .sort((a: any, b: any) => b.amount - a.amount)
+      .slice(0, 10);
+
+    // Group by status for breakdowns
+    const statusGroups = expenses.reduce((acc: any, expense) => {
+      const status = expense.paymentStatus;
+      
+      if (!acc[status]) {
+        acc[status] = {
+          status,
+          count: 0,
+          amount: 0
+        };
       }
-      acc[expense.paymentStatus] += parseFloat(expense.amount.toString());
+      
+      acc[status].count += 1;
+      acc[status].amount += parseFloat(expense.amount.toString());
       return acc;
     }, {});
+
+    const byStatus = Object.values(statusGroups);
+
+    // Group by payment type for breakdowns
+    const typeGroups = expenses.reduce((acc: any, expense) => {
+      const transactionType = expense.paymentType;
+      
+      if (!acc[transactionType]) {
+        acc[transactionType] = {
+          transactionType,
+          count: 0,
+          amount: 0
+        };
+      }
+      
+      acc[transactionType].count += 1;
+      acc[transactionType].amount += parseFloat(expense.amount.toString());
+      return acc;
+    }, {});
+
+    const byType = Object.values(typeGroups);
 
     return {
-      summary: {
-        totalExpenses: expenses.length,
-        totalAmount,
-        paidAmount,
-        pendingAmount
-      },
-      byCategory,
-      byStatus,
       period,
       dateRange: {
-        from: startDate,
-        to: now
-      }
+        start: startDate.toISOString(),
+        end: now.toISOString()
+      },
+      summary: {
+        totalPurchases: expenses.length,
+        totalAmount,
+        paidAmount,
+        balanceAmount,
+        paymentPercentage
+      },
+      breakdowns: {
+        byStatus,
+        byType
+      },
+      topCategories
     };
   }
 }
