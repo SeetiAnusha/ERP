@@ -753,6 +753,212 @@ class BusinessExpenseService {
   }
 
   /**
+   * Pay a business expense (updates both expense and AP)
+   */
+  static async payBusinessExpense(expenseId: number, paymentData: {
+    paymentMethod: string;
+    bankAccountId?: number;
+    cardId?: number;
+    amount: number;
+    registrationDate: Date;
+    description: string;
+    chequeNumber?: string;
+    chequeDate?: Date;
+    transferNumber?: string;
+    transferDate?: Date;
+    paymentReference?: string;
+    voucherDate?: Date;
+  }): Promise<any> {
+    const transaction: any = await sequelize.transaction();
+    
+    try {
+      // Step 1: Get the business expense
+      const expense = await BusinessExpense.findByPk(expenseId, { transaction });
+      if (!expense) {
+        throw new Error(`Business expense with ID ${expenseId} not found`);
+      }
+
+      // Step 2: Validate payment
+      if (expense.paymentStatus === 'Paid') {
+        throw new Error('Business expense is already fully paid');
+      }
+
+      const currentBalance = parseFloat(expense.balanceAmount.toString());
+      if (paymentData.amount > currentBalance) {
+        throw new Error(`Payment amount ₹${paymentData.amount} exceeds remaining balance ₹${currentBalance}`);
+      }
+
+      // Step 3: Process payment based on method
+      let paymentResult = null;
+      const paymentMethod = paymentData.paymentMethod.toUpperCase();
+      
+      if (['BANK_TRANSFER', 'CHEQUE', 'DEPOSIT'].includes(paymentMethod)) {
+        paymentResult = await this.processBankPaymentForExpense(expense, paymentData, transaction);
+      } else if (paymentMethod === 'CREDIT_CARD') {
+        paymentResult = await this.processCreditCardPaymentForExpense(expense, paymentData, transaction);
+      } else if (paymentMethod === 'CASH') {
+        paymentResult = await this.processCashPaymentForExpense(expense, paymentData, transaction);
+      } else {
+        throw new Error(`Unsupported payment method: ${paymentData.paymentMethod}`);
+      }
+
+      // Step 4: Update the business expense
+      const newPaidAmount = parseFloat(expense.paidAmount.toString()) + paymentData.amount;
+      const newBalanceAmount = parseFloat(expense.amount.toString()) - newPaidAmount;
+      const newPaymentStatus = newBalanceAmount <= 0 ? 'Paid' : 'Partial';
+
+      await expense.update({
+        paidAmount: newPaidAmount,
+        balanceAmount: Math.max(0, newBalanceAmount),
+        paymentStatus: newPaymentStatus
+      }, { transaction });
+
+      // Step 5: Update related AP entry if it exists
+      await this.updateRelatedAccountsPayable(expense, paymentData.amount, transaction);
+
+      await transaction.commit();
+
+      return {
+        expense: await this.getBusinessExpenseById(expenseId),
+        paymentResult,
+        message: `Payment of ₹${paymentData.amount} processed successfully. New status: ${newPaymentStatus}`
+      };
+
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  /**
+   * Process bank payment for expense
+   */
+  private static async processBankPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
+    if (!paymentData.bankAccountId) {
+      throw new Error('Bank account is required for bank payments');
+    }
+
+    const BankAccount = (await import('../models/BankAccount')).default;
+    const BankRegister = (await import('../models/BankRegister')).default;
+
+    // Validate bank account
+    const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
+    if (!bankAccount) {
+      throw new Error('Bank account not found');
+    }
+
+    const currentBalance = Number(bankAccount.balance);
+    if (currentBalance < paymentData.amount) {
+      throw new Error(`Insufficient balance in ${bankAccount.bankName}. Available: ₹${currentBalance}, Required: ₹${paymentData.amount}`);
+    }
+
+    // Update bank balance
+    const newBalance = currentBalance - paymentData.amount;
+    await bankAccount.update({ balance: newBalance }, { transaction });
+
+    // Create bank register entry
+    const lastBankRegister = await BankRegister.findOne({
+      order: [['id', 'DESC']],
+      transaction
+    });
+
+    const nextNumber = lastBankRegister ? 
+      parseInt(lastBankRegister.registrationNumber.substring(2)) + 1 : 1;
+    const bankRegistrationNumber = `BR${String(nextNumber).padStart(4, '0')}`;
+
+    const bankEntry = await BankRegister.create({
+      registrationNumber: bankRegistrationNumber,
+      registrationDate: paymentData.registrationDate,
+      transactionType: 'OUTFLOW',
+      amount: paymentData.amount,
+      paymentMethod: paymentData.paymentMethod,
+      relatedDocumentType: 'Business Expense Payment',
+      relatedDocumentNumber: expense.registrationNumber,
+      clientName: expense.supplier?.name || 'Supplier',
+      clientRnc: expense.supplierRnc || '',
+      description: `Payment for business expense ${expense.registrationNumber} - ${paymentData.description}`,
+      balance: newBalance,
+      bankAccountId: paymentData.bankAccountId,
+      chequeNumber: paymentData.chequeNumber,
+      transferNumber: paymentData.transferNumber,
+    }, { transaction });
+
+    return { bankEntry, bankRegistrationNumber };
+  }
+
+  /**
+   * Process credit card payment for expense
+   */
+  private static async processCreditCardPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
+    if (!paymentData.cardId) {
+      throw new Error('Credit card is required for credit card payments');
+    }
+
+    const Card = (await import('../models/Card')).default;
+    const card = await Card.findByPk(paymentData.cardId, { transaction });
+    if (!card) {
+      throw new Error('Credit card not found');
+    }
+
+    const creditLimit = Number(card.creditLimit || 0);
+    const usedCredit = Number(card.usedCredit || 0);
+    const availableCredit = creditLimit - usedCredit;
+
+    if (availableCredit < paymentData.amount) {
+      throw new Error(`Insufficient credit limit. Available: ₹${availableCredit}, Required: ₹${paymentData.amount}`);
+    }
+
+    // Update used credit
+    const newUsedCredit = usedCredit + paymentData.amount;
+    await card.update({ usedCredit: newUsedCredit }, { transaction });
+
+    return { cardPayment: true, newUsedCredit };
+  }
+
+  /**
+   * Process cash payment for expense
+   */
+  private static async processCashPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
+    // For cash payments, we just record the payment - no additional register entries needed
+    return { cashPayment: true, amount: paymentData.amount };
+  }
+
+  /**
+   * Update related Accounts Payable entry
+   */
+  private static async updateRelatedAccountsPayable(expense: any, paymentAmount: number, transaction: any): Promise<void> {
+    try {
+      const AccountsPayable = (await import('../models/AccountsPayable')).default;
+      
+      // Find related AP entry
+      const apEntry = await AccountsPayable.findOne({
+        where: {
+          relatedDocumentType: 'Business Expense',
+          relatedDocumentId: expense.id
+        },
+        transaction
+      });
+
+      if (apEntry) {
+        const newPaidAmount = parseFloat(apEntry.paidAmount.toString()) + paymentAmount;
+        const newBalanceAmount = parseFloat(apEntry.amount.toString()) - newPaidAmount;
+        const newStatus = newBalanceAmount <= 0 ? 'Paid' : 'Partial';
+
+        await apEntry.update({
+          paidAmount: newPaidAmount,
+          balanceAmount: Math.max(0, newBalanceAmount),
+          status: newStatus
+        }, { transaction });
+
+        console.log(`✅ Updated related AP entry: ${apEntry.registrationNumber} - Status: ${newStatus}`);
+      }
+    } catch (error) {
+      console.error('⚠️ Failed to update related AP entry:', error);
+      // Don't throw - this is not critical for the expense payment
+    }
+  }
+
+  /**
    * Delete business expense (soft delete by updating status)
    */
   static async deleteBusinessExpense(id: number): Promise<boolean> {

@@ -390,6 +390,9 @@ class AccountsPayableService extends BaseService {
         notes: paymentData.description || paymentData.notes || ap.notes,
       }, { transaction });
       
+      // Step 5: Update related Business Expense if this AP is from a business expense
+      await this.updateRelatedBusinessExpense(ap, paymentData.amount, status, transaction);
+      
       return ap;
     });
   }
@@ -606,6 +609,65 @@ class AccountsPayableService extends BaseService {
     
     return `AP${String(nextNumber).padStart(4, '0')}`;
   }
+  // ==================== PAYMENT PROCESSING METHODS ====================
+  
+  /**
+   * Update related Business Expense when AP payment is made
+   */
+  private async updateRelatedBusinessExpense(
+    ap: any, 
+    paymentAmount: number, 
+    apStatus: string, 
+    transaction: any
+  ): Promise<void> {
+    try {
+      // Check if this AP is related to a business expense
+      if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
+        console.log(`🔄 Updating related business expense ${ap.relatedDocumentId} for AP payment`);
+        
+        // Import BusinessExpense model
+        const BusinessExpense = (await import('../models/BusinessExpense')).default;
+        
+        // Get the business expense
+        const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId, { transaction });
+        
+        if (businessExpense) {
+          // Calculate new payment amounts for the business expense
+          const currentPaidAmount = Number(businessExpense.paidAmount || 0);
+          const newPaidAmount = currentPaidAmount + paymentAmount;
+          const totalAmount = Number(businessExpense.amount);
+          const newBalanceAmount = totalAmount - newPaidAmount;
+          
+          // Determine new payment status
+          let newPaymentStatus = 'Partial';
+          if (newBalanceAmount <= 0) {
+            newPaymentStatus = 'Paid';
+          } else if (newPaidAmount <= 0) {
+            newPaymentStatus = 'Unpaid';
+          }
+          
+          // Update the business expense
+          await businessExpense.update({
+            paidAmount: this.roundCurrency(newPaidAmount),
+            balanceAmount: this.roundCurrency(Math.max(0, newBalanceAmount)),
+            paymentStatus: newPaymentStatus
+          }, { transaction });
+          
+          console.log(`✅ Updated business expense ${businessExpense.registrationNumber}:`);
+          console.log(`   - Paid Amount: ₹${currentPaidAmount} → ₹${newPaidAmount}`);
+          console.log(`   - Balance: ₹${totalAmount - currentPaidAmount} → ₹${newBalanceAmount}`);
+          console.log(`   - Status: ${businessExpense.paymentStatus} → ${newPaymentStatus}`);
+        } else {
+          console.log(`⚠️ Business expense ${ap.relatedDocumentId} not found`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error updating related business expense:', error);
+      // Don't throw - this shouldn't block the AP payment
+      // The AP payment is the primary operation
+    }
+  }
+
   // ==================== PAYMENT PROCESSING METHODS ====================
   
   /**

@@ -357,6 +357,168 @@ export const deleteBusinessExpense = async (req: Request, res: Response) => {
 };
 
 /**
+ * Get unpaid business expenses (like invoices for payment)
+ * GET /api/business-expenses/unpaid
+ */
+export const getUnpaidBusinessExpenses = async (req: Request, res: Response) => {
+  try {
+    const {
+      supplierId,
+      dateFrom,
+      dateTo,
+      page = '1',
+      limit = '50'
+    } = req.query;
+
+    const filters = {
+      paymentStatus: 'Unpaid', // Only get unpaid expenses
+      supplierId: supplierId ? parseInt(supplierId as string) : undefined,
+      dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
+      dateTo: dateTo ? new Date(dateTo as string) : undefined,
+      page: Math.max(1, parseInt(page as string) || 1),
+      limit: Math.min(100, Math.max(1, parseInt(limit as string) || 50))
+    };
+
+    console.log('[BusinessExpenseController] Getting unpaid business expenses:', filters);
+
+    const result = await BusinessExpenseService.getBusinessExpenses(filters);
+
+    res.json({
+      success: true,
+      data: result.expenses,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        totalPages: result.totalPages
+      },
+      message: `Found ${result.total} unpaid business expenses`,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error: any) {
+    console.error('[BusinessExpenseController] Error getting unpaid business expenses:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve unpaid business expenses',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
+ * Pay a business expense (updates both expense and AP)
+ * POST /api/business-expenses/:id/pay
+ */
+export const payBusinessExpense = async (req: Request, res: Response) => {
+  try {
+    const expenseId = parseInt(req.params.id);
+    const {
+      paymentMethod,
+      bankAccountId,
+      cardId,
+      amount,
+      registrationDate,
+      description,
+      chequeNumber,
+      chequeDate,
+      transferNumber,
+      transferDate,
+      paymentReference,
+      voucherDate
+    } = req.body;
+
+    if (isNaN(expenseId) || expenseId <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid expense ID',
+        message: 'Expense ID must be a positive integer',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Input validation
+    if (!paymentMethod || !amount || !registrationDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'Payment method, amount, and registration date are required',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid amount',
+        message: 'Payment amount must be greater than 0',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.log(`[BusinessExpenseController] Processing payment for expense ${expenseId}:`, {
+      paymentMethod,
+      amount,
+      bankAccountId,
+      cardId
+    });
+
+    const paymentData = {
+      paymentMethod,
+      bankAccountId: bankAccountId ? parseInt(bankAccountId) : undefined,
+      cardId: cardId ? parseInt(cardId) : undefined,
+      amount: parseFloat(amount),
+      registrationDate: new Date(registrationDate),
+      description: description || `Payment for business expense ${expenseId}`,
+      chequeNumber,
+      chequeDate: chequeDate ? new Date(chequeDate) : undefined,
+      transferNumber,
+      transferDate: transferDate ? new Date(transferDate) : undefined,
+      paymentReference,
+      voucherDate: voucherDate ? new Date(voucherDate) : undefined
+    };
+
+    const result = await BusinessExpenseService.payBusinessExpense(expenseId, paymentData);
+
+    res.json({
+      success: true,
+      data: result,
+      message: 'Business expense payment processed successfully',
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error: any) {
+    console.error('[BusinessExpenseController] Error processing expense payment:', error);
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({
+        success: false,
+        error: 'Expense not found',
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (error.message.includes('already paid') || error.message.includes('balance')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Payment validation failed',
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to process expense payment',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
  * Get business expense dashboard data
  * GET /api/business-expenses/dashboard
  */

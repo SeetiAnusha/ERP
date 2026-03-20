@@ -25,6 +25,22 @@ router.post('/', businessExpenseController.createBusinessExpense);
 router.get('/', businessExpenseController.getBusinessExpenses);
 
 /**
+ * @route   GET /api/business-expenses/unpaid
+ * @desc    Get unpaid business expenses (like invoices for payment)
+ * @query   supplierId?, dateFrom?, dateTo?
+ * @access  Public
+ */
+router.get('/unpaid', businessExpenseController.getUnpaidBusinessExpenses);
+
+/**
+ * @route   POST /api/business-expenses/:id/pay
+ * @desc    Pay a business expense (updates both expense and AP)
+ * @body    { paymentMethod, bankAccountId?, cardId?, amount, registrationDate, description }
+ * @access  Private
+ */
+router.post('/:id/pay', businessExpenseController.payBusinessExpense);
+
+/**
  * @route   GET /api/business-expenses/dashboard
  * @desc    Get business expense dashboard data
  * @query   period (month, quarter, year)

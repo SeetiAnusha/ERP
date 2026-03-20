@@ -511,6 +511,9 @@ class CreditBalanceService extends BaseService {
         remainingCreditToApply -= creditToApplyToThisInvoice;
         
         console.log(`📄 Invoice ${invoice.registrationNumber} updated: Received ₹${newReceivedAmount}, Balance ₹${newBalanceAmount}, Status: ${newStatus}`);
+        
+        // 🔄 Update related Business Expense if this AP is from a business expense
+        await this.updateRelatedBusinessExpenseForCredit(invoice, creditToApplyToThisInvoice, newStatus, transaction);
       }
     }
     
@@ -533,6 +536,64 @@ class CreditBalanceService extends BaseService {
       updatedCredits,
       updatedInvoices
     };
+  }
+
+  /**
+   * Update related Business Expense when credit balance is applied to AP payment
+   * This ensures business expense records stay in sync when credit payments are made
+   */
+  private async updateRelatedBusinessExpenseForCredit(
+    ap: any, 
+    creditAmount: number, 
+    apStatus: string, 
+    transaction: any
+  ): Promise<void> {
+    try {
+      // Check if this AP is related to a business expense
+      if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
+        console.log(`🔄 [CreditBalance] Updating related business expense ${ap.relatedDocumentId} for credit payment`);
+        
+        // Import BusinessExpense model
+        const BusinessExpense = (await import('../models/BusinessExpense')).default;
+        
+        // Get the business expense
+        const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId, { transaction });
+        
+        if (businessExpense) {
+          // Calculate new payment amounts for the business expense
+          const currentPaidAmount = Number(businessExpense.paidAmount || 0);
+          const newPaidAmount = currentPaidAmount + creditAmount;
+          const totalAmount = Number(businessExpense.amount);
+          const newBalanceAmount = totalAmount - newPaidAmount;
+          
+          // Determine new payment status
+          let newPaymentStatus = 'Partial';
+          if (newBalanceAmount <= 0) {
+            newPaymentStatus = 'Paid';
+          } else if (newPaidAmount <= 0) {
+            newPaymentStatus = 'Unpaid';
+          }
+          
+          // Update the business expense
+          await businessExpense.update({
+            paidAmount: this.roundCurrency(newPaidAmount),
+            balanceAmount: this.roundCurrency(Math.max(0, newBalanceAmount)),
+            paymentStatus: newPaymentStatus
+          }, { transaction });
+          
+          console.log(`✅ [CreditBalance] Updated business expense ${businessExpense.registrationNumber}:`);
+          console.log(`   - Paid Amount: ₹${currentPaidAmount} → ₹${newPaidAmount} (Credit: ₹${creditAmount})`);
+          console.log(`   - Balance: ₹${totalAmount - currentPaidAmount} → ₹${newBalanceAmount}`);
+          console.log(`   - Status: ${businessExpense.paymentStatus} → ${newPaymentStatus}`);
+        } else {
+          console.log(`⚠️ [CreditBalance] Business expense ${ap.relatedDocumentId} not found`);
+        }
+      }
+    } catch (error: any) {
+      console.error('❌ [CreditBalance] Error updating related business expense:', error);
+      // Don't throw - this shouldn't block the credit payment
+      // The credit payment is the primary operation
+    }
   }
 }
 

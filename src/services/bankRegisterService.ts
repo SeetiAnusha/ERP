@@ -145,24 +145,79 @@ class BankRegisterService extends BaseService {
     return this.executeWithRetry(async () => {
       this.validateNumeric(supplierId, 'Supplier ID', { min: 1 });
       
-      const pendingInvoices = await AccountsPayable.findAll({
+      console.log(`🔍 [BankRegister] Getting pending invoices for supplier ID: ${supplierId}`);
+      console.log(`🔍 [BankRegister] DEBUG: Method called with supplierId: ${supplierId}`);
+      
+      // Step 1: Get all unpaid AP invoices (we'll filter them)
+      // Include 'Unpaid', 'Pending', and 'Partial' statuses
+      const allPendingInvoices = await AccountsPayable.findAll({
         where: {
-          supplierId,
           status: {
-            [Op.in]: ['Pending', 'Partial']
+            [Op.in]: ['Unpaid', 'Pending', 'Partial']
           }
         },
         order: [['registrationDate', 'ASC']]
       });
       
-      // Transform the data to include invoice details for frontend display
-      return pendingInvoices.map(ap => ({
+      console.log(`🔍 [BankRegister] Found ${allPendingInvoices.length} total unpaid AP invoices (Unpaid, Pending, Partial)`);
+      console.log(`🔍 [BankRegister] DEBUG: Statuses included: Unpaid, Pending, Partial`);
+      
+      // Debug: Log all found invoices
+      allPendingInvoices.forEach((ap, index) => {
+        console.log(`🔍 [BankRegister] DEBUG Invoice ${index + 1}: ${ap.registrationNumber} - Status: ${ap.status} - Supplier: ${ap.supplierId} - Type: ${ap.relatedDocumentType}`);
+      });
+      
+      // Step 2: Filter invoices for this supplier
+      const filteredInvoices = [];
+      
+      for (const ap of allPendingInvoices) {
+        let includeInvoice = false;
+        let debugInfo = '';
+        
+        // Check 1: Direct supplier match
+        if (ap.supplierId === supplierId) {
+          includeInvoice = true;
+          debugInfo = `Direct supplier match (supplierId: ${ap.supplierId})`;
+        }
+        // Check 2: Business expense from this supplier
+        else if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
+          try {
+            const BusinessExpense = (await import('../models/BusinessExpense')).default;
+            const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId);
+            
+            if (businessExpense && businessExpense.supplierId === supplierId) {
+              includeInvoice = true;
+              debugInfo = `Business expense match (expense supplierId: ${businessExpense.supplierId}, AP type: ${ap.type})`;
+            } else if (businessExpense) {
+              debugInfo = `Business expense different supplier (expense supplierId: ${businessExpense.supplierId}, looking for: ${supplierId})`;
+            } else {
+              debugInfo = `Business expense not found (relatedDocumentId: ${ap.relatedDocumentId})`;
+            }
+          } catch (error: any) {
+            debugInfo = `Error checking business expense: ${error.message}`;
+            console.error('Error checking business expense supplier:', error);
+          }
+        } else {
+          debugInfo = `No match (supplierId: ${ap.supplierId}, relatedDocumentType: ${ap.relatedDocumentType})`;
+        }
+        
+        console.log(`🔍 [BankRegister] AP ${ap.registrationNumber}: ${debugInfo} -> ${includeInvoice ? 'INCLUDE' : 'EXCLUDE'}`);
+        
+        if (includeInvoice) {
+          filteredInvoices.push(ap);
+        }
+      }
+      
+      console.log(`🔍 [BankRegister] Filtered to ${filteredInvoices.length} invoices for supplier ${supplierId}`);
+      
+      // Step 3: Transform the data to include invoice details for frontend display
+      const result = filteredInvoices.map(ap => ({
         id: ap.id,
         registrationNumber: ap.registrationNumber,
         amount: ap.amount,
         balanceAmount: ap.balanceAmount,
         invoiceDate: ap.purchaseDate || ap.registrationDate,
-        description: `${ap.relatedDocumentType} - ${ap.relatedDocumentNumber}${ap.ncf ? ` (NCF: ${ap.ncf})` : ''}${ap.supplierRnc ? ` - RNC: ${ap.supplierRnc}` : ''} - ${ap.purchaseType || 'Purchase'}`,
+        description: this.formatInvoiceDescription(ap),
         invoiceNumber: ap.relatedDocumentNumber,
         ncf: ap.ncf,
         supplierRnc: ap.supplierRnc,
@@ -171,7 +226,40 @@ class BankRegisterService extends BaseService {
         type: ap.type,
         relatedDocumentType: ap.relatedDocumentType
       }));
+      
+      console.log(`🔍 [BankRegister] Returning ${result.length} formatted invoices`);
+      return result;
     });
+  }
+
+  /**
+   * Format invoice description for display
+   */
+  private formatInvoiceDescription(ap: any): string {
+    let description = `${ap.relatedDocumentType} - ${ap.relatedDocumentNumber}`;
+    
+    if (ap.ncf) {
+      description += ` (NCF: ${ap.ncf})`;
+    }
+    
+    if (ap.supplierRnc) {
+      description += ` - RNC: ${ap.supplierRnc}`;
+    }
+    
+    // Add purchase/expense type
+    const typeInfo = ap.purchaseType || ap.type || 'Unknown';
+    description += ` - ${typeInfo}`;
+    
+    // Add specific info for business expenses
+    if (ap.relatedDocumentType === 'Business Expense') {
+      if (ap.type === 'CREDIT_CARD_EXPENSE') {
+        description += ' (Credit Card)';
+      } else if (ap.type === 'SUPPLIER_CREDIT_EXPENSE') {
+        description += ' (Supplier Credit)';
+      }
+    }
+    
+    return description;
   }
   /**
    * Auto-generate cheque number for a bank account
@@ -291,6 +379,9 @@ class BankRegisterService extends BaseService {
           balanceAmount: Math.max(0, newBalanceAmount),
           status,
         }, { transaction });
+        
+        // 🔄 Update related Business Expense if this AP is from a business expense
+        await this.updateRelatedBusinessExpense(apInvoice, paymentAmount, status, transaction);
       }
     } else {
       // Multiple invoices - distribute amount proportionally
@@ -306,6 +397,9 @@ class BankRegisterService extends BaseService {
             balanceAmount,
             status,
           }, { transaction });
+          
+          // 🔄 Update related Business Expense if this AP is from a business expense
+          await this.updateRelatedBusinessExpense(apInvoice, amount, status, transaction);
         }
       }
     }
@@ -771,6 +865,64 @@ class BankRegisterService extends BaseService {
       console.log(`✅ Bank register entry ${id} deleted successfully`);
       return { message: 'Bank register entry deleted successfully' };
     });
+  }
+
+  /**
+   * Update related Business Expense when AP payment is made from Bank Register
+   * This ensures business expense records stay in sync when payments are made through bank register
+   */
+  private async updateRelatedBusinessExpense(
+    ap: any, 
+    paymentAmount: number, 
+    apStatus: string, 
+    transaction: any
+  ): Promise<void> {
+    try {
+      // Check if this AP is related to a business expense
+      if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
+        console.log(`🔄 [BankRegister] Updating related business expense ${ap.relatedDocumentId} for AP payment`);
+        
+        // Import BusinessExpense model
+        const BusinessExpense = (await import('../models/BusinessExpense')).default;
+        
+        // Get the business expense
+        const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId, { transaction });
+        
+        if (businessExpense) {
+          // Calculate new payment amounts for the business expense
+          const currentPaidAmount = Number(businessExpense.paidAmount || 0);
+          const newPaidAmount = currentPaidAmount + paymentAmount;
+          const totalAmount = Number(businessExpense.amount);
+          const newBalanceAmount = totalAmount - newPaidAmount;
+          
+          // Determine new payment status
+          let newPaymentStatus = 'Partial';
+          if (newBalanceAmount <= 0) {
+            newPaymentStatus = 'Paid';
+          } else if (newPaidAmount <= 0) {
+            newPaymentStatus = 'Unpaid';
+          }
+          
+          // Update the business expense
+          await businessExpense.update({
+            paidAmount: this.roundCurrency(newPaidAmount),
+            balanceAmount: this.roundCurrency(Math.max(0, newBalanceAmount)),
+            paymentStatus: newPaymentStatus
+          }, { transaction });
+          
+          console.log(`✅ [BankRegister] Updated business expense ${businessExpense.registrationNumber}:`);
+          console.log(`   - Paid Amount: ₹${currentPaidAmount} → ₹${newPaidAmount}`);
+          console.log(`   - Balance: ₹${totalAmount - currentPaidAmount} → ₹${newBalanceAmount}`);
+          console.log(`   - Status: ${businessExpense.paymentStatus} → ${newPaymentStatus}`);
+        } else {
+          console.log(`⚠️ [BankRegister] Business expense ${ap.relatedDocumentId} not found`);
+        }
+      }
+    } catch (error: any) {
+      console.error('❌ [BankRegister] Error updating related business expense:', error);
+      // Don't throw - this shouldn't block the bank register payment
+      // The bank register payment is the primary operation
+    }
   }
 }
 
