@@ -3,8 +3,9 @@ import * as cashRegisterService from '../services/cashRegisterService';
 
 export const getAll = async (req: Request, res: Response) => {
   try {
-    const transactions = await cashRegisterService.getAllCashTransactions();
-    res.json(transactions);
+    const result = await cashRegisterService.getAllCashTransactions();
+    // Return just the transactions array for frontend compatibility
+    res.json(result.transactions);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

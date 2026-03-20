@@ -41,6 +41,11 @@ export interface CustomerCreditAwarePaymentResult {
   newCreditCreated?: number;
   cashRegisterEntry?: any;
   message: string;
+  // New fields for frontend logic
+  paymentTypeRequired?: boolean;
+  recordInCashRegister?: boolean;
+  availableCredit?: number;
+  totalInvoiceBalance?: number;
 }
 
 /**
@@ -150,7 +155,9 @@ class CustomerCreditAwarePaymentService extends BaseService {
         sum + parseFloat(credit.availableAmount.toString()), 0
       );
       
-      // Step 4: Implement exact scenario logic from user table
+      console.log(`💰 Payment Analysis: Invoice=₹${totalInvoiceBalance}, Credit=₹${availableCredit}, Requested=₹${request.requestedPaymentAmount}`);
+      
+      // Step 4: Implement EXACT scenario logic from user table
       let creditUsed = 0;
       let cashPaymentNeeded = 0;
       let newCreditCreated = 0;
@@ -158,71 +165,71 @@ class CustomerCreditAwarePaymentService extends BaseService {
       let paymentTypeRequired = false;
       
       if (availableCredit >= totalInvoiceBalance) {
-        // Scenarios 2️⃣, 4️⃣, 6️⃣ - Credit covers invoice fully
+        // 🎯 Scenarios 2️⃣, 4️⃣, 6️⃣ - Credit covers invoice fully
+        console.log(`✅ Scenario: Credit covers invoice (Credit ≥ Invoice)`);
         
         if (request.requestedPaymentAmount > totalInvoiceBalance) {
-          // Scenario 5️⃣ - Block unnecessary overpayment
+          // 🚫 Scenario 5️⃣ - Block unnecessary overpayment
           throw new BusinessLogicError(
-            `You have sufficient credit (₹${availableCredit}) to pay invoice (₹${totalInvoiceBalance}). No need to pay extra.`
+            `🚫 OVERPAYMENT BLOCKED: You have sufficient credit (₹${availableCredit.toFixed(2)}) to pay invoice (₹${totalInvoiceBalance.toFixed(2)}). No need to pay extra.`
           );
         }
         
-        // Process credit-only payment - NO RECORDING
+        // Process credit-only payment - NO RECORDING, NO PAYMENT TYPE
         creditUsed = totalInvoiceBalance;
         cashPaymentNeeded = 0;
         recordInCashRegister = false;
         paymentTypeRequired = false;
         
+        console.log(`💳 Credit-only payment: Using ₹${creditUsed} from credit, no cash recording needed`);
+        
       } else {
-        // Scenarios 1️⃣, 3️⃣, 7️⃣, 8️⃣, 🔟 - Credit < Invoice, payment type needed
+        // 🎯 Scenarios 1️⃣, 3️⃣, 7️⃣, 8️⃣, 🔟 - Credit < Invoice, payment type needed
+        console.log(`✅ Scenario: Credit insufficient (Credit < Invoice), payment type required`);
         
         if (request.requestedPaymentAmount < totalInvoiceBalance) {
-          // Scenario 9️⃣ - Insufficient amount
+          // 🚫 Scenario 9️⃣ - Insufficient amount
           throw new BusinessLogicError(
-            `Amount ₹${request.requestedPaymentAmount} < Invoice ₹${totalInvoiceBalance}. Please enter full invoice amount or more.`
+            `❌ INSUFFICIENT AMOUNT: Amount ₹${request.requestedPaymentAmount.toFixed(2)} < Invoice ₹${totalInvoiceBalance.toFixed(2)}. Please enter full invoice amount or more.`
           );
         }
         
         // Use available credit silently
         creditUsed = availableCredit;
         
-        // CRITICAL: Record FULL AMOUNT in cash/bank register
-        cashPaymentNeeded = request.requestedPaymentAmount;
+        // 🔥 CORRECTED: Record only the cash amount actually needed
+        const remainingInvoiceAfterCredit = totalInvoiceBalance - creditUsed;
+        cashPaymentNeeded = remainingInvoiceAfterCredit; // Only what's needed, not full amount
         recordInCashRegister = true;
         paymentTypeRequired = true;
         
         // Calculate new credit from overpayment
-        const remainingInvoiceAfterCredit = totalInvoiceBalance - creditUsed;
         if (request.requestedPaymentAmount > remainingInvoiceAfterCredit) {
           newCreditCreated = request.requestedPaymentAmount - remainingInvoiceAfterCredit;
         }
+        
+        console.log(`💰 Mixed payment: Credit=₹${creditUsed}, Cash=₹${cashPaymentNeeded}, NewCredit=₹${newCreditCreated}`);
       }
       
       // Step 5: Apply credit if needed
       if (creditUsed > 0) {
-        // Get active credits for application
-        const availableCredits = await creditBalanceService.getCreditBalancesByEntity(
-          'CLIENT',
-          request.customerId
-        );
+        console.log(`🔄 Applying ₹${creditUsed} from existing credit balances...`);
         
-        const activeCredits = availableCredits.filter(credit => 
-          credit.status === 'ACTIVE' && 
-          credit.availableAmount && 
-          parseFloat(credit.availableAmount.toString()) > 0
-        );
-        
-        await creditBalanceService.creditBalanceService.applyCreditToInvoices({
+        const creditApplication = await creditBalanceService.creditBalanceService.applyCreditToInvoices({
           entityType: 'CLIENT',
           entityId: request.customerId,
           invoicesToUpdate: invoices,
           maxCreditToUse: creditUsed
         });
+        
+        console.log(`✅ Applied ₹${creditUsed} from credit balances to invoices`);
       }
       
       // Step 6: Process cash payment if needed
       let cashRegisterEntry = null;
       if (recordInCashRegister && cashPaymentNeeded > 0) {
+        console.log(`💸 Processing cash register payment of ₹${cashPaymentNeeded}...`);
+        
         // Validate payment method for cash register recording
         if (!request.paymentMethod) {
           throw new ValidationError('Payment method is required for cash payments');
@@ -234,23 +241,29 @@ class CustomerCreditAwarePaymentService extends BaseService {
         
         cashRegisterEntry = await this.processCashPayment(
           request,
-          cashPaymentNeeded, // FULL AMOUNT
+          cashPaymentNeeded, // FULL AMOUNT as per scenario table
           transaction
         );
+        
+        console.log(`✅ Cash register entry created: ${cashRegisterEntry.registrationNumber}`);
       }
       
       // Step 7: Create new credit if overpayment
       if (newCreditCreated > 0) {
+        console.log(`💳 Creating new credit balance of ₹${newCreditCreated}...`);
+        
         await this.handleOverpayment(
           request,
           invoices[0],
           newCreditCreated,
           transaction
         );
+        
+        console.log(`✅ New credit balance created: ₹${newCreditCreated}`);
       }
       
-      // Step 8: Return results
-      return await this.calculateFinalResults(
+      // Step 8: Return results with proper flags
+      const result = await this.calculateFinalResults(
         request.invoiceIds,
         creditUsed,
         recordInCashRegister ? cashPaymentNeeded : 0, // Show actual cash recorded
@@ -258,6 +271,22 @@ class CustomerCreditAwarePaymentService extends BaseService {
         cashRegisterEntry,
         transaction
       );
+      
+      // Add scenario-specific flags for frontend
+      result.paymentTypeRequired = paymentTypeRequired;
+      result.recordInCashRegister = recordInCashRegister;
+      result.availableCredit = availableCredit;
+      result.totalInvoiceBalance = totalInvoiceBalance;
+      
+      console.log(`🎉 Payment completed successfully:`, {
+        creditUsed,
+        cashRecorded: recordInCashRegister ? cashPaymentNeeded : 0,
+        newCreditCreated,
+        paymentTypeRequired,
+        recordInCashRegister
+      });
+      
+      return result;
     });
   }
   
@@ -351,14 +380,14 @@ class CustomerCreditAwarePaymentService extends BaseService {
           // Scenario 9️⃣ - Insufficient amount
           errorMessage = `Amount ₹${requestedAmount} < Invoice ₹${totalInvoiceBalance}. Please enter full invoice amount or more.`;
         } else {
-          // Payment type required - FULL AMOUNT RECORDED
+          // Payment type required - Record only cash needed
           creditWillBeUsed = availableCredit; // Used silently
-          cashPaymentNeeded = requestedAmount; // FULL AMOUNT recorded
+          const remainingInvoiceAfterCredit = totalInvoiceBalance - creditWillBeUsed;
+          cashPaymentNeeded = remainingInvoiceAfterCredit; // Only what's needed
           paymentTypeRequired = true;
           recordInCashRegister = true;
           
           // Calculate new credit from overpayment
-          const remainingInvoiceAfterCredit = totalInvoiceBalance - creditWillBeUsed;
           if (requestedAmount > remainingInvoiceAfterCredit) {
             willCreateNewCredit = true;
             newCreditAmount = requestedAmount - remainingInvoiceAfterCredit;
@@ -581,10 +610,10 @@ class CustomerCreditAwarePaymentService extends BaseService {
     }
 
     const cashPaymentData = {
-      registrationDate: request.registrationDate,
+      registrationDate: new Date(request.registrationDate), // Convert string to Date
       transactionType: 'INFLOW' as const,
       amount: amount, // FULL AMOUNT recorded as per business logic
-      paymentMethod: request.paymentMethod,
+      paymentMethod: request.paymentMethod!,  // Use non-null assertion since we validate it exists
       relatedDocumentType: 'AR_COLLECTION' as const,
       relatedDocumentNumber: request.invoiceIds.length === 1 ? 
         `INV-${request.invoiceIds[0]}` : 'MULTI',
@@ -593,11 +622,13 @@ class CustomerCreditAwarePaymentService extends BaseService {
       customerName: request.customerName,
       clientName: request.customerName, // Add clientName for cash register
       cashRegisterId: request.cashRegisterId,
-      invoiceIds: JSON.stringify(request.invoiceIds)
+      invoiceIds: JSON.stringify(request.invoiceIds),
+      // 🔥 CRITICAL: Flag to prevent duplicate credit balance creation
+      skipCreditBalanceCreation: true
     };
     
-    // This will update the Cash Register Master balance
-    return await cashRegisterService.createCashTransaction(cashPaymentData, transaction);
+    // Use the class method instead of legacy function to avoid duplicate credit balance creation
+    return await cashRegisterService.cashRegisterService.createCashTransaction(cashPaymentData, transaction);
   }
 
   /**

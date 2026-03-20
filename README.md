@@ -17,11 +17,42 @@ Enterprise Resource Planning (ERP) system backend built with Node.js, Express, T
   - Adjustments (ND####, NC####, AJ####)
   - Cash register (CJ####)
 
+- **Business Expense Management**
+  - Comprehensive expense tracking with dual recording
+  - Bank payment validation (balance checking)
+  - Credit payment integration with Accounts Payable
+  - Automatic AP entry creation for credit expenses
+  - Real-time payment synchronization across modules
+
+- **Accounts Payable System**
+  - Supplier invoice management
+  - Payment processing with multiple methods
+  - Bank register integration for payments
+  - Business expense synchronization
+  - Credit balance application
+
+- **Bank Register Management**
+  - Multi-bank account support
+  - Opening balance configuration
+  - Payment processing for AP invoices
+  - Balance validation and tracking
+  - Transaction history with detailed logging
+
+- **Customer Credit Management**
+  - Credit balance tracking and application
+  - Overpayment handling with automatic credit creation
+  - Credit-aware payment processing
+  - Intelligent payment method selection
+  - Credit balance reduction and usage tracking
+
 - **Advanced Features**
   - Credit card payment flow with accounts receivable
   - Associated invoices for freight cost allocation
   - Automatic inventory updates
   - Sequential registration numbers
+  - Dual recording system (Bank + Expense, Credit + AP)
+  - Real-time balance validation
+  - Cross-module payment synchronization
 
 - **Comprehensive Reports**
   - PPE tracking with depreciation schedules
@@ -29,6 +60,8 @@ Enterprise Resource Planning (ERP) system backend built with Node.js, Express, T
   - Inventory movement reports
   - Accounts payable/receivable tracking
   - Cash flow reports
+  - Business expense analytics
+  - Credit balance utilization reports
 
 ## 📋 Prerequisites
 
@@ -117,21 +150,39 @@ backend/
 │   │   ├── Sale.ts
 │   │   ├── FixedAsset.ts
 │   │   ├── Investment.ts
+│   │   ├── BusinessExpense.ts   # Business expense tracking
+│   │   ├── AccountsPayable.ts   # AP management
+│   │   ├── BankRegister.ts      # Bank transactions
+│   │   ├── CreditBalance.ts     # Customer credit tracking
 │   │   └── ...
 │   ├── controllers/             # Request handlers
 │   │   ├── productController.ts
 │   │   ├── purchaseController.ts
 │   │   ├── reportController.ts
+│   │   ├── businessExpenseController.ts
+│   │   ├── accountsPayableController.ts
+│   │   ├── bankRegisterController.ts
+│   │   ├── creditBalanceController.ts
 │   │   └── ...
 │   ├── services/                # Business logic
 │   │   ├── productService.ts
 │   │   ├── purchaseService.ts
 │   │   ├── reportService.ts
+│   │   ├── businessExpenseService.ts
+│   │   ├── accountsPayableService.ts
+│   │   ├── bankRegisterService.ts
+│   │   ├── creditBalanceService.ts
+│   │   ├── customerCreditAwarePaymentService.ts
+│   │   ├── cashRegisterService.ts
 │   │   └── ...
 │   ├── routes/                  # API routes
 │   │   ├── productRoutes.ts
 │   │   ├── purchaseRoutes.ts
 │   │   ├── reportRoutes.ts
+│   │   ├── businessExpenseRoutes.ts
+│   │   ├── accountsPayableRoutes.ts
+│   │   ├── bankRegisterRoutes.ts
+│   │   ├── creditBalanceRoutes.ts
 │   │   └── ...
 │   └── index.ts                 # Application entry point
 ├── dist/                        # Compiled JavaScript (gitignored)
@@ -184,6 +235,41 @@ backend/
 - `POST /api/prepaid-expenses` - Create prepaid expense
 - `PUT /api/prepaid-expenses/:id` - Update prepaid expense
 - `DELETE /api/prepaid-expenses/:id` - Delete prepaid expense
+- `GET /api/business-expenses` - Get all business expenses
+- `GET /api/business-expenses/:id` - Get expense by ID
+- `POST /api/business-expenses` - Create business expense
+- `PUT /api/business-expenses/:id` - Update business expense
+- `DELETE /api/business-expenses/:id` - Delete business expense
+- `GET /api/business-expenses/dashboard` - Get expense dashboard data
+
+### Accounts Payable
+- `GET /api/accounts-payable` - Get all AP entries
+- `GET /api/accounts-payable/:id` - Get AP entry by ID
+- `POST /api/accounts-payable` - Create AP entry
+- `PUT /api/accounts-payable/:id` - Update AP entry
+- `DELETE /api/accounts-payable/:id` - Delete AP entry
+- `POST /api/accounts-payable/:id/pay` - Process AP payment
+
+### Bank Register
+- `GET /api/bank-register` - Get all bank transactions
+- `GET /api/bank-register/accounts` - Get all bank accounts
+- `POST /api/bank-register/accounts` - Create bank account
+- `GET /api/bank-register/pending-invoices` - Get pending AP invoices
+- `POST /api/bank-register/pay-invoices` - Pay multiple invoices
+- `GET /api/bank-register/balance/:accountId` - Get account balance
+
+### Credit Balance Management
+- `GET /api/credit-balance` - Get all credit balances
+- `GET /api/credit-balance/:id` - Get credit balance by ID
+- `POST /api/credit-balance` - Create credit balance
+- `PUT /api/credit-balance/:id` - Update credit balance
+- `DELETE /api/credit-balance/:id` - Delete credit balance
+- `GET /api/credit-balance/entity/:type/:id` - Get credit balances by entity
+- `POST /api/credit-balance/apply` - Apply credit to invoices
+
+### Customer Credit Aware Payments
+- `POST /api/customer-credit-aware-payment/process` - Process credit-aware payment
+- `POST /api/customer-credit-aware-payment/preview` - Get payment preview
 
 ### Transactions
 
@@ -336,6 +422,10 @@ docker run -p 5000:5000 --env-file .env erp-backend
 - **CashRegister** - Cash movements (CJ####)
 - **FixedAsset** - Property, plant & equipment
 - **Investment** - Investment portfolio
+- **BusinessExpense** - Business expense tracking
+- **AccountsPayable** - Accounts payable management
+- **BankRegister** - Bank transaction records
+- **CreditBalance** - Customer credit balance tracking
 - **PrepaidExpense** - Prepaid expenses tracking
 
 ## 🤝 Contributing
@@ -367,6 +457,33 @@ For support, email support@yourcompany.com or open an issue in the repository.
 
 ## 🔄 Version History
 
+- **2.0.0** (2026-03-21)
+  - **Major Business Expense Management System**
+    - Comprehensive payment validation and dual recording
+    - Bank payment validation with balance checking
+    - Credit payment integration with Accounts Payable
+    - Automatic AP entry creation for credit expenses
+  - **Enhanced Accounts Payable System**
+    - Multi-payment method support
+    - Bank register integration
+    - Business expense synchronization
+    - Real-time payment status updates
+  - **Advanced Bank Register Management**
+    - Multi-bank account support with opening balances
+    - Payment processing for AP invoices
+    - Balance validation and transaction tracking
+    - Cross-module payment synchronization
+  - **Customer Credit Management System**
+    - Credit balance tracking and application
+    - Overpayment handling with automatic credit creation
+    - Credit-aware payment processing
+    - Intelligent payment method selection
+  - **Cash Register Enhancements**
+    - Credit balance integration
+    - Duplicate credit balance prevention
+    - Enhanced transaction recording
+    - Improved error handling
+
 - **1.0.0** (2024-01-18)
   - Initial release
   - Master data management
@@ -386,3 +503,9 @@ For support, email support@yourcompany.com or open an issue in the repository.
 - [ ] Audit logging
 - [ ] Multi-currency support
 - [ ] Multi-language support
+- [ ] Advanced credit balance analytics
+- [ ] Automated payment reminders
+- [ ] Bank reconciliation module
+- [ ] Advanced reporting dashboard
+- [ ] Mobile API endpoints
+- [ ] Webhook integrations

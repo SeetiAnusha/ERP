@@ -40,6 +40,8 @@ interface CashTransactionRequest {
   invoiceIds?: string;
   bankAccountId?: number;
   investmentAgreementId?: number;
+  // Flag to prevent duplicate credit balance creation when called from Customer Credit Aware Payment Service
+  skipCreditBalanceCreation?: boolean;
 }
 
 /**
@@ -520,6 +522,12 @@ class CashRegisterService extends BaseService {
     );
     
     if (validation.isOverpayment) {
+      // 🔥 CRITICAL: Skip credit balance creation if called from Customer Credit Aware Payment Service
+      if (data.skipCreditBalanceCreation) {
+        console.log('⚠️ Skipping credit balance creation - handled by Customer Credit Aware Payment Service');
+        return;
+      }
+      
       const overpaymentAmount = validation.overpaymentAmount;
       
       await creditBalanceService.createCreditBalance({
@@ -870,21 +878,26 @@ export const createCashTransaction = async (data: any, externalTransaction?: any
           );
           
           if (validation.isOverpayment) {
-            // Create credit balance for overpayment
-            const overpaymentAmount = validation.overpaymentAmount;
-            const firstInvoice = invoicesToUpdate[0];
-            
-            await creditBalanceService.createCreditBalance({
-              type: 'CUSTOMER_CREDIT',
-              relatedEntityType: 'CLIENT',
-              relatedEntityId: data.customerId,
-              relatedEntityName: customerName || 'Customer',
-              originalTransactionType: 'AR',
-              originalTransactionId: firstInvoice.id,
-              originalTransactionNumber: firstInvoice.registrationNumber,
-              creditAmount: overpaymentAmount,
-              notes: `Credit created from overpayment in Cash Register transaction ${registrationNumber}`
-            });
+            // 🔥 CRITICAL: Skip credit balance creation if called from Customer Credit Aware Payment Service
+            if (data.skipCreditBalanceCreation) {
+              console.log('⚠️ Skipping credit balance creation - handled by Customer Credit Aware Payment Service');
+            } else {
+              // Create credit balance for overpayment
+              const overpaymentAmount = validation.overpaymentAmount;
+              const firstInvoice = invoicesToUpdate[0];
+              
+              await creditBalanceService.createCreditBalance({
+                type: 'CUSTOMER_CREDIT',
+                relatedEntityType: 'CLIENT',
+                relatedEntityId: data.customerId,
+                relatedEntityName: customerName || 'Customer',
+                originalTransactionType: 'AR',
+                originalTransactionId: firstInvoice.id,
+                originalTransactionNumber: firstInvoice.registrationNumber,
+                creditAmount: overpaymentAmount,
+                notes: `Credit created from overpayment in Cash Register transaction ${registrationNumber}`
+              });
+            }
           }
         }
         
