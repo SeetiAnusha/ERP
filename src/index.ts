@@ -37,7 +37,7 @@ import businessExpenseRoutes from './routes/businessExpenseRoutes';
 import creditBalanceRoutes from './routes/creditBalanceRoutes';
 import customerCreditAwarePaymentRoutes from './routes/customerCreditAwarePaymentRoutes';
 import authRoutes from './routes/authRoutes';
-import dataClassificationRoutes from './routes/dataClassificationRoutes';
+import dataClassificationRoutes from './routes/dataClassificationRoutes.minimal';
 import transactionDeletionRoutes from './routes/transactionDeletionRoutes';
 import creditCardRegisterRoutes from './routes/creditCardRegisterRoutes';
 import * as productPriceService from './services/productPriceService';
