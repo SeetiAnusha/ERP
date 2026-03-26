@@ -9,9 +9,11 @@
     "dev:ts": "ts-node src/index.ts",
     "build": "./node_modules/.bin/tsc",
     "build:clean": "rm -rf dist && ./node_modules/.bin/tsc",
-    "build:prod": "NODE_ENV=production npm install && NODE_ENV=production ./node_modules/.bin/tsc",
+    "build:prod": "NODE_ENV=production npm install && NODE_ENV=production ./node_modules/.bin/tsc && npm run db:init",
     "start": "node dist/index.js",
     "start:prod": "NODE_ENV=production node dist/index.js",
+    "db:init": "node scripts/init-database.js",
+    "db:reset": "NODE_ENV=production node scripts/init-database.js",
     "test": "jest",
     "test:watch": "jest --watch"
   },
