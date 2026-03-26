@@ -205,7 +205,7 @@ export const classifyEntity = async (req: Request, res: Response) => {
 
     await dataClassificationService.safeClassifyData(entityType, entityId, {
       manual: true,
-      triggeredBy: req.user?.userId || 'system',
+      triggeredBy: (req as any).user?.userId || 'system',
       timestamp: new Date()
     });
 
