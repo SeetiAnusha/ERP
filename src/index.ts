@@ -125,17 +125,10 @@ const startServer = async () => {
     // Sync database to create tables
     console.log('Synchronizing database...');
     
-    try {
-      // Check if tables exist first
-      await sequelize.query("SELECT 1 FROM bank_registers LIMIT 1");
-      console.log('✓ Tables exist - skipping sync');
-    } catch (tableError) {
-      console.log('📋 Tables missing - creating all tables...');
-      
-      // Force create all tables since they don't exist
-      await sequelize.sync({ force: true });
-      console.log('✅ All database tables created successfully');
-    }
+    // Use basic sync to avoid ALTER TABLE issues with ENUM columns
+    // This will create missing tables but won't alter existing ones
+    await sequelize.sync({ force: false });
+    console.log('✓ Database synchronized - all tables created');
     
     // Update price active status based on current date
     console.log('Updating product price active status...');

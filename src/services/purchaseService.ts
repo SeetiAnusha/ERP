@@ -353,6 +353,8 @@ class PurchaseService extends BaseService {
   }
   
   private validatePurchaseData(data: any): void {
+    console.log('🔍 VALIDATION - Purchase data received:', JSON.stringify(data, null, 2));
+    
     // Required field validation
     if (!data.supplierId) {
       throw new ValidationError('Supplier is required');
@@ -366,40 +368,72 @@ class PurchaseService extends BaseService {
       throw new ValidationError('Payment type is required');
     }
     
+    console.log('✅ Basic validation passed');
+    
     // Validate payment type specific requirements
     this.validatePaymentTypeRequirements(data.paymentType, data);
+    
+    console.log('✅ Payment type validation passed');
     
     // Validate associated invoices if present
     if (data.associatedInvoices?.length > 0) {
       this.validateAssociatedInvoices(data.associatedInvoices);
+      console.log('✅ Associated invoices validation passed');
     }
     
     // Validate items if present
     if (data.items?.length > 0) {
       this.validatePurchaseItems(data.items);
+      console.log('✅ Purchase items validation passed');
     }
+    
+    console.log('✅ ALL VALIDATION PASSED');
   }
   
   private validatePaymentTypeRequirements(paymentType: string, data: any): void {
     const type = paymentType.toUpperCase();
     
+    console.log('🔍 Validating payment type:', type);
+    console.log('🔍 Payment data:', JSON.stringify({
+      bankAccountId: data.bankAccountId,
+      cardId: data.cardId,
+      chequeNumber: data.chequeNumber,
+      chequeDate: data.chequeDate,
+      transferNumber: data.transferNumber,
+      transferDate: data.transferDate,
+      paymentReference: data.paymentReference,
+      voucherDate: data.voucherDate
+    }, null, 2));
+    
     switch (type) {
       case 'CHEQUE':
         if (!data.bankAccountId || !data.chequeNumber || !data.chequeDate) {
-          throw new ValidationError('Bank account, cheque number, and cheque date are required for cheque payments');
+          const missing = [];
+          if (!data.bankAccountId) missing.push('bankAccountId');
+          if (!data.chequeNumber) missing.push('chequeNumber');
+          if (!data.chequeDate) missing.push('chequeDate');
+          throw new ValidationError(`Missing required fields for cheque payment: ${missing.join(', ')}`);
         }
         break;
         
       case 'BANK_TRANSFER':
         if (!data.bankAccountId || !data.transferNumber || !data.transferDate) {
-          throw new ValidationError('Bank account, transfer number, and transfer date are required for bank transfer payments');
+          const missing = [];
+          if (!data.bankAccountId) missing.push('bankAccountId');
+          if (!data.transferNumber) missing.push('transferNumber');
+          if (!data.transferDate) missing.push('transferDate');
+          throw new ValidationError(`Missing required fields for bank transfer: ${missing.join(', ')}`);
         }
         break;
         
       case 'DEBIT_CARD':
       case 'CREDIT_CARD':
         if (!data.cardId || !data.paymentReference || !data.voucherDate) {
-          throw new ValidationError('Card, payment reference, and voucher date are required for card payments');
+          const missing = [];
+          if (!data.cardId) missing.push('cardId');
+          if (!data.paymentReference) missing.push('paymentReference');
+          if (!data.voucherDate) missing.push('voucherDate');
+          throw new ValidationError(`Missing required fields for card payment: ${missing.join(', ')}`);
         }
         break;
     }
@@ -597,20 +631,41 @@ class PurchaseService extends BaseService {
   private async processBankPayment(data: any, purchase: any, amount: number, transaction: any): Promise<void> {
     const BankAccount = (await import('../models/BankAccount')).default;
     
+    console.log('🏦 Processing bank payment:', {
+      bankAccountId: data.bankAccountId,
+      amount: amount,
+      paymentType: data.paymentType
+    });
+    
     // Get and validate bank account
     const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
     if (!bankAccount) {
-      throw new ValidationError('Bank account not found');
+      throw new ValidationError(`Bank account with ID ${data.bankAccountId} not found`);
     }
+    
+    console.log('🏦 Bank account found:', {
+      id: bankAccount.id,
+      bankName: bankAccount.bankName,
+      accountNumber: bankAccount.accountNumber,
+      currentBalance: bankAccount.balance
+    });
     
     // Validate sufficient balance
     const currentBalance = Number(bankAccount.balance);
-    this.validateSufficientBalance(
-      currentBalance,
-      amount,
-      `purchase ${purchase.registrationNumber}`,
-      `${bankAccount.bankName} (${bankAccount.accountNumber})`
-    );
+    console.log('💰 Balance check:', {
+      available: currentBalance,
+      required: amount,
+      sufficient: currentBalance >= amount
+    });
+    
+    if (currentBalance < amount) {
+      const shortfall = amount - currentBalance;
+      throw new ValidationError(
+        `Insufficient balance in ${bankAccount.bankName} (${bankAccount.accountNumber}). ` +
+        `Available: $${currentBalance.toFixed(2)}, Required: $${amount.toFixed(2)}. ` +
+        `You need $${shortfall.toFixed(2)} more.`
+      );
+    }
     
     // Update bank account balance
     await this.updateBankAccountBalance(data.bankAccountId, amount, true, transaction);
