@@ -24,6 +24,13 @@ import ClientPaymentMethod from './ClientPaymentMethod';
 import CreditBalance from './CreditBalance';
 import ExpenseCategory from './ExpenseCategory';
 import ExpenseType from './ExpenseType';
+import User from './User';
+// Transaction Deletion System Models
+import TransactionDeletionReason from './TransactionDeletionReason';
+import UserRole from './UserRole';
+import ApprovalRequest from './ApprovalRequest';
+import ApprovalStep from './ApprovalStep';
+import TransactionAuditTrail from './TransactionAuditTrail';
 
 // Investment Summary associations
 CashRegister.belongsTo(CashRegisterMaster, { foreignKey: 'cashRegisterId', as: 'cashRegisterMaster' });
@@ -110,6 +117,20 @@ ExpenseCategory.hasMany(Purchase, { foreignKey: 'expenseCategoryId', as: 'purcha
 ExpenseType.belongsTo(ExpenseCategory, { foreignKey: 'categoryId', as: 'category' });
 ExpenseType.hasMany(Purchase, { foreignKey: 'expenseTypeId', as: 'purchases' });
 
+// Transaction Deletion System Associations
+UserRole.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+User.hasMany(UserRole, { foreignKey: 'user_id', as: 'roles' });
+
+ApprovalRequest.belongsTo(User, { foreignKey: 'requested_by', as: 'requester' });
+ApprovalRequest.belongsTo(TransactionDeletionReason, { foreignKey: 'deletion_reason_code', targetKey: 'reason_code', as: 'deletionReason' });
+ApprovalRequest.hasMany(ApprovalStep, { foreignKey: 'request_id', as: 'steps' });
+
+ApprovalStep.belongsTo(ApprovalRequest, { foreignKey: 'request_id', as: 'request' });
+ApprovalStep.belongsTo(User, { foreignKey: 'approved_by', as: 'approvedByUser' });
+
+TransactionAuditTrail.belongsTo(User, { foreignKey: 'user_id', as: 'auditUser' });
+TransactionAuditTrail.belongsTo(ApprovalRequest, { foreignKey: 'approval_id', as: 'approvalRequest' });
+
 export default {
   Purchase,
   PurchaseItem,
@@ -131,4 +152,10 @@ export default {
   CreditBalance,
   ExpenseCategory,
   ExpenseType,
+  User,
+  TransactionDeletionReason,
+  UserRole,
+  ApprovalRequest,
+  ApprovalStep,
+  TransactionAuditTrail,
 };

@@ -165,23 +165,23 @@ class CustomerCreditAwarePaymentService extends BaseService {
       let paymentTypeRequired = false;
       
       if (availableCredit >= totalInvoiceBalance) {
-        // 🎯 Scenarios 2️⃣, 4️⃣, 6️⃣ - Credit covers invoice fully
+        // 🎯 Credit covers invoice fully - but still show payment type dropdown
         console.log(`✅ Scenario: Credit covers invoice (Credit ≥ Invoice)`);
         
         if (request.requestedPaymentAmount > totalInvoiceBalance) {
-          // 🚫 Scenario 5️⃣ - Block unnecessary overpayment
+          // 🚫 Block unnecessary overpayment
           throw new BusinessLogicError(
             `🚫 OVERPAYMENT BLOCKED: You have sufficient credit (₹${availableCredit.toFixed(2)}) to pay invoice (₹${totalInvoiceBalance.toFixed(2)}). No need to pay extra.`
           );
         }
         
-        // Process credit-only payment - NO RECORDING, NO PAYMENT TYPE
+        // NEW PLAN: Always require payment type, record full invoice amount
         creditUsed = totalInvoiceBalance;
-        cashPaymentNeeded = 0;
-        recordInCashRegister = false;
-        paymentTypeRequired = false;
+        cashPaymentNeeded = totalInvoiceBalance; // Record FULL invoice amount
+        recordInCashRegister = true;
+        paymentTypeRequired = true;
         
-        console.log(`💳 Credit-only payment: Using ₹${creditUsed} from credit, no cash recording needed`);
+        console.log(`💳 Credit-only payment: Using ₹${creditUsed} from credit, recording ₹${cashPaymentNeeded} in selected register`);
         
       } else {
         // 🎯 Scenarios 1️⃣, 3️⃣, 7️⃣, 8️⃣, 🔟 - Credit < Invoice, payment type needed
@@ -197,15 +197,20 @@ class CustomerCreditAwarePaymentService extends BaseService {
         // Use available credit silently
         creditUsed = availableCredit;
         
-        // 🔥 CORRECTED: Record only the cash amount actually needed
-        const remainingInvoiceAfterCredit = totalInvoiceBalance - creditUsed;
-        cashPaymentNeeded = remainingInvoiceAfterCredit; // Only what's needed, not full amount
+        // 🔥 CORRECTED: Record FULL invoice amount in selected payment method
+        // This represents the complete settlement regardless of credit/cash mix
+        const totalInvoiceAmount = totalInvoiceBalance; // Full invoice amount
+        cashPaymentNeeded = totalInvoiceAmount; // Record full amount in register
         recordInCashRegister = true;
         paymentTypeRequired = true;
         
-        // Calculate new credit from overpayment
-        if (request.requestedPaymentAmount > remainingInvoiceAfterCredit) {
-          newCreditCreated = request.requestedPaymentAmount - remainingInvoiceAfterCredit;
+        // 🔥 FIX: Calculate new credit correctly - only if user pays MORE than invoice amount
+        if (request.requestedPaymentAmount > totalInvoiceBalance) {
+          // True overpayment: user pays more than invoice amount
+          newCreditCreated = request.requestedPaymentAmount - totalInvoiceBalance;
+        } else {
+          // No overpayment: user pays exactly invoice amount or less
+          newCreditCreated = 0;
         }
         
         console.log(`💰 Mixed payment: Credit=₹${creditUsed}, Cash=₹${cashPaymentNeeded}, NewCredit=₹${newCreditCreated}`);
@@ -225,27 +230,48 @@ class CustomerCreditAwarePaymentService extends BaseService {
         console.log(`✅ Applied ₹${creditUsed} from credit balances to invoices`);
       }
       
-      // Step 6: Process cash payment if needed
-      let cashRegisterEntry = null;
+      // Step 6: Process payment if needed
+      let paymentEntry = null;
       if (recordInCashRegister && cashPaymentNeeded > 0) {
-        console.log(`💸 Processing cash register payment of ₹${cashPaymentNeeded}...`);
+        console.log(`💸 Processing payment of ₹${cashPaymentNeeded}...`);
         
-        // Validate payment method for cash register recording
+        // Validate payment method
         if (!request.paymentMethod) {
-          throw new ValidationError('Payment method is required for cash payments');
+          throw new ValidationError('Payment method is required for payments');
         }
         
-        if (!request.cashRegisterId) {
-          throw new ValidationError('Cash register selection is required for cash payments');
+        // Route to appropriate payment processor based on payment method
+        if (this.paymentMethodRequiresCashRegister(request.paymentMethod)) {
+          // Cash register methods (CASH, UPI, CHEQUE, CARD, etc.)
+          if (!request.cashRegisterId) {
+            throw new ValidationError('Cash register selection is required for cash payments');
+          }
+          
+          paymentEntry = await this.processCashPayment(
+            request,
+            cashPaymentNeeded,
+            transaction
+          );
+          
+          console.log(`✅ Cash register entry created: ${paymentEntry.registrationNumber}`);
+          
+        } else if (['BANK_TRANSFER', 'DEPOSIT', 'WIRE_TRANSFER'].includes(request.paymentMethod)) {
+          // Bank register methods
+          if (!request.bankAccountId) {
+            throw new ValidationError('Bank account selection is required for bank transfer payments');
+          }
+          
+          paymentEntry = await this.processBankRegisterPayment(
+            request,
+            cashPaymentNeeded,
+            transaction
+          );
+          
+          console.log(`✅ Bank register entry created: ${paymentEntry.registrationNumber}`);
+          
+        } else {
+          throw new ValidationError(`Unsupported payment method: ${request.paymentMethod}`);
         }
-        
-        cashRegisterEntry = await this.processCashPayment(
-          request,
-          cashPaymentNeeded, // FULL AMOUNT as per scenario table
-          transaction
-        );
-        
-        console.log(`✅ Cash register entry created: ${cashRegisterEntry.registrationNumber}`);
       }
       
       // Step 7: Create new credit if overpayment
@@ -266,9 +292,9 @@ class CustomerCreditAwarePaymentService extends BaseService {
       const result = await this.calculateFinalResults(
         request.invoiceIds,
         creditUsed,
-        recordInCashRegister ? cashPaymentNeeded : 0, // Show actual cash recorded
+        recordInCashRegister ? cashPaymentNeeded : 0, // Show full amount recorded in register
         newCreditCreated,
-        cashRegisterEntry,
+        paymentEntry, // Use generic paymentEntry instead of cashRegisterEntry
         transaction
       );
       
@@ -280,7 +306,7 @@ class CustomerCreditAwarePaymentService extends BaseService {
       
       console.log(`🎉 Payment completed successfully:`, {
         creditUsed,
-        cashRecorded: recordInCashRegister ? cashPaymentNeeded : 0,
+        cashFromCustomer: recordInCashRegister ? cashPaymentNeeded : 0,
         newCreditCreated,
         paymentTypeRequired,
         recordInCashRegister
@@ -366,11 +392,11 @@ class CustomerCreditAwarePaymentService extends BaseService {
           // Scenario 5️⃣ - Block unnecessary overpayment
           errorMessage = `You have sufficient credit (₹${availableCredit}) to pay invoice (₹${totalInvoiceBalance}). No need to pay extra.`;
         } else {
-          // Credit-only payment - NO RECORDING
+          // Credit-only payment - Record FULL invoice amount in selected register
           creditWillBeUsed = totalInvoiceBalance;
-          cashPaymentNeeded = 0;
-          paymentTypeRequired = false;
-          recordInCashRegister = false;
+          cashPaymentNeeded = totalInvoiceBalance; // FULL invoice amount
+          paymentTypeRequired = true;
+          recordInCashRegister = true;
         }
         
       } else {
@@ -380,17 +406,21 @@ class CustomerCreditAwarePaymentService extends BaseService {
           // Scenario 9️⃣ - Insufficient amount
           errorMessage = `Amount ₹${requestedAmount} < Invoice ₹${totalInvoiceBalance}. Please enter full invoice amount or more.`;
         } else {
-          // Payment type required - Record only cash needed
+          // Payment type required - Record FULL invoice amount in selected method
           creditWillBeUsed = availableCredit; // Used silently
-          const remainingInvoiceAfterCredit = totalInvoiceBalance - creditWillBeUsed;
-          cashPaymentNeeded = remainingInvoiceAfterCredit; // Only what's needed
+          cashPaymentNeeded = totalInvoiceBalance; // FULL invoice amount recorded
           paymentTypeRequired = true;
           recordInCashRegister = true;
           
-          // Calculate new credit from overpayment
-          if (requestedAmount > remainingInvoiceAfterCredit) {
+          // 🔥 FIX: Calculate new credit correctly - only if user pays MORE than invoice amount
+          if (requestedAmount > totalInvoiceBalance) {
+            // True overpayment: user pays more than invoice amount
             willCreateNewCredit = true;
-            newCreditAmount = requestedAmount - remainingInvoiceAfterCredit;
+            newCreditAmount = requestedAmount - totalInvoiceBalance;
+          } else {
+            // No overpayment: user pays exactly invoice amount or less
+            willCreateNewCredit = false;
+            newCreditAmount = 0;
           }
         }
       }
@@ -612,12 +642,12 @@ class CustomerCreditAwarePaymentService extends BaseService {
     const cashPaymentData = {
       registrationDate: new Date(request.registrationDate), // Convert string to Date
       transactionType: 'INFLOW' as const,
-      amount: amount, // FULL AMOUNT recorded as per business logic
+      amount: amount, // FULL INVOICE AMOUNT (includes credit usage)
       paymentMethod: request.paymentMethod!,  // Use non-null assertion since we validate it exists
       relatedDocumentType: 'AR_COLLECTION' as const,
       relatedDocumentNumber: request.invoiceIds.length === 1 ? 
         `INV-${request.invoiceIds[0]}` : 'MULTI',
-      description: `${request.description} - Customer Credit Aware Payment: ₹${amount}`,
+      description: `${request.description} - Total Settlement: ₹${amount} (includes credit usage)`,
       customerId: request.customerId,
       customerName: request.customerName,
       clientName: request.customerName, // Add clientName for cash register
@@ -640,25 +670,27 @@ class CustomerCreditAwarePaymentService extends BaseService {
     transaction: any
   ): Promise<any> {
     // Import bank register service
-    const bankRegisterService = require('./bankRegisterService');
+    const bankRegisterService = require('./bankRegisterService').default;
     
     const bankPaymentData = {
       registrationDate: request.registrationDate,
       transactionType: 'INFLOW' as const,
-      amount: amount, // FULL AMOUNT recorded as per business logic
+      sourceTransactionType: 'AR_COLLECTION' as const,
+      amount: amount, // FULL INVOICE AMOUNT (includes credit usage)
       paymentMethod: request.paymentMethod,
       relatedDocumentType: 'AR_COLLECTION' as const,
       relatedDocumentNumber: request.invoiceIds.length === 1 ? 
         `INV-${request.invoiceIds[0]}` : 'MULTI',
-      description: `${request.description} - Customer Credit Aware Payment: ₹${amount}`,
-      customerId: request.customerId,
-      customerName: request.customerName,
-      bankAccountId: request.bankAccountId || 1, // Use provided bank account
-      invoiceIds: JSON.stringify(request.invoiceIds)
+      description: `${request.description} - Total Settlement: ₹${amount} (includes credit usage)`,
+      clientName: request.customerName || 'Unknown Customer',
+      clientRnc: '', // Add if available in request
+      bankAccountId: request.bankAccountId,
+      invoiceIds: JSON.stringify(request.invoiceIds),
+      originalPaymentType: request.paymentMethod
     };
     
-    // Create bank register entry
-    return await bankRegisterService.createBankTransaction(bankPaymentData, transaction);
+    // Create bank register entry using the correct method
+    return await bankRegisterService.createBankRegister(bankPaymentData, transaction);
   }
 
   /**
@@ -668,11 +700,16 @@ class CustomerCreditAwarePaymentService extends BaseService {
     const cashRegisterMethods = [
       'CASH',
       'UPI', 
-      'BANK_TRANSFER',
       'CHEQUE',
       'CARD',
       'DEBIT_CARD',
       'CREDIT_CARD'
+    ];
+    
+    const bankRegisterMethods = [
+      'BANK_TRANSFER',
+      'DEPOSIT',
+      'WIRE_TRANSFER'
     ];
     
     const creditOnlyMethods = [
@@ -685,8 +722,13 @@ class CustomerCreditAwarePaymentService extends BaseService {
       return false;
     }
     
-    // All other methods require cash register
-    return cashRegisterMethods.includes(paymentMethod) || true;
+    // Bank register methods don't require cash register
+    if (bankRegisterMethods.includes(paymentMethod)) {
+      return false;
+    }
+    
+    // Only cash register methods require cash register
+    return cashRegisterMethods.includes(paymentMethod);
   }
   
   /**

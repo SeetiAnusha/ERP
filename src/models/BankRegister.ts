@@ -27,6 +27,7 @@ class BankRegister extends Model {
   public transferNumber?: string;    // Auto-generated: TF0001, TF0002...
   public supplierId?: number;        // For supplier payments
   public invoiceIds?: string;        // JSON array of AP invoice IDs
+  public originalPaymentType?: string; // Original payment type from AP/AR (CREDIT, CASH, etc.)
 }
 
 BankRegister.init(
@@ -52,7 +53,7 @@ BankRegister.init(
     },
     sourceTransactionType: {
       type: DataTypes.ENUM('PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER', 'AR_COLLECTION'),
-      allowNull: false,
+      allowNull: true, // Changed to allow null for backward compatibility
       validate: {
         isIn: {
           args: [['PURCHASE', 'BUSINESS_EXPENSE', 'SALE', 'PAYMENT', 'ADJUSTMENT', 'TRANSFER', 'AR_COLLECTION']],
@@ -139,7 +140,48 @@ BankRegister.init(
       type: DataTypes.TEXT,
       allowNull: true,
     },
-  },
+    originalPaymentType: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+  
+    // Soft delete attributes
+    deletion_status: {
+      type: DataTypes.ENUM('NONE', 'REQUESTED', 'APPROVED', 'EXECUTED'),
+      defaultValue: 'NONE',
+    },
+    deleted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    deleted_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    deletion_reason_code: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    deletion_memo: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    deletion_approval_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    reversal_transaction_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    is_reversal: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    original_transaction_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },},
   {
     sequelize,
     tableName: 'bank_registers',

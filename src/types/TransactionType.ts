@@ -1,11 +1,17 @@
 /**
- * TransactionType Enum
+ * SourceSystemType Enum (formerly TransactionType)
  * 
- * Defines the source system types for transactions that flow into
- * Bank Register and Accounts Payable tables.
+ * Defines which system/module created the transaction.
+ * Used to track the origin of transactions in Bank Register and AP tables.
  * 
- * This enables tracking which system originated each transaction
- * for analytics and audit purposes.
+ * CLEAR NAMING:
+ * - This is NOT about money flow direction (INFLOW/OUTFLOW)
+ * - This is about SOURCE SYSTEM that created the transaction
+ * 
+ * Examples:
+ * - PURCHASE = Created by Purchase module
+ * - PAYMENT = Created by Payment module
+ * - SALE = Created by Sales module
  */
 
 export enum TransactionType {
@@ -15,7 +21,8 @@ export enum TransactionType {
   PAYMENT = 'PAYMENT',
   ADJUSTMENT = 'ADJUSTMENT',
   TRANSFER = 'TRANSFER',
-  AR_COLLECTION = 'AR_COLLECTION'
+  AR_COLLECTION = 'AR_COLLECTION',
+  CREDIT_USAGE = 'CREDIT_USAGE'
 }
 
 /**
@@ -33,7 +40,8 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   [TransactionType.PAYMENT]: 'Payment',
   [TransactionType.ADJUSTMENT]: 'Adjustment',
   [TransactionType.TRANSFER]: 'Transfer',
-  [TransactionType.AR_COLLECTION]: 'AR Collection'
+  [TransactionType.AR_COLLECTION]: 'AR Collection',
+  [TransactionType.CREDIT_USAGE]: 'Credit Usage'
 };
 
 /**

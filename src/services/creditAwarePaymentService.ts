@@ -181,8 +181,13 @@ export class CreditAwarePaymentService extends BaseService {
           relatedDocumentType: 'AP',
           relatedDocumentNumber: invoices[0]?.registrationNumber || 'MULTI',
           description: `${request.description} (Smart Payment: ₹${creditUsed} credit + ₹${bankPaymentNeeded} bank)`,
+          
+          // 🚨 CORRECT FIX: Map supplier info to client fields (for AP context)
           supplierId: request.supplierId,
-          supplierName: request.supplierName,
+          clientName: request.supplierName,  // Supplier name → clientName (for AP transactions)
+          clientRnc: invoices[0]?.supplierRnc || '',  // Supplier RNC → clientRnc
+          ncf: invoices[0]?.ncf || '',  // Add NCF if available
+          
           bankAccountId: request.bankAccountId,
           invoiceIds: JSON.stringify(request.invoiceIds),
           allowOverpayment: true
@@ -193,7 +198,75 @@ export class CreditAwarePaymentService extends BaseService {
         console.log(`✅ Bank payment processed: ${bankRegisterEntry.registrationNumber}`);
       }
 
-      // Step 9: Calculate final results
+      // Step 9: 🚨 CRITICAL FIX - Ensure final AP status reflects total payment
+      // After both credit and bank payments, manually verify and update AP status
+      if (creditUsed > 0 || bankPaymentNeeded > 0) {
+        console.log('🔄 Verifying final AP status after combined payments...');
+        
+        const AccountsPayable = (await import('../models/AccountsPayable')).default;
+        
+        for (const invoiceId of request.invoiceIds) {
+          const apInvoice = await AccountsPayable.findByPk(invoiceId);
+          if (apInvoice) {
+            const totalInvoiceAmount = parseFloat(apInvoice.amount.toString());
+            const totalPaymentMade = creditUsed + bankPaymentNeeded;
+            
+            // 🚨 CORRECT CALCULATION: Final paid amount should reflect TOTAL payment made
+            const finalPaidAmount = Math.min(totalPaymentMade, totalInvoiceAmount);
+            const finalBalanceAmount = Math.max(0, totalInvoiceAmount - finalPaidAmount);
+            const finalStatus = finalBalanceAmount <= 0.01 ? 'Paid' : 'Partial';
+            
+            console.log(`🔍 Payment calculation for ${apInvoice.registrationNumber}:`);
+            console.log(`   - Invoice Amount: ₹${totalInvoiceAmount}`);
+            console.log(`   - Credit Used: ₹${creditUsed}`);
+            console.log(`   - Bank Payment: ₹${bankPaymentNeeded}`);
+            console.log(`   - Total Payment: ₹${totalPaymentMade}`);
+            console.log(`   - Expected Final Paid: ₹${finalPaidAmount}`);
+            console.log(`   - Expected Final Balance: ₹${finalBalanceAmount}`);
+            console.log(`   - Expected Final Status: ${finalStatus}`);
+            
+            // Update AP with correct final amounts
+            await apInvoice.update({
+              paidAmount: finalPaidAmount,
+              balanceAmount: finalBalanceAmount,
+              status: finalStatus,
+              paidDate: finalStatus === 'Paid' ? new Date() : apInvoice.paidDate
+            });
+            
+            console.log(`✅ Final AP status corrected for ${apInvoice.registrationNumber}:`);
+            console.log(`   - Total Payment: ₹${totalPaymentMade} (₹${creditUsed} credit + ₹${bankPaymentNeeded} bank)`);
+            console.log(`   - Final Status: ${finalStatus}`);
+            console.log(`   - Paid Amount: ₹${finalPaidAmount}`);
+            console.log(`   - Balance: ₹${finalBalanceAmount}`);
+            
+            // Also update related Business Expense if needed
+            if (apInvoice.relatedDocumentType === 'Business Expense' && apInvoice.relatedDocumentId) {
+              const BusinessExpense = (await import('../models/BusinessExpense')).default;
+              const businessExpense = await BusinessExpense.findByPk(apInvoice.relatedDocumentId);
+              
+              if (businessExpense) {
+                const beTotalAmount = parseFloat(businessExpense.amount.toString());
+                const beExpectedPaidAmount = Math.min(finalPaidAmount, beTotalAmount);
+                const beExpectedBalanceAmount = Math.max(0, beTotalAmount - beExpectedPaidAmount);
+                const beExpectedStatus = beExpectedBalanceAmount <= 0.01 ? 'Paid' : 'Partial';
+                
+                await businessExpense.update({
+                  paidAmount: beExpectedPaidAmount,
+                  balanceAmount: beExpectedBalanceAmount,
+                  paymentStatus: beExpectedStatus
+                });
+                
+                console.log(`✅ Final Business Expense status corrected for ${businessExpense.registrationNumber}:`);
+                console.log(`   - BE Paid Amount: ₹${beExpectedPaidAmount}`);
+                console.log(`   - BE Balance: ₹${beExpectedBalanceAmount}`);
+                console.log(`   - BE Status: ${beExpectedStatus}`);
+              }
+            }
+          }
+        }
+      }
+
+      // Step 10: Calculate final results
       const updatedInvoices = await AccountsPayable.findAll({
         where: { id: request.invoiceIds }
       });

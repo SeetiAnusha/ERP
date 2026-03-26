@@ -5,6 +5,7 @@ const router = Router();
 
 router.get('/', accountsPayableController.getAllAccountsPayable);
 router.get('/pending', accountsPayableController.getPendingAccountsPayable);
+router.get('/payable', accountsPayableController.getPayableAccountsPayable);
 router.get('/:id', accountsPayableController.getAccountsPayableById);
 router.post('/', accountsPayableController.createAccountsPayable);
 router.put('/:id', accountsPayableController.updateAccountsPayable);

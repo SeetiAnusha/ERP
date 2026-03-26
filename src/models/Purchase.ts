@@ -35,6 +35,17 @@ interface PurchaseAttributes {
   requestId?: string;
   clientSessionId?: string;
   submissionTimestamp?: Date;
+  
+  // Soft delete attributes
+  deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
+  deleted_at?: Date;
+  deleted_by?: number;
+  deletion_reason_code?: string;
+  deletion_memo?: string;
+  deletion_approval_id?: number;
+  reversal_transaction_id?: number;
+  is_reversal?: boolean;
+  original_transaction_id?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -74,6 +85,17 @@ class Purchase extends Model<PurchaseAttributes, PurchaseCreationAttributes> imp
   public requestId?: string;
   public clientSessionId?: string;
   public submissionTimestamp?: Date;
+  
+  // Soft delete attributes
+  public deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
+  public deleted_at?: Date;
+  public deleted_by?: number;
+  public deletion_reason_code?: string;
+  public deletion_memo?: string;
+  public deletion_approval_id?: number;
+  public reversal_transaction_id?: number;
+  public is_reversal?: boolean;
+  public original_transaction_id?: number;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 
@@ -280,7 +302,44 @@ Purchase.init(
       type: DataTypes.DATE,
       allowNull: true,
     },
-  },
+  
+    // Soft delete attributes
+    deletion_status: {
+      type: DataTypes.ENUM('NONE', 'REQUESTED', 'APPROVED', 'EXECUTED'),
+      defaultValue: 'NONE',
+    },
+    deleted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    deleted_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    deletion_reason_code: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    deletion_memo: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    deletion_approval_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    reversal_transaction_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    is_reversal: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    original_transaction_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },},
   {
     sequelize,
     tableName: 'purchases',

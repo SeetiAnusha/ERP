@@ -6,6 +6,7 @@ import Product from '../models/Product';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { TransactionType } from '../types/TransactionType';
+import { TransactionFactory, PurchaseContext } from './shared/TransactionFactory';
 import { 
   ValidationError, 
   InsufficientBalanceError, 
@@ -288,7 +289,7 @@ class PurchaseService extends BaseService {
   
   private async loadPurchasesWithFallback(whereClause: any) {
     try {
-      // Strategy 1: Try with minimal safe associations
+      // Strategy 1: Try with full associations including items (needed for inventory)
       return await Purchase.findAll({
         where: whereClause,
         include: [
@@ -297,24 +298,56 @@ class PurchaseService extends BaseService {
             as: 'supplier',
             required: false,
             attributes: ['id', 'name', 'rnc'] // Only essential fields
+          },
+          {
+            model: PurchaseItem,
+            as: 'items',
+            required: false,
+            include: [
+              {
+                model: Product,
+                as: 'product',
+                required: false,
+                attributes: ['id', 'name', 'code', 'unit']
+              }
+            ]
           }
         ],
         order: [['registrationDate', 'DESC']],
         limit: 50 // Reasonable limit for performance
       });
-    } catch (supplierError: any) {
-      console.log('⚠️  Supplier association failed, trying basic query:', supplierError.message);
+    } catch (fullAssociationError: any) {
+      console.log('⚠️  Full association failed, trying supplier only:', fullAssociationError.message);
       
       try {
-        // Strategy 2: Basic query without associations
+        // Strategy 2: Try with minimal safe associations
         return await Purchase.findAll({
           where: whereClause,
+          include: [
+            { 
+              model: Supplier, 
+              as: 'supplier',
+              required: false,
+              attributes: ['id', 'name', 'rnc'] // Only essential fields
+            }
+          ],
           order: [['registrationDate', 'DESC']],
-          limit: 50
+          limit: 50 // Reasonable limit for performance
         });
-      } catch (basicError: any) {
-        console.error('❌ Even basic query failed:', basicError.message);
-        throw basicError;
+      } catch (supplierError: any) {
+        console.log('⚠️  Supplier association failed, trying basic query:', supplierError.message);
+        
+        try {
+          // Strategy 3: Basic query without associations
+          return await Purchase.findAll({
+            where: whereClause,
+            order: [['registrationDate', 'DESC']],
+            limit: 50
+          });
+        } catch (basicError: any) {
+          console.error('❌ Even basic query failed:', basicError.message);
+          throw basicError;
+        }
       }
     }
   }
@@ -582,25 +615,35 @@ class PurchaseService extends BaseService {
     // Update bank account balance
     await this.updateBankAccountBalance(data.bankAccountId, amount, true, transaction);
     
-    // Create bank register entry
+    // Create bank register entry using factory (eliminates duplication)
     const supplier = await Supplier.findByPk(data.supplierId, { transaction });
     const paymentMethodLabel = data.paymentType === 'CHEQUE' ? 'Cheque' : 'Bank Transfer';
     const referenceNumber = data.paymentType === 'CHEQUE' ? data.chequeNumber : data.transferNumber;
     
-    await this.createBankRegisterEntry({
-      registrationNumber: purchase.registrationNumber,
-      transactionType: 'OUTFLOW',
-      amount: amount,
+    const context: PurchaseContext = {
+      purchase: {
+        id: purchase.id,
+        registrationNumber: purchase.registrationNumber,
+        date: purchase.date,
+        supplierId: data.supplierId,
+        supplierRnc: data.supplierRnc,
+        ncf: data.ncf,
+        purchaseType: purchase.purchaseType
+      },
+      supplier: supplier ? { name: supplier.name, rnc: supplier.rnc } : undefined,
+      amount
+    };
+    
+    const bankEntryData = TransactionFactory.createBankEntry(context, {
       paymentMethod: paymentMethodLabel,
-      relatedDocumentType: 'Purchase',
-      relatedDocumentNumber: purchase.registrationNumber,
-      sourceTransactionType: TransactionType.PURCHASE,
-      clientRnc: data.supplierRnc || '',
-      clientName: supplier?.name || '',
-      ncf: data.ncf || '',
-      description: `Payment for purchase ${purchase.registrationNumber} via ${paymentMethodLabel} (${referenceNumber}) - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
+      documentType: 'Purchase',
       bankAccountId: data.bankAccountId,
-    }, transaction);
+      chequeNumber: data.paymentType === 'CHEQUE' ? data.chequeNumber : undefined,
+      transferNumber: data.paymentType === 'BANK_TRANSFER' ? data.transferNumber : undefined,
+      description: `Payment for purchase ${purchase.registrationNumber} via ${paymentMethodLabel} (${referenceNumber}) - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`
+    });
+    
+    await this.createBankRegisterEntry(bankEntryData, transaction);
   }
   
   private async processCardPayment(data: any, purchase: any, amount: number, transaction: any): Promise<void> {
@@ -647,21 +690,33 @@ class PurchaseService extends BaseService {
     // Update bank account balance
     await this.updateBankAccountBalance(card.bankAccountId, amount, true, transaction);
     
-    // Create bank register entry
-    await this.createBankRegisterEntry({
-      registrationNumber: purchase.registrationNumber,
-      transactionType: 'OUTFLOW',
-      amount: amount,
+    // Create bank register entry using factory (eliminates duplication)
+    // Fetch supplier information for proper client name display
+    const supplier = data.supplierId ? await Supplier.findByPk(data.supplierId, { transaction }) : null;
+    
+    const context: PurchaseContext = {
+      purchase: {
+        id: purchase.id,
+        registrationNumber: purchase.registrationNumber,
+        date: purchase.date,
+        supplierId: data.supplierId,
+        supplierRnc: data.supplierRnc,
+        ncf: data.ncf,
+        purchaseType: purchase.purchaseType
+      },
+      supplier: supplier ? { name: supplier.name, rnc: supplier.rnc } : undefined,
+      amount
+    };
+    
+    const bankEntryData = TransactionFactory.createBankEntry(context, {
       paymentMethod: 'Debit Card',
-      relatedDocumentType: 'Purchase',
-      relatedDocumentNumber: purchase.registrationNumber,
-      sourceTransactionType: TransactionType.PURCHASE,
-      clientRnc: data.supplierRnc || '',
-      clientName: data.supplierInfo?.name || '',
-      ncf: data.ncf || '',
-      description: `Payment for purchase ${purchase.registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
+      documentType: 'Purchase',
       bankAccountId: card.bankAccountId,
-    }, transaction);
+      referenceNumber: data.paymentReference,
+      description: `Payment for purchase ${purchase.registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})${data.paymentReference ? ` - Ref: ${data.paymentReference}` : ''}`
+    });
+    
+    await this.createBankRegisterEntry(bankEntryData, transaction);
     
     // Update purchase to paid status for DEBIT cards
     await purchase.update({
@@ -675,55 +730,71 @@ class PurchaseService extends BaseService {
     const creditLimit = Number(card.creditLimit || 0);
     const usedCredit = Number(card.usedCredit || 0);
     
-    // Validate credit limit
+    // Validate credit limit (but don't reduce credit yet - only when AP is paid)
     this.validateCreditLimit(creditLimit, usedCredit, amount, cardInfo, `purchase ${purchase.registrationNumber}`);
     
-    // Update used credit
-    const newUsedCredit = usedCredit + amount;
-    await card.update({ usedCredit: newUsedCredit }, { transaction });
+    // ❌ REMOVED: Don't update used credit during purchase creation
+    // The credit should only be used when the AP is actually paid
+    console.log(`💳 Credit card purchase created - Credit will be used when AP is paid. Available: $${(creditLimit - usedCredit).toFixed(2)}`);
     
-    console.log(`✅ Credit card usage: $${usedCredit.toFixed(2)} -> $${newUsedCredit.toFixed(2)}`);
+    // Create AP entry using factory (eliminates duplication)
+    const context: PurchaseContext = {
+      purchase: {
+        id: purchase.id,
+        registrationNumber: purchase.registrationNumber,
+        date: purchase.date,
+        supplierId: data.supplierId,
+        supplierRnc: data.supplierRnc,
+        ncf: data.ncf,
+        purchaseType: data.purchaseType
+      },
+      supplier: undefined, // Credit card doesn't have supplier
+      amount
+    };
     
-    // Create AP entry for credit card payment
-    await this.createAccountsPayableEntry({
-      registrationNumber: purchase.registrationNumber,
+    const apEntryData = TransactionFactory.createAPEntry(context, {
       type: 'CREDIT_CARD_PURCHASE',
-      relatedDocumentType: 'Purchase',
-      relatedDocumentId: purchase.id,
-      relatedDocumentNumber: purchase.registrationNumber,
+      documentType: 'Purchase',
       supplierName: cardInfo || 'Credit Card Company',
       supplierRnc: data.supplierRnc || '',
-      ncf: data.ncf || '',
-      purchaseDate: data.date ? new Date(data.date) : new Date(),
-      purchaseType: data.purchaseType,
-      paymentType: 'CREDIT_CARD',
       cardId: card.id,
       cardIssuer: cardInfo,
-      amount: amount,
-      notes: `Credit card payment for purchase ${purchase.registrationNumber} - ${cardInfo} - Ref: ${data.paymentReference || 'N/A'}`,
-    }, transaction);
+      paymentType: 'CREDIT_CARD',
+      paymentReference: data.paymentReference,
+      notes: `Credit card purchase ${purchase.registrationNumber} - ${cardInfo} - Ref: ${data.paymentReference || 'N/A'} - Credit will be used when paid`
+    });
+    
+    await this.createAccountsPayableEntry(apEntryData, transaction);
   }
   
   private async processCreditPayment(data: any, purchase: any, amount: number, transaction: any): Promise<void> {
-    // Create AP entry for credit payment
+    // Create AP entry for credit payment using factory (eliminates duplication)
     const supplier = await Supplier.findByPk(data.supplierId, { transaction });
     
-    await this.createAccountsPayableEntry({
-      registrationNumber: purchase.registrationNumber,
+    const context: PurchaseContext = {
+      purchase: {
+        id: purchase.id,
+        registrationNumber: purchase.registrationNumber,
+        date: purchase.date,
+        supplierId: data.supplierId,
+        supplierRnc: data.supplierRnc,
+        ncf: data.ncf,
+        purchaseType: data.purchaseType
+      },
+      supplier: supplier ? { name: supplier.name, rnc: supplier.rnc } : undefined,
+      amount
+    };
+    
+    const apEntryData = TransactionFactory.createAPEntry(context, {
       type: 'SUPPLIER_CREDIT',
-      relatedDocumentType: 'Purchase',
-      relatedDocumentId: purchase.id,
-      relatedDocumentNumber: purchase.registrationNumber,
-      supplierId: data.supplierId,
+      documentType: 'Purchase',
       supplierName: supplier?.name || '',
       supplierRnc: data.supplierRnc || '',
-      ncf: data.ncf || '',
-      purchaseDate: data.date ? new Date(data.date) : new Date(),
-      purchaseType: data.purchaseType,
       paymentType: 'CREDIT',
-      amount: amount,
-      notes: `Credit purchase from ${supplier?.name || 'supplier'} - ${purchase.registrationNumber}`,
-    }, transaction);
+      notes: `Credit purchase from ${supplier?.name || 'supplier'} - ${purchase.registrationNumber}`
+    });
+    
+    await this.createAccountsPayableEntry(apEntryData, transaction);
   }
   
   // ==================== REGISTER AND AP CREATION METHODS ====================
@@ -741,8 +812,23 @@ class PurchaseService extends BaseService {
     ncf?: string;
     description: string;
     bankAccountId?: number;
+    chequeNumber?: string;
+    transferNumber?: string;
+    referenceNumber?: string;
+    supplierId?: number;  // ⭐ NEW: Add supplier ID
+    originalPaymentType?: string;  // ⭐ NEW: Add original payment type
   }, transaction?: any): Promise<void> {
     const BankRegister = (await import('../models/BankRegister')).default;
+    
+    // ⭐ NEW: Get bank account name if bankAccountId is provided
+    let bankAccountName = '';
+    if (data.bankAccountId) {
+      const BankAccount = (await import('../models/BankAccount')).default;
+      const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
+      if (bankAccount) {
+        bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
+      }
+    }
     
     // Get last balance for this bank account or overall
     const lastBalance = await this.getLastBankBalance(data.bankAccountId, transaction);
@@ -766,6 +852,12 @@ class PurchaseService extends BaseService {
       description: data.description,
       balance: newBalance,
       bankAccountId: data.bankAccountId,
+      bankAccountName: bankAccountName,  // ⭐ NEW: Bank account name
+      chequeNumber: data.chequeNumber || null,
+      transferNumber: data.transferNumber || null,
+      referenceNumber: data.referenceNumber || null,
+      supplierId: data.supplierId,  // ⭐ NEW: Supplier ID
+      originalPaymentType: data.originalPaymentType,  // ⭐ NEW: Original payment type
     }, { transaction });
   }
   
@@ -784,6 +876,7 @@ class PurchaseService extends BaseService {
     paymentType: string;
     cardId?: number;
     cardIssuer?: string;
+    paymentReference?: string;
     amount: number;
     notes?: string;
   }, transaction?: any): Promise<void> {
@@ -804,6 +897,7 @@ class PurchaseService extends BaseService {
       purchaseDate: data.purchaseDate,
       purchaseType: data.purchaseType,
       paymentType: data.paymentType,
+      paymentReference: data.paymentReference,
       cardId: data.cardId,
       cardIssuer: data.cardIssuer,
       amount: data.amount,
@@ -944,30 +1038,41 @@ class PurchaseService extends BaseService {
     const usedCredit = Number(card.usedCredit || 0);
     const cardInfo = `${card.cardBrand || 'Card'} ****${card.cardNumberLast4}`;
     
+    // Validate credit limit (but don't reduce credit yet - only when AP is paid)
     this.validateCreditLimit(creditLimit, usedCredit, amount, cardInfo, `invoice "${invoice.concept}"`);
     
-    // Update used credit
-    const newUsedCredit = usedCredit + amount;
-    await card.update({ usedCredit: newUsedCredit }, { transaction });
+    // ❌ REMOVED: Don't update used credit during purchase creation
+    // The credit should only be used when the AP is actually paid
+    console.log(`💳 Credit card invoice created - Credit will be used when AP is paid. Available: $${(creditLimit - usedCredit).toFixed(2)}`);
     
-    // Create AP entry for credit card invoice
-    await this.createAccountsPayableEntry({
-      registrationNumber: registrationNumber,
+    // Create AP entry using factory (eliminates duplication)
+    const context: PurchaseContext = {
+      purchase: {
+        id: purchaseId,
+        registrationNumber: registrationNumber,
+        date: invoice.date ? new Date(invoice.date) : new Date(),
+        supplierId: undefined, // Credit card invoices don't have supplier ID
+        supplierRnc: invoice.supplierRnc,
+        ncf: invoice.ncf,
+        purchaseType: invoice.purchaseType || 'Service'
+      },
+      supplier: undefined, // Credit card doesn't have supplier
+      amount
+    };
+    
+    const apEntryData = TransactionFactory.createAPEntry(context, {
       type: 'CREDIT_CARD_PURCHASE',
-      relatedDocumentType: 'InvoiceAssociate',
-      relatedDocumentId: purchaseId,
-      relatedDocumentNumber: registrationNumber,
+      documentType: 'InvoiceAssociate',
       supplierName: cardInfo || 'Credit Card Company',
       supplierRnc: invoice.supplierRnc || '',
-      ncf: invoice.ncf || '',
-      purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
-      purchaseType: invoice.purchaseType || 'Service',
-      paymentType: 'CREDIT_CARD',
       cardId: invoice.cardId,
       cardIssuer: cardInfo,
-      amount: amount,
-      notes: `Invoice: ${invoice.concept} for purchase ${registrationNumber} - ${cardInfo}`,
-    }, transaction);
+      paymentType: 'CREDIT_CARD',
+      paymentReference: invoice.paymentReference,
+      notes: `Invoice: ${invoice.concept} for purchase ${registrationNumber} - ${cardInfo} - Credit will be used when paid`
+    });
+    
+    await this.createAccountsPayableEntry(apEntryData, transaction);
   }
   
   private async processInvoiceCredit(invoice: any, amount: number, registrationNumber: string, purchaseId: number, transaction: any): Promise<void> {
@@ -983,22 +1088,31 @@ class PurchaseService extends BaseService {
       }
     }
     
-    await this.createAccountsPayableEntry({
-      registrationNumber: registrationNumber,
+    // Create AP entry using factory (eliminates duplication)
+    const context: PurchaseContext = {
+      purchase: {
+        id: purchaseId,
+        registrationNumber: registrationNumber,
+        date: invoice.date ? new Date(invoice.date) : new Date(),
+        supplierId: supplierId, // ✅ Include the looked-up supplier ID
+        supplierRnc: invoice.supplierRnc,
+        ncf: invoice.ncf,
+        purchaseType: invoice.purchaseType || 'Service'
+      },
+      supplier: { name: invoice.supplierName || 'Unknown Supplier', rnc: invoice.supplierRnc },
+      amount
+    };
+    
+    const apEntryData = TransactionFactory.createAPEntry(context, {
       type: 'SUPPLIER_CREDIT',
-      relatedDocumentType: 'InvoiceAssociate',
-      relatedDocumentId: purchaseId,
-      relatedDocumentNumber: registrationNumber,
-      supplierId: supplierId,
+      documentType: 'InvoiceAssociate',
       supplierName: invoice.supplierName || 'Unknown Supplier',
       supplierRnc: invoice.supplierRnc || '',
-      ncf: invoice.ncf || '',
-      purchaseDate: invoice.date ? new Date(invoice.date) : new Date(),
-      purchaseType: invoice.purchaseType || 'Service',
       paymentType: 'CREDIT',
-      amount: amount,
-      notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`,
-    }, transaction);
+      notes: `${invoice.concept || 'Associated cost'} for purchase ${registrationNumber} - Supplier: ${invoice.supplierName} - RNC: ${invoice.supplierRnc || 'N/A'}`
+    });
+    
+    await this.createAccountsPayableEntry(apEntryData, transaction);
   }
   
   private async processInvoiceBankPayment(invoice: any, amount: number, registrationNumber: string, transaction: any): Promise<void> {
@@ -1023,23 +1137,33 @@ class PurchaseService extends BaseService {
       bankAccountInfo = ` - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`;
     }
     
-    // Create bank register entry
+    // Create bank register entry using factory (eliminates duplication)
     const paymentMethodLabel = this.getPaymentMethodLabel(invoice.paymentType);
+    const referenceNumber = invoice.paymentType === 'CHEQUE' ? invoice.chequeNumber : invoice.transferNumber;
     
-    await this.createBankRegisterEntry({
-      registrationNumber: registrationNumber,
-      transactionType: 'OUTFLOW',
-      amount: amount,
+    const context: PurchaseContext = {
+      purchase: {
+        id: 0, // Invoice doesn't have purchase ID directly
+        registrationNumber: registrationNumber,
+        date: invoice.date ? new Date(invoice.date) : new Date(),
+        supplierRnc: invoice.supplierRnc,
+        ncf: invoice.ncf,
+        purchaseType: invoice.purchaseType || 'Service'
+      },
+      supplier: { name: invoice.supplierName || '', rnc: invoice.supplierRnc },
+      amount
+    };
+    
+    const bankEntryData = TransactionFactory.createBankEntry(context, {
       paymentMethod: paymentMethodLabel,
-      relatedDocumentType: 'Purchase Invoice',
-      relatedDocumentNumber: registrationNumber,
-      sourceTransactionType: TransactionType.PURCHASE,
-      clientRnc: invoice.supplierRnc || '',
-      clientName: invoice.supplierName || '',
-      ncf: invoice.ncf || '',
-      description: `Invoice: ${invoice.concept} for purchase ${registrationNumber} via ${paymentMethodLabel}${bankAccountInfo}`,
+      documentType: 'Purchase Invoice',
       bankAccountId: bankAccountId,
-    }, transaction);
+      chequeNumber: invoice.paymentType === 'CHEQUE' ? invoice.chequeNumber : undefined,
+      transferNumber: invoice.paymentType === 'BANK_TRANSFER' ? invoice.transferNumber : undefined,
+      description: `Invoice: ${invoice.concept} for purchase ${registrationNumber} via ${paymentMethodLabel}${referenceNumber ? ` (${referenceNumber})` : ''}${bankAccountInfo}`
+    });
+    
+    await this.createBankRegisterEntry(bankEntryData, transaction);
   }
   
   private getPaymentMethodLabel(paymentType: string): string {

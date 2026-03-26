@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { BaseService } from '../core/BaseService';
 import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppError';
+import { TransactionType } from '../types/TransactionType';
 
 export interface OverpaymentValidationResult {
   isOverpayment: boolean;
@@ -514,6 +515,9 @@ class CreditBalanceService extends BaseService {
         
         // 🔄 Update related Business Expense if this AP is from a business expense
         await this.updateRelatedBusinessExpenseForCredit(invoice, creditToApplyToThisInvoice, newStatus, transaction);
+        
+        // 🚫 REMOVED: No separate register entry for credit usage in AR transactions
+        // The full payment amount is recorded in the customer credit aware payment service
       }
     }
     
@@ -536,6 +540,142 @@ class CreditBalanceService extends BaseService {
       updatedCredits,
       updatedInvoices
     };
+  }
+
+  /**
+   * Create Cash Register or Bank Register entry when credit balance is used
+   * This maintains proper audit trail and accounting integrity
+   */
+  private async createRegisterEntryForCreditUsage(
+    invoice: any,
+    creditAmount: number,
+    transaction: any
+  ): Promise<void> {
+    try {
+      console.log(`💳 Creating register entry for credit usage: ₹${creditAmount} on ${invoice.registrationNumber}`);
+      
+      // Validate inputs
+      if (!invoice || !invoice.registrationNumber) {
+        console.warn('⚠️ Invalid invoice data for credit usage entry');
+        return;
+      }
+      
+      if (creditAmount <= 0) {
+        console.warn('⚠️ Invalid credit amount for register entry');
+        return;
+      }
+      
+      // Determine if this is AR or AP transaction
+      const isARTransaction = invoice.type && ['CREDIT_SALE', 'CLIENT_CREDIT', 'CREDIT_CARD_SALE', 'DEBIT_CARD_SALE'].includes(invoice.type);
+      const isAPTransaction = !isARTransaction; // Assume AP if not AR
+      
+      console.log(`📋 Transaction type detected: ${isARTransaction ? 'AR (Customer)' : 'AP (Supplier)'}`);
+      
+      if (isARTransaction) {
+        // For AR (Customer) transactions - create Cash Register entry
+        await this.createCashRegisterEntryForCredit(invoice, creditAmount, transaction);
+      } else {
+        // For AP (Supplier) transactions - create Bank Register entry (assuming bank payments)
+        await this.createBankRegisterEntryForCredit(invoice, creditAmount, transaction);
+      }
+      
+      console.log(`✅ Register entry created for credit usage: ₹${creditAmount}`);
+      
+    } catch (error: any) {
+      console.error('❌ Error creating register entry for credit usage:', error);
+      // Don't throw - this shouldn't block the credit application
+      // The credit application is the primary operation
+    }
+  }
+
+  /**
+   * Create Cash Register entry for customer credit usage (AR transactions)
+   */
+  private async createCashRegisterEntryForCredit(
+    invoice: any,
+    creditAmount: number,
+    transaction: any
+  ): Promise<void> {
+    try {
+      // Import Cash Register service
+      const { cashRegisterService } = await import('./cashRegisterService');
+      
+      // Get default cash register (you may need to modify this based on your business logic)
+      const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
+      const defaultCashRegister = await CashRegisterMaster.findOne({
+        order: [['id', 'ASC']], // Get first cash register as default
+        transaction
+      });
+      
+      if (!defaultCashRegister) {
+        console.warn('⚠️ No cash register found for credit usage entry');
+        return;
+      }
+      
+      const cashRegisterData = {
+        registrationDate: new Date(),
+        transactionType: 'INFLOW' as const,
+        amount: creditAmount,
+        paymentMethod: 'CREDIT_BALANCE_USAGE',
+        relatedDocumentType: 'CREDIT_USAGE',
+        relatedDocumentNumber: invoice.registrationNumber,
+        description: `Credit balance used for invoice ${invoice.registrationNumber} - Customer: ${invoice.clientName || 'Unknown'}`,
+        customerId: invoice.clientId || null,
+        customerName: invoice.clientName || 'Credit Usage',
+        clientName: invoice.clientName || 'Credit Usage', // Add clientName for compatibility
+        cashRegisterId: defaultCashRegister.id,
+        skipCreditBalanceCreation: true // Prevent recursive credit creation
+      };
+      
+      console.log(`💰 Creating cash register entry for credit usage: ₹${creditAmount}`);
+      await cashRegisterService.createCashTransaction(cashRegisterData, transaction);
+      console.log(`✅ Cash register entry created successfully`);
+      
+    } catch (error: any) {
+      console.error('❌ Error creating cash register entry for credit usage:', error);
+      // Don't throw - log error but continue
+    }
+  }
+
+  /**
+   * Create Bank Register entry for supplier credit usage (AP transactions)
+   */
+  private async createBankRegisterEntryForCredit(
+    invoice: any,
+    creditAmount: number,
+    transaction: any
+  ): Promise<void> {
+    // Import Bank Register service
+    const bankRegisterService = (await import('./bankRegisterService')).default;
+    
+    // Get default bank account (you may need to modify this based on your business logic)
+    const BankAccount = (await import('../models/BankAccount')).default;
+    const defaultBankAccount = await BankAccount.findOne({
+      order: [['id', 'ASC']], // Get first bank account as default
+      transaction
+    });
+    
+    if (!defaultBankAccount) {
+      console.warn('⚠️ No bank account found for credit usage entry');
+      return;
+    }
+    
+    const bankRegisterData = {
+      registrationDate: new Date(),
+      transactionType: 'OUTFLOW' as const,
+      sourceTransactionType: TransactionType.CREDIT_USAGE,
+      amount: creditAmount,
+      paymentMethod: 'CREDIT_BALANCE_USAGE',
+      relatedDocumentType: 'CREDIT_USAGE',
+      relatedDocumentNumber: invoice.registrationNumber,
+      description: `Credit balance used for invoice ${invoice.registrationNumber} - Supplier: ${invoice.supplierName || 'Unknown'}`,
+      clientName: invoice.supplierName || 'Credit Usage',
+      clientRnc: '',
+      bankAccountId: defaultBankAccount.id,
+      originalPaymentType: 'CREDIT_BALANCE'
+    };
+    
+    await bankRegisterService.createBankRegister(bankRegisterData, transaction);
   }
 
   /**

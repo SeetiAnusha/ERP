@@ -1,4 +1,4 @@
-﻿/**
+﻿﻿/**
  * Enterprise-Grade Accounts Payable Service
  * 
  * Unified service combining basic operations with enhanced features:
@@ -16,6 +16,8 @@ import sequelize from '../config/database';
 import AccountsPayable from '../models/AccountsPayable';
 import { TransactionType } from '../types/TransactionType';
 import { BaseService } from '../core/BaseService';
+import { TransactionFactory } from './shared/TransactionFactory';
+import { APContext, APBankPaymentOptions, APCardPaymentOptions, APPaymentRequest } from '../types/APTransactionTypes';
 import { 
   ValidationError, 
   InsufficientBalanceError, 
@@ -184,6 +186,33 @@ class AccountsPayableService extends BaseService {
         where: {
           status: {
             [Op.in]: ['Pending', 'Partial']
+          },
+          // 🔥 CRITICAL: Exclude deleted transactions from payment selection
+          deletion_status: {
+            [Op.notIn]: ['EXECUTED'] // Don't show executed deletions
+          }
+        },
+        order: [['dueDate', 'ASC']],
+      });
+    });
+  }
+
+  /**
+   * Get accounts payable available for payment (excludes deleted transactions)
+   * This method is specifically for payment selection dropdowns
+   * Time Complexity: O(n log n) for sorting
+   * Space Complexity: O(n) for result set
+   */
+  async getPayableAccountsPayable(): Promise<AccountsPayable[]> {
+    return this.executeWithRetry(async () => {
+      return await AccountsPayable.findAll({
+        where: {
+          status: {
+            [Op.in]: ['Pending', 'Partial']
+          },
+          // 🔥 CRITICAL: Exclude all deleted transactions from payment selection
+          deletion_status: {
+            [Op.in]: ['NONE', 'REQUESTED', 'APPROVED'] // Only show non-executed deletions
           }
         },
         order: [['dueDate', 'ASC']],
@@ -258,8 +287,11 @@ class AccountsPayableService extends BaseService {
     notes?: string;
   }): Promise<AccountsPayable> {
     
+    // 🔄 UPDATED LOGIC: Credit card purchases don't reduce credit limit until payment
+    console.log(`📝 [AP Creation] Creating AP for ${purchaseData.paymentType} purchase - NO money movement yet`);
+    
     const accountsPayableData: CreateAccountsPayableRequest = {
-      type: 'CREDIT_PURCHASE',
+      type: purchaseData.paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'CREDIT_PURCHASE',
       sourceTransactionType: TransactionType.PURCHASE,
       relatedDocumentType: 'Purchase',
       relatedDocumentNumber: purchaseData.registrationNumber,
@@ -276,6 +308,9 @@ class AccountsPayableService extends BaseService {
       dueDate: purchaseData.dueDate,
       notes: purchaseData.notes
     };
+    
+    // ✅ NO CREDIT CARD LIMIT REDUCTION HERE - happens only when "Pay" is clicked
+    console.log(`✅ [AP Created] ${purchaseData.registrationNumber}: Amount=${purchaseData.amount}, Status=Pending (no money moved)`);
     
     return this.createAccountsPayable(accountsPayableData);
   }
@@ -556,14 +591,14 @@ class AccountsPayableService extends BaseService {
     }
     
     // String validations
-    if (data.supplierRnc && data.supplierRnc.length > 0) {
+    if (data.supplierRnc && data.supplierRnc.trim().length > 0) {
       const rnc = data.supplierRnc.replace(/\D/g, '');
       if (rnc.length !== 9 && rnc.length !== 11) {
         throw new ValidationError('RNC must be 9 or 11 digits');
       }
     }
     
-    if (data.ncf && data.ncf.length > 0) {
+    if (data.ncf && data.ncf.trim().length > 0) {
       const ncf = data.ncf.replace(/\D/g, '');
       if (ncf.length !== 8) {
         throw new ValidationError('NCF must be 8 digits');
@@ -683,7 +718,6 @@ class AccountsPayableService extends BaseService {
     });
 
     const BankAccount = (await import('../models/BankAccount')).default;
-    const BankRegister = (await import('../models/BankRegister')).default;
     
     const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
     if (!bankAccount) {
@@ -710,35 +744,41 @@ class AccountsPayableService extends BaseService {
       `${bankAccount.bankName} - ${bankAccount.accountNumber}`
     );
 
-    // If this is a credit card payment, restore credit limit
-    if (ap.type === 'CREDIT_CARD_PURCHASE' && ap.cardId) {
-      console.log('💳 Restoring credit limit for card:', ap.cardId);
-      await this.restoreCreditLimit(ap.cardId, paymentAmount, transaction);
-    }
+    // ✅ REMOVED: Credit card debt restoration logic - no longer needed with new approach
+    // Credit card payments now directly reduce credit limit when paying (not when creating AP)
     
-    console.log('🏦 Creating Bank Register entry...');
+    console.log('🏦 Creating Bank Register entry using TransactionFactory...');
     
-    // Create Bank Register entry using proper service
+    // ✅ REFACTORED: Use TransactionFactory instead of manual data construction
     try {
       const bankRegisterService = (await import('./bankRegisterService')).default;
       
-      const bankRegisterData = {
-        registrationDate: paymentData.paidDate || new Date(),
-        transactionType: 'OUTFLOW' as const,
-        sourceTransactionType: TransactionType.PAYMENT,
-        amount: paymentAmount,
-        paymentMethod: this.getPaymentMethodForBankRegister(paymentData.paymentMethod),
-        relatedDocumentType: 'Accounts Payable Payment',
-        relatedDocumentNumber: ap.registrationNumber,
-        clientRnc: ap.supplierRnc || '',
-        clientName: ap.supplierName || ap.cardIssuer || '',
-        ncf: ap.ncf || '',
-        description: `AP Payment ${ap.registrationNumber} - ${ap.supplierName || ap.cardIssuer}`,
-        bankAccountId: paymentData.bankAccountId,
-        referenceNumber: paymentData.reference,
+      // Create AP context for TransactionFactory
+      const context: APContext = {
+        ap: {
+          id: ap.id,
+          registrationNumber: ap.registrationNumber,
+          supplierName: ap.supplierName || '',
+          supplierRnc: ap.supplierRnc,
+          ncf: ap.ncf,
+          type: ap.type,
+          cardId: ap.cardId,
+          cardIssuer: ap.cardIssuer
+        },
+        amount: paymentAmount
       };
+
+      const options: APBankPaymentOptions = {
+        paymentMethod: TransactionFactory.getPaymentMethodForBankRegister(paymentData.paymentMethod),
+        bankAccountId: paymentData.bankAccountId!,  // Non-null assertion since we validated it exists above
+        paidDate: paymentData.paidDate,
+        reference: paymentData.reference
+      };
+
+      // Use TransactionFactory to create bank register data
+      const bankRegisterData = TransactionFactory.createAPBankEntry(context, options);
       
-      console.log('📋 Bank Register data to create:', JSON.stringify(bankRegisterData, null, 2));
+      console.log('📋 Bank Register data from TransactionFactory:', JSON.stringify(bankRegisterData, null, 2));
       
       const bankRegisterEntry = await bankRegisterService.createBankRegister(bankRegisterData, transaction);
       
@@ -762,7 +802,6 @@ class AccountsPayableService extends BaseService {
   private async processCardPayment(ap: AccountsPayable, paymentData: PaymentRequest, transaction: any): Promise<void> {
     const Card = (await import('../models/Card')).default;
     const BankAccount = (await import('../models/BankAccount')).default;
-    const BankRegister = (await import('../models/BankRegister')).default;
     
     const card = await Card.findByPk(paymentData.cardId, { transaction });
     if (!card) {
@@ -808,150 +847,102 @@ class AccountsPayableService extends BaseService {
     const newBankBalance = currentBalance - amount;
     await bankAccount.update({ balance: newBankBalance }, { transaction });
     
-    // Create bank register entry
-    await this.createBankRegisterEntry({
-      registrationNumber: ap.registrationNumber,
-      registrationDate: paymentData.paidDate || new Date(),
-      transactionType: 'OUTFLOW',
-      amount: amount,
-      paymentMethod: 'Debit Card',
-      relatedDocumentType: 'Accounts Payable Payment',
-      relatedDocumentNumber: ap.registrationNumber,
-      clientRnc: ap.supplierRnc || '',
-      clientName: ap.supplierName || '',
-      ncf: ap.ncf || '',
-      description: `AP Payment ${ap.registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName}`,
-      bankAccountId: card.bankAccountId,
-    }, transaction);
+    // ✅ REFACTORED: Use TransactionFactory instead of removed createBankRegisterEntry method
+    const bankRegisterService = (await import('./bankRegisterService')).default;
+    
+    // Create AP context for TransactionFactory
+    const context: APContext = {
+      ap: {
+        id: ap.id,
+        registrationNumber: ap.registrationNumber,
+        supplierName: ap.supplierName || '',
+        supplierRnc: ap.supplierRnc,
+        ncf: ap.ncf,
+        type: ap.type,
+        cardId: ap.cardId,
+        cardIssuer: ap.cardIssuer
+      },
+      amount: amount
+    };
+
+    const options: APCardPaymentOptions = {
+      cardId: card.id,
+      paidDate: paymentData.paidDate,
+      reference: paymentData.reference,
+      description: `AP Payment ${ap.registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName}`
+    };
+
+    // Use TransactionFactory to create debit card bank register data
+    const bankRegisterData = TransactionFactory.createAPDebitCardEntry(context, card, cardInfo, options);
+    
+    // Add bank account info to the data
+    const enhancedBankRegisterData = {
+      ...bankRegisterData,
+      description: `AP Payment ${ap.registrationNumber} via DEBIT card ${cardInfo} - Bank: ${bankAccount.bankName}`
+    };
+    
+    await bankRegisterService.createBankRegister(enhancedBankRegisterData, transaction);
   }
   /**
    * Process credit card payment
    */
   private async processCreditCardPayment(card: any, ap: AccountsPayable, amount: number, cardInfo: string, paymentData: PaymentRequest, transaction: any): Promise<void> {
-    const isAlreadyCreditCardDebt = ap.type === 'CREDIT_CARD_PURCHASE';
+    // 🔄 UPDATED LOGIC: Use Credit Card Register instead of Bank Register
+    console.log(`💳 [Credit Card Payment] Processing payment for AP ${ap.registrationNumber} using card ${cardInfo}`);
     
-    if (!isAlreadyCreditCardDebt) {
-      // Paying supplier AP with credit card - validate credit limit
-      const creditLimit = Number(card.creditLimit || 0);
-      const usedCredit = Number(card.usedCredit || 0);
-      const availableCredit = creditLimit - usedCredit;
-      
-      if (creditLimit <= 0) {
-        throw new ValidationError(`CREDIT card ${cardInfo} has no credit limit set`);
-      }
-      
-      this.validateSufficientBalance(
-        availableCredit,
-        amount,
-        `AP payment ${ap.registrationNumber}`,
-        `credit available on card ${cardInfo}`
-      );
-      
-      // Increase usedCredit
-      const newUsedCredit = usedCredit + amount;
-      await card.update({ usedCredit: newUsedCredit }, { transaction });
-      
-      // Create new AP entry for credit card debt
-      await this.createCreditCardDebtEntry(ap, card, amount, transaction);
-    } else {
-      // Paying credit card debt - restore credit limit
-      await this.restoreCreditLimit(card.id, amount, transaction);
+    // Validate credit limit
+    const creditLimit = Number(card.creditLimit || 0);
+    const usedCredit = Number(card.usedCredit || 0);
+    const availableCredit = creditLimit - usedCredit;
+    
+    if (creditLimit <= 0) {
+      throw new ValidationError(`Credit card ${cardInfo} has no credit limit set`);
     }
+    
+    this.validateSufficientBalance(
+      availableCredit,
+      amount,
+      `AP payment ${ap.registrationNumber}`,
+      `credit available on card ${cardInfo}`
+    );
+    
+    // ✅ Create Credit Card Register entry (this will also update the card's used credit)
+    const creditCardRegisterService = (await import('./creditCardRegisterService')).default;
+    
+    const ccPaymentData = {
+      cardId: card.id,
+      amount: amount,
+      relatedDocumentType: 'Accounts Payable Payment',
+      relatedDocumentNumber: ap.registrationNumber,
+      supplierName: ap.supplierName || '',
+      supplierRnc: ap.supplierRnc && ap.supplierRnc.trim() && ap.supplierRnc.trim().length > 0 ? ap.supplierRnc.trim() : undefined,
+      description: `Credit card payment to ${ap.supplierName} for ${ap.registrationNumber}`,
+      authorizationCode: paymentData.reference,
+      referenceNumber: paymentData.reference,
+      notes: `Credit card payment via ${cardInfo}`
+    };
+    
+    const ccRegisterEntry = await creditCardRegisterService.processCreditCardPayment(ccPaymentData);
+    
+    console.log(`💳 [CC Register] Created entry ${ccRegisterEntry.registrationNumber} - Credit limit reduced and payment recorded`);
   }
 
   /**
    * Restore credit limit when paying credit card debt
    */
-  private async restoreCreditLimit(cardId: number, amount: number, transaction: any): Promise<void> {
-    const Card = (await import('../models/Card')).default;
-    const card = await Card.findByPk(cardId, { transaction });
-    
-    if (card && card.cardType === 'CREDIT') {
-      const usedCredit = Number(card.usedCredit || 0);
-      const newUsedCredit = Math.max(0, usedCredit - amount);
-      
-      await card.update({ usedCredit: newUsedCredit }, { transaction });
-      
-      console.log(`✅ Credit restored: ${usedCredit.toFixed(2)} -> ${newUsedCredit.toFixed(2)}`);
-    }
-  }
-
-  /**
-   * Create credit card debt entry
-   */
-  private async createCreditCardDebtEntry(originalAP: AccountsPayable, card: any, amount: number, transaction: any): Promise<void> {
-    const cardInfo = `${card.cardBrand || 'Card'} ****${card.cardNumberLast4}`;
-    
-    await AccountsPayable.create({
-      registrationNumber: `${originalAP.registrationNumber}-CC`,
-      registrationDate: new Date(),
-      type: 'CREDIT_CARD_PURCHASE',
-      sourceTransactionType: TransactionType.PAYMENT,
-      relatedDocumentType: 'AP Payment',
-      relatedDocumentId: originalAP.id,
-      relatedDocumentNumber: originalAP.registrationNumber,
-      supplierName: `Credit Card Company (${cardInfo})`,
-      supplierRnc: '',
-      ncf: '',
-      purchaseDate: new Date(),
-      purchaseType: 'Service',
-      paymentType: 'CREDIT_CARD',
-      cardIssuer: cardInfo,
-      cardId: card.id,
-      amount: amount,
-      paidAmount: 0,
-      balanceAmount: amount,
-      status: 'Pending',
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      notes: `Payment for AP ${originalAP.registrationNumber} using CREDIT card - Now owe credit card company`,
-    }, { transaction });
-  }
+  // ✅ REMOVED: restoreCreditLimit method - no longer needed with new approach
+  // Credit card payments now work simply:
+  // 1. Purchase creates AP (no credit limit change)
+  // 2. Pay button reduces credit limit + creates bank entry
+  
+  // ✅ REMOVED: createCreditCardDebtEntry method - no longer needed with new approach
+  // No more complex debt creation - direct payment to supplier
 
   /**
    * Create bank register entry
    */
-  private async createBankRegisterEntry(data: {
-    registrationNumber: string;
-    registrationDate: Date;
-    transactionType: 'INFLOW' | 'OUTFLOW';
-    amount: number;
-    paymentMethod: string;
-    relatedDocumentType: string;
-    relatedDocumentNumber: string;
-    clientRnc: string;
-    clientName: string;
-    ncf: string;
-    description: string;
-    bankAccountId?: number;
-    referenceNumber?: string;
-  }, transaction: any): Promise<void> {
-    const BankRegister = (await import('../models/BankRegister')).default;
-    
-    // Get last balance for this bank account or overall
-    const lastBalance = await this.getLastBankBalance(data.bankAccountId, transaction);
-    
-    // Calculate new balance based on transaction type
-    const balanceChange = data.transactionType === 'INFLOW' ? data.amount : -data.amount;
-    const newBalance = lastBalance + balanceChange;
-    
-    await BankRegister.create({
-      registrationNumber: data.registrationNumber,
-      registrationDate: data.registrationDate,
-      transactionType: data.transactionType,
-      amount: data.amount,
-      paymentMethod: data.paymentMethod,
-      sourceTransactionType: TransactionType.PAYMENT,
-      relatedDocumentType: data.relatedDocumentType,
-      relatedDocumentNumber: data.relatedDocumentNumber,
-      clientRnc: data.clientRnc,
-      clientName: data.clientName,
-      ncf: data.ncf,
-      description: data.description,
-      balance: newBalance,
-      bankAccountId: data.bankAccountId,
-      referenceNumber: data.referenceNumber,
-    }, { transaction });
-  }
+  // ✅ REMOVED: createBankRegisterEntry method - now using shared bankRegisterService.createBankRegister()
+  // This eliminates 45 lines of duplicated code that exists in Purchase Service
 
   /**
    * Get last bank balance
@@ -970,20 +961,8 @@ class AccountsPayableService extends BaseService {
     return lastTransaction ? Number(lastTransaction.balance) : 0;
   }
 
-  private getPaymentMethodForBankRegister(paymentMethod?: string): string {
-    if (!paymentMethod) return 'BANK_TRANSFER';
-    
-    const methodMap: Record<string, string> = {
-      'BANK_TRANSFER': 'BANK_TRANSFER',
-      'CHECK': 'CHEQUE',
-      'CHEQUE': 'CHEQUE', 
-      'BANK': 'BANK_TRANSFER',
-      'DEPOSIT': 'BANK_TRANSFER',
-      'BANK_DEPOSIT': 'BANK_TRANSFER'
-    };
-    
-    return methodMap[paymentMethod.toUpperCase()] || 'BANK_TRANSFER';
-  }
+  // ✅ REMOVED: getPaymentMethodForBankRegister method - now using TransactionFactory.getPaymentMethodForBankRegister()
+  // This eliminates 15 lines of duplicated code
 }
 // Create singleton instance
 const accountsPayableService = new AccountsPayableService();
@@ -992,6 +971,7 @@ const accountsPayableService = new AccountsPayableService();
 export const getAllAccountsPayable = (options?: any) => accountsPayableService.getAllAccountsPayable(options);
 export const getAccountsPayableById = (id: number) => accountsPayableService.getAccountsPayableById(id);
 export const getPendingAccountsPayable = () => accountsPayableService.getPendingAccountsPayable();
+export const getPayableAccountsPayable = () => accountsPayableService.getPayableAccountsPayable();
 export const createAccountsPayable = (data: CreateAccountsPayableRequest) => accountsPayableService.createAccountsPayable(data);
 export const createFromPurchase = (data: any) => accountsPayableService.createFromPurchase(data);
 export const createFromBusinessExpense = (data: any) => accountsPayableService.createFromBusinessExpense(data);

@@ -219,6 +219,7 @@ export const createSale = async (data: any) => {
         registrationNumber: registrationNumber,
         registrationDate: new Date(),
         transactionType: 'INFLOW',
+        sourceTransactionType: 'SALE', // ✅ FIX: Add source transaction type
         amount: total,
         paymentMethod: paymentMethodLabel,
         relatedDocumentType: 'Sale',
@@ -229,6 +230,8 @@ export const createSale = async (data: any) => {
         description: `Sale ${registrationNumber} via ${paymentMethodLabel} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
         balance: newBalance,
         bankAccountId: data.bankAccountId,  // ✅ Link to specific bank account
+        bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`, // ✅ FIX: Add bank account name
+        originalPaymentType: paymentType, // ✅ FIX: Add original payment type
       }, { transaction });
     }
     

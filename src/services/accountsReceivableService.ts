@@ -365,22 +365,24 @@ class AccountsReceivableService extends BaseService {
     const lastBankBalance = await this.getLastBankBalance(paymentData.bankAccountId, transaction);
     const newBankBalance = lastBankBalance + amount;
     
-    // Create bank register entry
+    // Create bank register entry with complete field population
     await BankRegister.create({
       registrationNumber: bankRegistrationNumber,
       registrationDate: paymentData.receivedDate || new Date(),
       transactionType: 'INFLOW',
+      sourceTransactionType: 'AR_COLLECTION',
       amount: amount,
       paymentMethod: 'CREDIT_CARD_COLLECTION',
       relatedDocumentType: 'AR_COLLECTION',
       relatedDocumentNumber: ar.registrationNumber,
-      sourceTransactionType: TransactionType.AR_COLLECTION, // ✅ Fixed: Added sourceTransactionType
       clientName: ar.clientName || ar.cardNetwork || 'Credit Card Collection',
       clientRnc: ar.clientRnc || '',
       ncf: ar.ncf || '',
       description: `Credit Card Collection - ${ar.relatedDocumentNumber} - ${ar.clientName || ar.cardNetwork}`,
       balance: newBankBalance,
       bankAccountId: paymentData.bankAccountId,
+      bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+      originalPaymentType: ar.type || 'CREDIT_CARD_SALE'
     }, { transaction });
     
     // Update bank account balance

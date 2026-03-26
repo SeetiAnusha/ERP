@@ -48,6 +48,15 @@ export const getPendingAccountsPayable = async (req: Request, res: Response) => 
   }
 };
 
+export const getPayableAccountsPayable = async (req: Request, res: Response) => {
+  try {
+    const accountsPayable = await accountsPayableService.getPayableAccountsPayable();
+    res.json(accountsPayable);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const createAccountsPayable = async (req: Request, res: Response) => {
   try {
     const accountsPayable = await accountsPayableService.createAccountsPayable(req.body);

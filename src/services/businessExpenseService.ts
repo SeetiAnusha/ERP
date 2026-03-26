@@ -365,22 +365,26 @@ class BusinessExpenseService {
       parseInt(lastBankRegister.registrationNumber.substring(2)) + 1 : 1;
     const bankRegistrationNumber = `BR${String(nextNumber).padStart(4, '0')}`;
     
-    // Create bank register entry (OUTFLOW for expense)
+    // Create bank register entry (OUTFLOW for expense) with complete field population
     await BankRegister.create({
       registrationNumber: bankRegistrationNumber,
       registrationDate: businessExpense.date,
       transactionType: 'OUTFLOW',
+      sourceTransactionType: 'BUSINESS_EXPENSE',
       amount: data.amount,
       paymentMethod: data.paymentType,
       relatedDocumentType: 'Business Expense',
       relatedDocumentNumber: businessExpense.registrationNumber,
-      clientName: supplier.name,
-      clientRnc: data.supplierRnc || '',
+      clientName: supplier.name || 'Unknown Supplier',
+      clientRnc: data.supplierRnc || supplier.rnc || '',
       description: `Business Expense: ${businessExpense.description || businessExpense.expenseType} - ${supplier.name}`,
       balance: newBalance,
       bankAccountId: data.bankAccountId,
+      bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
       chequeNumber: data.chequeNumber,
       transferNumber: data.transferNumber,
+      supplierId: data.supplierId,
+      originalPaymentType: data.paymentType
     }, { transaction });
     
     console.log(`✅ Bank payment processed: Expense ${businessExpense.registrationNumber} -> Bank Register ${bankRegistrationNumber}`);
@@ -398,15 +402,15 @@ class BusinessExpenseService {
     const Card = (await import('../models/Card')).default;
     const AccountsPayable = (await import('../models/AccountsPayable')).default;
     
-    // Get card info
+    // Get card info for validation only
     const card = await Card.findByPk(data.cardId!, { transaction });
     if (!card) {
       throw new Error('Credit card not found');
     }
     
-    // Update used credit
-    const newUsedCredit = Number(card.usedCredit || 0) + data.amount;
-    await card.update({ usedCredit: newUsedCredit }, { transaction });
+    // ✅ FIXED: DO NOT update used credit during expense creation
+    // Credit will be reduced when AP is actually paid through Accounts Payable
+    console.log(`💳 [Credit Card Expense] Creating AP for ${data.amount} - Credit will be reduced when AP is paid`);
     
     // Generate AP registration number
     const lastAP = await AccountsPayable.findOne({
@@ -418,7 +422,7 @@ class BusinessExpenseService {
       parseInt(lastAP.registrationNumber.substring(2)) + 1 : 1;
     const apRegistrationNumber = `AP${String(nextNumber).padStart(4, '0')}`;
     
-    // Create Accounts Payable entry
+    // Create Accounts Payable entry (unpaid)
     await AccountsPayable.create({
       registrationNumber: apRegistrationNumber,
       registrationDate: businessExpense.date,
@@ -440,7 +444,7 @@ class BusinessExpenseService {
       notes: `Credit card expense: ${businessExpense.description || businessExpense.expenseType} - ${card.cardName}`,
     }, { transaction });
     
-    console.log(`✅ Credit card payment processed: Expense ${businessExpense.registrationNumber} -> AP ${apRegistrationNumber}`);
+    console.log(`✅ Credit card expense processed: Expense ${businessExpense.registrationNumber} -> AP ${apRegistrationNumber} (Credit will be reduced when paid)`);
   }
 
   /**
@@ -562,15 +566,18 @@ class BusinessExpenseService {
       registrationNumber: bankRegistrationNumber,
       registrationDate: cost.date,
       transactionType: 'OUTFLOW',
+      sourceTransactionType: 'BUSINESS_EXPENSE',
       amount: cost.amount,
       paymentMethod: cost.paymentType,
       relatedDocumentType: 'Associated Cost',
       relatedDocumentNumber: cost.concept,
-      clientName: cost.supplierName || '',
+      clientName: cost.supplierName || 'Unknown Supplier',
       clientRnc: cost.supplierRnc || '',
       description: `Associated Cost: ${cost.concept}`,
       balance: newBalance,
       bankAccountId: cost.bankAccountId,
+      bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+      originalPaymentType: cost.paymentType
     }, { transaction });
   }
 
@@ -584,9 +591,12 @@ class BusinessExpenseService {
     const card = await Card.findByPk(cost.cardId, { transaction });
     if (!card) return;
     
-    // Update used credit
-    const newUsedCredit = Number(card.usedCredit || 0) + cost.amount;
-    await card.update({ usedCredit: newUsedCredit }, { transaction });
+    // ✅ FIXED: DO NOT update used credit during expense creation
+    // Credit will be reduced when the associated cost AP is actually paid
+    console.log(`💳 [Associated Cost] Credit card expense for ${cost.amount} - Credit will be reduced when AP is paid`);
+    
+    // Note: Associated costs create their own AP entries through the main expense flow
+    // The credit reduction will happen when those APs are paid through Accounts Payable
   }
   /**
    * Get business expense by ID with all associations
@@ -870,17 +880,21 @@ class BusinessExpenseService {
       registrationNumber: bankRegistrationNumber,
       registrationDate: paymentData.registrationDate,
       transactionType: 'OUTFLOW',
+      sourceTransactionType: 'BUSINESS_EXPENSE',
       amount: paymentData.amount,
       paymentMethod: paymentData.paymentMethod,
       relatedDocumentType: 'Business Expense Payment',
       relatedDocumentNumber: expense.registrationNumber,
-      clientName: expense.supplier?.name || 'Supplier',
+      clientName: expense.supplier?.name || 'Unknown Supplier',
       clientRnc: expense.supplierRnc || '',
       description: `Payment for business expense ${expense.registrationNumber} - ${paymentData.description}`,
       balance: newBalance,
       bankAccountId: paymentData.bankAccountId,
+      bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
       chequeNumber: paymentData.chequeNumber,
       transferNumber: paymentData.transferNumber,
+      supplierId: expense.supplierId,
+      originalPaymentType: paymentData.paymentMethod
     }, { transaction });
 
     return { bankEntry, bankRegistrationNumber };

@@ -49,6 +49,7 @@ interface CreateBankRegisterRequest {
   transferNumber?: string;
   supplierId?: number;
   invoiceIds?: string;
+  originalPaymentType?: string;
 }
 
 interface BankRegisterAnalytics {
@@ -150,10 +151,15 @@ class BankRegisterService extends BaseService {
       
       // Step 1: Get all unpaid AP invoices (we'll filter them)
       // Include 'Unpaid', 'Pending', and 'Partial' statuses
+      // 🔥 CRITICAL: Exclude deleted transactions from payment selection
       const allPendingInvoices = await AccountsPayable.findAll({
         where: {
           status: {
             [Op.in]: ['Unpaid', 'Pending', 'Partial']
+          },
+          // 🔥 CRITICAL: Exclude deleted transactions from payment selection
+          deletion_status: {
+            [Op.notIn]: ['EXECUTED'] // Don't show executed deletions
           }
         },
         order: [['registrationDate', 'ASC']]
@@ -488,17 +494,23 @@ class BankRegisterService extends BaseService {
       );
     }
     
-    let chequeNumber = null;
-    let transferNumber = null;
+    let chequeNumber = data.chequeNumber || null;
+    let transferNumber = data.transferNumber || null;
     
     // Generate numbers and process AP payments for specific payment methods
     if (data.paymentMethod === 'CHEQUE') {
-      chequeNumber = await this.generateChequeNumber(data.bankAccountId);
+      // Use provided cheque number or generate one if not provided
+      if (!chequeNumber) {
+        chequeNumber = await this.generateChequeNumber(data.bankAccountId);
+      }
       await this.processAPInvoicePayments(data.supplierId, data.invoiceIds, outflowAmount, transaction);
     }
     
     if (data.paymentMethod === 'BANK_TRANSFER') {
-      transferNumber = await this.generateTransferNumber(data.bankAccountId);
+      // Use provided transfer number or generate one if not provided
+      if (!transferNumber) {
+        transferNumber = await this.generateTransferNumber(data.bankAccountId);
+      }
       await this.processAPInvoicePayments(data.supplierId, data.invoiceIds, outflowAmount, transaction);
     }
     
@@ -539,6 +551,48 @@ class BankRegisterService extends BaseService {
       // Validate transaction type
       if (!['INFLOW', 'OUTFLOW'].includes(data.transactionType)) {
         throw new ValidationError('Transaction type must be either INFLOW or OUTFLOW');
+      }
+      
+      // Populate bank account name if bankAccountId is provided but bankAccountName is not
+      if (data.bankAccountId && !data.bankAccountName) {
+        const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
+        if (bankAccount) {
+          data.bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
+        }
+      }
+      
+      // Ensure required fields are not null/empty
+      if (!data.clientName) {
+        data.clientName = 'Unknown Client';
+      }
+      if (!data.clientRnc) {
+        data.clientRnc = '';
+      }
+      if (!data.description) {
+        data.description = `${data.transactionType} - ${data.relatedDocumentType || 'Transaction'}`;
+      }
+      
+      // Provide default source transaction type if not specified
+      if (!data.sourceTransactionType) {
+        // Determine source transaction type based on related document type
+        switch (data.relatedDocumentType?.toLowerCase()) {
+          case 'purchase':
+            data.sourceTransactionType = TransactionType.PURCHASE;
+            break;
+          case 'business expense':
+          case 'businessexpense':
+            data.sourceTransactionType = TransactionType.BUSINESS_EXPENSE;
+            break;
+          case 'sale':
+            data.sourceTransactionType = TransactionType.SALE;
+            break;
+          case 'ar_collection':
+          case 'ar collection':
+            data.sourceTransactionType = TransactionType.AR_COLLECTION;
+            break;
+          default:
+            data.sourceTransactionType = TransactionType.PAYMENT; // Default fallback
+        }
       }
       
       // Generate registration number
@@ -614,6 +668,15 @@ class BankRegisterService extends BaseService {
     transferNumber?: string;
   }): Promise<BankRegister> {
     
+    // Get bank account name if bankAccountId is provided
+    let bankAccountName = '';
+    if (purchaseData.bankAccountId) {
+      const bankAccount = await BankAccount.findByPk(purchaseData.bankAccountId);
+      if (bankAccount) {
+        bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
+      }
+    }
+    
     const bankRegisterData: Omit<CreateBankRegisterRequest, 'sourceTransactionType'> = {
       registrationDate: purchaseData.date,
       transactionType: 'OUTFLOW',
@@ -621,13 +684,15 @@ class BankRegisterService extends BaseService {
       paymentMethod: purchaseData.paymentMethod,
       relatedDocumentType: 'Purchase',
       relatedDocumentNumber: purchaseData.registrationNumber,
-      clientRnc: purchaseData.supplierRnc,
-      clientName: purchaseData.supplierName,
-      description: purchaseData.description,
+      clientRnc: purchaseData.supplierRnc || '',
+      clientName: purchaseData.supplierName || 'Unknown Supplier',
+      description: purchaseData.description || `Purchase - ${purchaseData.registrationNumber}`,
       bankAccountId: purchaseData.bankAccountId,
+      bankAccountName: bankAccountName,
       chequeNumber: purchaseData.chequeNumber,
       transferNumber: purchaseData.transferNumber,
-      supplierId: purchaseData.supplierId
+      supplierId: purchaseData.supplierId,
+      originalPaymentType: purchaseData.paymentMethod
     };
     
     return this.createEntryWithTransactionType(bankRegisterData, SourceSystem.PURCHASE_SYSTEM);
@@ -652,20 +717,31 @@ class BankRegisterService extends BaseService {
     transferNumber?: string;
   }): Promise<BankRegister> {
     
+    // Get bank account name if bankAccountId is provided
+    let bankAccountName = '';
+    if (expenseData.bankAccountId) {
+      const bankAccount = await BankAccount.findByPk(expenseData.bankAccountId);
+      if (bankAccount) {
+        bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
+      }
+    }
+    
     const bankRegisterData: Omit<CreateBankRegisterRequest, 'sourceTransactionType'> = {
       registrationDate: expenseData.date,
       transactionType: 'OUTFLOW',
       amount: expenseData.amount,
       paymentMethod: expenseData.paymentMethod,
-      relatedDocumentType: 'BusinessExpense',
+      relatedDocumentType: 'Business Expense',
       relatedDocumentNumber: expenseData.registrationNumber,
-      clientRnc: expenseData.supplierRnc,
-      clientName: expenseData.supplierName,
-      description: expenseData.description,
+      clientRnc: expenseData.supplierRnc || '',
+      clientName: expenseData.supplierName || 'Unknown Supplier',
+      description: expenseData.description || `Business Expense - ${expenseData.registrationNumber}`,
       bankAccountId: expenseData.bankAccountId,
+      bankAccountName: bankAccountName,
       chequeNumber: expenseData.chequeNumber,
       transferNumber: expenseData.transferNumber,
-      supplierId: expenseData.supplierId
+      supplierId: expenseData.supplierId,
+      originalPaymentType: expenseData.paymentMethod
     };
     
     return this.createEntryWithTransactionType(bankRegisterData, SourceSystem.BUSINESS_EXPENSE_SYSTEM);

@@ -1,9 +1,9 @@
 import './config/sequelize-fix'; // Must be first!
+import './models/associations'; // Import associations early to set up model relationships
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import sequelize from './config/database';
-import './models/associations'; // Import associations to set up model relationships
 import clientRoutes from './routes/clientRoutes';
 import supplierRoutes from './routes/supplierRoutes';
 import saleRoutes from './routes/saleRoutes';
@@ -36,6 +36,10 @@ import expenseRoutes from './routes/expenseRoutes';
 import businessExpenseRoutes from './routes/businessExpenseRoutes';
 import creditBalanceRoutes from './routes/creditBalanceRoutes';
 import customerCreditAwarePaymentRoutes from './routes/customerCreditAwarePaymentRoutes';
+import authRoutes from './routes/authRoutes';
+import dataClassificationRoutes from './routes/dataClassificationRoutes';
+import transactionDeletionRoutes from './routes/transactionDeletionRoutes';
+import creditCardRegisterRoutes from './routes/creditCardRegisterRoutes';
 import * as productPriceService from './services/productPriceService';
 
 dotenv.config();
@@ -78,6 +82,10 @@ app.use('/api/business-expenses', businessExpenseRoutes);
 app.use('/api/credit-balances', creditBalanceRoutes);
 app.use('/api/credit-aware-payment', creditAwarePaymentRoutes);
 app.use('/api/customer-credit-aware-payment', customerCreditAwarePaymentRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/data-classification', dataClassificationRoutes);
+app.use('/api/transaction-deletion', transactionDeletionRoutes);
+app.use('/api/credit-card-register', creditCardRegisterRoutes);
 
 // Root route
 app.get('/', (req, res) => {

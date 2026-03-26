@@ -738,6 +738,7 @@ class CashRegisterService extends BaseService {
       registrationNumber: bankRegistrationNumber,
       registrationDate: data.registrationDate,
       transactionType: 'INFLOW',
+      sourceTransactionType: 'TRANSFER', // ✅ FIX: Add source transaction type for cash register deposits
       amount: data.amount,
       paymentMethod: 'BANK_DEPOSIT',
       relatedDocumentType: 'Cash Register Deposit',
@@ -1082,6 +1083,7 @@ export const createCashTransaction = async (data: any, externalTransaction?: any
           registrationNumber: bankRegistrationNumber,
           registrationDate: data.registrationDate,
           transactionType: 'INFLOW',
+          sourceTransactionType: 'TRANSFER', // ✅ FIX: Add source transaction type for cash register deposits
           amount: data.amount,
           paymentMethod: 'BANK_DEPOSIT',
           relatedDocumentType: 'Cash Register Deposit',

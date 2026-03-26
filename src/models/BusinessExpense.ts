@@ -33,6 +33,14 @@ interface BusinessExpenseAttributes {
   paymentReference?: string;
   voucherDate?: Date;
   
+  // ✅ NEW: Deletion tracking fields
+  deletion_status?: string;
+  deleted_at?: Date;
+  deleted_by?: number;
+  deletion_reason_code?: string;
+  deletion_memo?: string;
+  deletion_approval_id?: number;
+  
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -65,6 +73,14 @@ class BusinessExpense extends Model<BusinessExpenseAttributes, BusinessExpenseCr
   public transferDate?: Date;
   public paymentReference?: string;
   public voucherDate?: Date;
+  
+  // ✅ NEW: Deletion tracking fields (same as other models)
+  public deletion_status?: string;
+  public deleted_at?: Date;
+  public deleted_by?: number;
+  public deletion_reason_code?: string;
+  public deletion_memo?: string;
+  public deletion_approval_id?: number;
   
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -199,6 +215,33 @@ BusinessExpense.init(
     },
     voucherDate: {
       type: DataTypes.DATE,
+      allowNull: true,
+    },
+    
+    // ✅ NEW: Deletion tracking fields
+    deletion_status: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      defaultValue: null,
+    },
+    deleted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    deleted_by: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    deletion_reason_code: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    deletion_memo: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    deletion_approval_id: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
   },
