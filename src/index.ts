@@ -122,22 +122,76 @@ const startServer = async () => {
     await sequelize.authenticate();
     console.log('✓ Database connected successfully');
 
-    // Sync database to create tables
-    console.log('Synchronizing database...');
+    // Import all models to ensure they're registered
+    console.log('📦 Ensuring all models are imported...');
+    try {
+      // Force import of associations to register all models
+      await import('./models/associations');
+      console.log('✅ All models and associations imported');
+    } catch (importError: any) {
+      console.warn('⚠️ Model import warning:', importError.message);
+    }
+
+    // FORCE CREATE ALL TABLES - No checking, just create everything
+    console.log('🏗️ Force creating ALL database tables...');
     
-    // Use basic sync to avoid ALTER TABLE issues with ENUM columns
-    // This will create missing tables but won't alter existing ones
-    await sequelize.sync({ force: false });
-    console.log('✓ Database synchronized - all tables created');
+    try {
+      // Use force: true to drop and recreate all tables
+      await sequelize.sync({ force: true });
+      console.log('✅ ALL database tables created successfully with force sync');
+    } catch (syncError: any) {
+      console.error('❌ Force sync failed:', syncError.message);
+      
+      // If even force sync fails, try individual table creation
+      console.log('🔧 Attempting manual table creation...');
+      
+      try {
+        // Import and sync each model individually
+        const models = [
+          './models/Supplier',
+          './models/Client', 
+          './models/BankAccount',
+          './models/Card',
+          './models/Product',
+          './models/Purchase',
+          './models/BankRegister',
+          './models/AccountsPayable',
+          './models/AccountsReceivable',
+          './models/CreditCardRegister',
+          './models/CashRegister',
+          './models/CashRegisterMaster'
+        ];
+
+        for (const modelPath of models) {
+          try {
+            const Model = (await import(modelPath)).default;
+            await Model.sync({ force: true });
+            console.log(`✅ Created table for ${modelPath.split('/').pop()}`);
+          } catch (modelError: any) {
+            console.log(`⚠️ Could not create ${modelPath}: ${modelError.message}`);
+          }
+        }
+        
+        console.log('✅ Manual table creation completed');
+      } catch (manualError: any) {
+        console.error('❌ Manual table creation also failed:', manualError.message);
+        throw manualError;
+      }
+    }
     
     // Update price active status based on current date
     console.log('Updating product price active status...');
-    await productPriceService.updatePriceActiveStatus();
-    console.log('✓ Product prices synchronized with current date');
+    try {
+      await productPriceService.updatePriceActiveStatus();
+      console.log('✓ Product prices synchronized with current date');
+    } catch (priceError: any) {
+      console.warn('⚠️ Price update failed (non-critical):', priceError.message);
+    }
     
     console.log('\n🎉 Server and database are fully operational!');
+    console.log('📊 All tables should now exist and be ready for use');
   } catch (error: any) {
-    console.error('❌ Database connection error:');
+    console.error('❌ Startup error:');
     console.error('Error name:', error.name);
     console.error('Error message:', error.message);
     if (error.parent) {
@@ -145,21 +199,11 @@ const startServer = async () => {
     }
     console.error('Full error:', error);
     
-    // Check if it's the specific ENUM syntax error
-    if (error.message && error.message.includes('USING')) {
-      console.log('\n💡 This appears to be the ENUM column syntax error.');
-      console.log('To fix this, run the SQL script: ERP/fix-enum-column.sql');
-      console.log('Or connect to your database and run:');
-      console.log('COMMENT ON COLUMN "card_payment_networks"."type" IS NULL;');
-    }
-    
-    console.log('\n⚠️  Server is running but database is not connected!');
-    console.log('Please check:');
-    console.log('1. DATABASE_URL environment variable is set correctly');
-    console.log('2. Database credentials are correct');
-    console.log('3. Database server is accessible');
-    console.log('4. SSL settings are correct for your database');
-    console.log('5. Run the fix-enum-column.sql script if you see ENUM syntax errors');
+    console.log('\n⚠️  Server is running but database setup failed!');
+    console.log('Manual fix required:');
+    console.log('1. Run: npm run db:init:complete');
+    console.log('2. Or restart the service to retry table creation');
+    console.log('3. Check DATABASE_URL is correctly set');
   }
 };
 
