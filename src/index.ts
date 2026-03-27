@@ -132,50 +132,57 @@ const startServer = async () => {
       console.warn('⚠️ Model import warning:', importError.message);
     }
 
-    // FORCE CREATE ALL TABLES - No checking, just create everything
-    console.log('🏗️ Force creating ALL database tables...');
+    // SAFE DATABASE SYNC - Preserve existing data
+    console.log('🏗️ Syncing database tables (preserving data)...');
     
     try {
-      // Use force: true to drop and recreate all tables
-      await sequelize.sync({ force: true });
-      console.log('✅ ALL database tables created successfully with force sync');
+      // Use safe sync that preserves data
+      await sequelize.sync({ force: false, alter: false });
+      console.log('✅ Database tables synced successfully (data preserved)');
     } catch (syncError: any) {
-      console.error('❌ Force sync failed:', syncError.message);
+      console.error('❌ Safe sync failed:', syncError.message);
       
-      // If even force sync fails, try individual table creation
-      console.log('🔧 Attempting manual table creation...');
-      
-      try {
-        // Import and sync each model individually
-        const models = [
-          './models/Supplier',
-          './models/Client', 
-          './models/BankAccount',
-          './models/Card',
-          './models/Product',
-          './models/Purchase',
-          './models/BankRegister',
-          './models/AccountsPayable',
-          './models/AccountsReceivable',
-          './models/CreditCardRegister',
-          './models/CashRegister',
-          './models/CashRegisterMaster'
-        ];
-
-        for (const modelPath of models) {
-          try {
-            const Model = (await import(modelPath)).default;
-            await Model.sync({ force: true });
-            console.log(`✅ Created table for ${modelPath.split('/').pop()}`);
-          } catch (modelError: any) {
-            console.log(`⚠️ Could not create ${modelPath}: ${modelError.message}`);
-          }
-        }
+      // Only use force sync if explicitly requested via environment variable
+      if (process.env.FORCE_DB_RESET === 'true') {
+        console.log('🔧 FORCE_DB_RESET=true detected, recreating tables...');
+        await sequelize.sync({ force: true });
+        console.log('✅ Database tables recreated (data lost)');
+      } else {
+        console.log('🔧 Attempting individual table creation (safe mode)...');
         
-        console.log('✅ Manual table creation completed');
-      } catch (manualError: any) {
-        console.error('❌ Manual table creation also failed:', manualError.message);
-        throw manualError;
+        try {
+          // Import and sync each model individually without force
+          const models = [
+            './models/Supplier',
+            './models/Client', 
+            './models/BankAccount',
+            './models/Card',
+            './models/Product',
+            './models/Purchase',
+            './models/BankRegister',
+            './models/AccountsPayable',
+            './models/AccountsReceivable',
+            './models/CreditCardRegister',
+            './models/CashRegister',
+            './models/CashRegisterMaster'
+          ];
+
+          for (const modelPath of models) {
+            try {
+              const Model = (await import(modelPath)).default;
+              await Model.sync({ force: false });
+              console.log(`✅ Synced table for ${modelPath.split('/').pop()}`);
+            } catch (modelError: any) {
+              console.log(`⚠️ Could not sync ${modelPath}: ${modelError.message}`);
+            }
+          }
+          
+          console.log('✅ Individual table sync completed');
+        } catch (manualError: any) {
+          console.error('❌ Individual table sync failed:', manualError.message);
+          console.log('💡 To force recreate tables (WILL LOSE DATA): set FORCE_DB_RESET=true');
+          throw manualError;
+        }
       }
     }
     

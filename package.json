@@ -14,9 +14,11 @@
     "start:prod": "NODE_ENV=production node dist/index.js",
     "db:init": "node scripts/init-database.js",
     "db:init:complete": "node scripts/init-database-complete.js",
+    "db:init:safe": "node scripts/safe-db-init.js",
     "db:create:all": "node scripts/create-all-tables.js",
     "db:reset": "NODE_ENV=production node scripts/init-database-complete.js",
     "db:force": "NODE_ENV=production node -e \"const {Sequelize} = require('sequelize'); const s = new Sequelize(process.env.DATABASE_URL, {dialect:'postgres', dialectOptions:{ssl:{require:true, rejectUnauthorized:false}}, logging:console.log}); require('./dist/models/associations'); s.sync({force:true}).then(() => {console.log('✅ All tables created'); process.exit(0);}).catch(e => {console.error('❌', e); process.exit(1);});\"",
+    "insert:production:data": "node scripts/insert-production-data.js",
     "test": "jest",
     "test:watch": "jest --watch"
   },
