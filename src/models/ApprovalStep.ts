@@ -66,7 +66,7 @@ ApprovalStep.init(
     approver_id: {
       type: DataTypes.INTEGER,
       references: {
-        model: 'users',
+        model: 'auth_users',
         key: 'id',
       },
     },
@@ -76,7 +76,7 @@ ApprovalStep.init(
     approved_by: {
       type: DataTypes.INTEGER,
       references: {
-        model: 'users',
+        model: 'auth_users',
         key: 'id',
       },
     },

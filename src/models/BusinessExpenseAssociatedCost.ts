@@ -115,11 +115,8 @@ BusinessExpenseAssociatedCost.init(
   }
 );
 
-// Define associations - Use lazy loading to avoid circular dependency
-import('./BusinessExpense').then((module) => {
-  const BusinessExpense = module.default;
-  BusinessExpenseAssociatedCost.belongsTo(BusinessExpense, { foreignKey: 'businessExpenseId', as: 'businessExpense' });
-});
+// Define associations - handled in businessExpenseAssociations.ts to avoid circular dependency
+// BusinessExpenseAssociatedCost.belongsTo(BusinessExpense, { foreignKey: 'businessExpenseId', as: 'businessExpense' });
 
 BusinessExpenseAssociatedCost.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'bankAccount' });
 BusinessExpenseAssociatedCost.belongsTo(Card, { foreignKey: 'cardId', as: 'card' });

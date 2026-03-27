@@ -74,7 +74,7 @@ TransactionAuditTrail.init(
       type: DataTypes.INTEGER,
       allowNull: false,
       references: {
-        model: 'users',
+        model: 'auth_users',
         key: 'id',
       },
     },

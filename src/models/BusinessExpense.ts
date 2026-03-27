@@ -277,10 +277,7 @@ BusinessExpense.belongsTo(ExpenseType, { foreignKey: 'expenseTypeId', as: 'expen
 BusinessExpense.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'bankAccount' });
 BusinessExpense.belongsTo(Card, { foreignKey: 'cardId', as: 'card' });
 
-// Import BusinessExpenseAssociatedCost after to avoid circular dependency
-import('./BusinessExpenseAssociatedCost').then((module) => {
-  const BusinessExpenseAssociatedCost = module.default;
-  BusinessExpense.hasMany(BusinessExpenseAssociatedCost, { foreignKey: 'businessExpenseId', as: 'associatedCosts' });
-});
+// NOTE: BusinessExpenseAssociatedCost association is handled in businessExpenseAssociations.ts
+// to avoid circular dependency issues
 
 export default BusinessExpense;

@@ -125,9 +125,13 @@ const startServer = async () => {
     // Import all models to ensure they're registered
     console.log('📦 Ensuring all models are imported...');
     try {
-      // Force import of associations to register all models
-      await import('./models/associations');
-      console.log('✅ All models and associations imported');
+      // Use the comprehensive model registry
+      const { syncAllModels, getModelCount } = await import('./models/index');
+      console.log(`✅ Loaded ${getModelCount()} models from registry`);
+      
+      // Sync all models with safe settings
+      await syncAllModels({ force: false, alter: false });
+      console.log('✅ All models synced successfully');
     } catch (importError: any) {
       console.warn('⚠️ Model import warning:', importError.message);
     }
@@ -145,41 +149,19 @@ const startServer = async () => {
       // Only use force sync if explicitly requested via environment variable
       if (process.env.FORCE_DB_RESET === 'true') {
         console.log('🔧 FORCE_DB_RESET=true detected, recreating tables...');
-        await sequelize.sync({ force: true });
+        const { syncAllModels } = await import('./models/index');
+        await syncAllModels({ force: true });
         console.log('✅ Database tables recreated (data lost)');
       } else {
-        console.log('🔧 Attempting individual table creation (safe mode)...');
+        console.log('🔧 Attempting comprehensive model sync (safe mode)...');
         
         try {
-          // Import and sync each model individually without force
-          const models = [
-            './models/Supplier',
-            './models/Client', 
-            './models/BankAccount',
-            './models/Card',
-            './models/Product',
-            './models/Purchase',
-            './models/BankRegister',
-            './models/AccountsPayable',
-            './models/AccountsReceivable',
-            './models/CreditCardRegister',
-            './models/CashRegister',
-            './models/CashRegisterMaster'
-          ];
-
-          for (const modelPath of models) {
-            try {
-              const Model = (await import(modelPath)).default;
-              await Model.sync({ force: false });
-              console.log(`✅ Synced table for ${modelPath.split('/').pop()}`);
-            } catch (modelError: any) {
-              console.log(`⚠️ Could not sync ${modelPath}: ${modelError.message}`);
-            }
-          }
-          
-          console.log('✅ Individual table sync completed');
+          // Use the comprehensive model registry for safe sync
+          const { syncAllModels } = await import('./models/index');
+          await syncAllModels({ force: false, alter: false });
+          console.log('✅ Comprehensive model sync completed');
         } catch (manualError: any) {
-          console.error('❌ Individual table sync failed:', manualError.message);
+          console.error('❌ Comprehensive sync failed:', manualError.message);
           console.log('💡 To force recreate tables (WILL LOSE DATA): set FORCE_DB_RESET=true');
           throw manualError;
         }
