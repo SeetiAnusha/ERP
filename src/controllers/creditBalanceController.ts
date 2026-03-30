@@ -3,12 +3,12 @@ import * as creditBalanceService from '../services/creditBalanceService';
 
 export const getAllActiveCreditBalances = async (req: Request, res: Response) => {
   try {
-    console.log('📋 Fetching all active credit balances...');
+    console.log(' Fetching all active credit balances...');
     const creditBalances = await creditBalanceService.getAllActiveCreditBalances();
     console.log(`✅ Found ${creditBalances.length} active credit balances`);
     res.json(creditBalances);
   } catch (error: any) {
-    console.error('❌ Error fetching credit balances:', error);
+    console.error(' Error fetching credit balances:', error);
     res.status(500).json({ error: error.message });
   }
 };

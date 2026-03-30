@@ -91,7 +91,7 @@ export class TransactionDeletionService extends BaseService {
    */
   async executeApprovedDeletion(data: ExecuteDeletionData): Promise<void> {
     return this.executeWithTransaction(async (transaction) => {
-      console.log(`🚀 [DSA-Optimized] Starting deletion execution for request ${data.approvalRequestId}`);
+      console.log(` [DSA-Optimized] Starting deletion execution for request ${data.approvalRequestId}`);
       
       // Step 1: Validate approval request (keep existing logic)
       const approvalRequest = await this.validateApprovalRequest(data.approvalRequestId, transaction);
@@ -103,7 +103,7 @@ export class TransactionDeletionService extends BaseService {
         transaction
       );
       
-      console.log(`📊 [Graph Analysis] Built dependency graph with ${dependencyGraph.nodes.length} nodes, ${dependencyGraph.edges.length} edges`);
+      console.log(` [Graph Analysis] Built dependency graph with ${dependencyGraph.nodes.length} nodes, ${dependencyGraph.edges.length} edges`);
       
       // Step 3: Generate reversal operations for all nodes (delegated to handlers)
       const reversalOperations: ReversalOperation[] = [];
@@ -118,7 +118,7 @@ export class TransactionDeletionService extends BaseService {
         reversalOperations.push(...nodeOperations);
       }
       
-      console.log(`🔄 [Operations Generated] Total operations: ${reversalOperations.length}`);
+      console.log(` [Operations Generated] Total operations: ${reversalOperations.length}`);
       
       // Step 4: Execute all operations in batches (delegated to BatchProcessor)
       await this.batchProcessor.executeBatchOperations(reversalOperations, transaction);
@@ -126,7 +126,7 @@ export class TransactionDeletionService extends BaseService {
       // Step 5: Finalize execution (keep existing logic)
       await this.finalizeExecution(data, approvalRequest, transaction);
       
-      console.log(`✅ [Deletion Complete] Successfully executed deletion for request ${data.approvalRequestId}`);
+      console.log(` [Deletion Complete] Successfully executed deletion for request ${data.approvalRequestId}`);
     });
   }
 
@@ -141,7 +141,7 @@ export class TransactionDeletionService extends BaseService {
     transaction: Transaction
   ): Promise<ReversalOperation[]> {
     
-    console.log(`🔄 [Node Processing] Generating operations for ${node.type} ${node.registrationNumber}`);
+    console.log(` [Node Processing] Generating operations for ${node.type} ${node.registrationNumber}`);
     
     switch (node.type) {
       case 'PURCHASE':
@@ -201,7 +201,7 @@ export class TransactionDeletionService extends BaseService {
         );
         
       default:
-        console.warn(`⚠️ [Unknown Type] No handler for entity type: ${node.type}`);
+        console.warn(` [Unknown Type] No handler for entity type: ${node.type}`);
         return [];
     }
   }
@@ -228,7 +228,7 @@ export class TransactionDeletionService extends BaseService {
       throw new BusinessLogicError(`Approval request ${approvalRequestId} has already been executed at ${approvalRequest.executed_at}`);
     }
     
-    console.log(`✅ [Validation] Approval request ${approvalRequestId} validated successfully`);
+    console.log(` [Validation] Approval request ${approvalRequestId} validated successfully`);
     return approvalRequest;
   }
 
@@ -263,7 +263,7 @@ export class TransactionDeletionService extends BaseService {
       }
     }, transaction);
     
-    console.log(`📋 [Audit Trail] Created audit entry for deletion execution`);
+    console.log(` [Audit Trail] Created audit entry for deletion execution`);
   }
 
   /**
@@ -414,7 +414,7 @@ export class TransactionDeletionService extends BaseService {
         transaction
       });
       
-      console.log(`✅ [Deletion Service] Retrieved ${registers.length} available bank registers for deletion (excluded deleted/reversed)`);
+      console.log(` [Deletion Service] Retrieved ${registers.length} available bank registers for deletion (excluded deleted/reversed)`);
       return registers;
     });
   }
@@ -443,7 +443,7 @@ export class TransactionDeletionService extends BaseService {
         transaction
       });
       
-      console.log(`✅ [Deletion Service] Retrieved ${registers.length} available cash registers for deletion (excluded deleted/reversed)`);
+      console.log(` [Deletion Service] Retrieved ${registers.length} available cash registers for deletion (excluded deleted/reversed)`);
       return registers;
     });
   }

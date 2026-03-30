@@ -8,7 +8,7 @@ export const getCustomerPaymentPreview = async (req: Request, res: Response) => 
   try {
     const { customerId, invoiceIds, requestedAmount, useExistingCredit = true } = req.body;
     
-    console.log('🔍 Getting customer payment preview for:', { customerId, invoiceIds, requestedAmount, useExistingCredit });
+    console.log(' Getting customer payment preview for:', { customerId, invoiceIds, requestedAmount, useExistingCredit });
     
     const preview = await customerCreditAwarePaymentService.getCustomerPaymentPreview(
       customerId,
@@ -19,7 +19,7 @@ export const getCustomerPaymentPreview = async (req: Request, res: Response) => 
     
     res.json(preview);
   } catch (error: any) {
-    console.error('❌ Error getting customer payment preview:', error);
+    console.error(' Error getting customer payment preview:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -30,8 +30,8 @@ export const getCustomerPaymentPreview = async (req: Request, res: Response) => 
  */
 export const processCustomerPayment = async (req: Request, res: Response) => {
   try {
-    console.log('🎯 Processing customer credit-aware payment...');
-    console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
+    console.log(' Processing customer credit-aware payment...');
+    console.log(' Request body:', JSON.stringify(req.body, null, 2));
     
     const result = await customerCreditAwarePaymentService.processCustomerCreditAwarePayment(req.body);
     
@@ -41,7 +41,7 @@ export const processCustomerPayment = async (req: Request, res: Response) => {
       res.status(400).json(result);
     }
   } catch (error: any) {
-    console.error('❌ Error processing customer credit-aware payment:', error);
+    console.error(' Error processing customer credit-aware payment:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -52,7 +52,7 @@ export const processCustomerPayment = async (req: Request, res: Response) => {
  */
 export const processSimpleCustomerPayment = async (req: Request, res: Response) => {
   try {
-    console.log('🎯 Processing SIMPLE customer credit-aware payment...');
+    console.log(' Processing SIMPLE customer credit-aware payment...');
     
     // Force disable existing credit usage for simple mode
     const requestWithSimpleMode = {

@@ -564,7 +564,7 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
         transaction
       });
     } else {
-      console.log(`ℹ️ [Payment Collection] Sale ${sale.registrationNumber} was already paid during creation - no additional cash/bank register entry needed`);
+      console.log(` [Payment Collection] Sale ${sale.registrationNumber} was already paid during creation - no additional cash/bank register entry needed`);
     }
     
     await transaction.commit();

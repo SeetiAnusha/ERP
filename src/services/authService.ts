@@ -12,11 +12,11 @@ const JWT_REFRESH_EXPIRES_IN: string = process.env.JWT_REFRESH_EXPIRES_IN || '7d
 
 // Validate JWT configuration
 if (!JWT_SECRET || JWT_SECRET === 'your-secret-key-change-in-production') {
-  console.warn('⚠️  WARNING: Using default JWT_SECRET. Please set a secure JWT_SECRET in production!');
+  console.warn('  WARNING: Using default JWT_SECRET. Please set a secure JWT_SECRET in production!');
 }
 
 if (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET === 'your-refresh-secret-key') {
-  console.warn('⚠️  WARNING: Using default JWT_REFRESH_SECRET. Please set a secure JWT_REFRESH_SECRET in production!');
+  console.warn('  WARNING: Using default JWT_REFRESH_SECRET. Please set a secure JWT_REFRESH_SECRET in production!');
 }
 
 // Interfaces

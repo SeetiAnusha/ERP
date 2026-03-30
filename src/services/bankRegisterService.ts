@@ -108,13 +108,13 @@ class BankRegisterService extends BaseService {
    */
   async getAllBankRegisters(): Promise<BankRegister[]> {
     return this.executeWithRetry(async () => {
-      console.log('🔍 Service: getAllBankRegisters called');
+      console.log(' Service: getAllBankRegisters called');
       
       const registers = await BankRegister.findAll({
         order: [['registrationDate', 'DESC']],
       });
       
-      console.log(`✅ Retrieved ${registers.length} bank registers successfully`);
+      console.log(` Retrieved ${registers.length} bank registers successfully`);
       return registers;
     });
   }
@@ -146,18 +146,18 @@ class BankRegisterService extends BaseService {
     return this.executeWithRetry(async () => {
       this.validateNumeric(supplierId, 'Supplier ID', { min: 1 });
       
-      console.log(`🔍 [BankRegister] Getting pending invoices for supplier ID: ${supplierId}`);
-      console.log(`🔍 [BankRegister] DEBUG: Method called with supplierId: ${supplierId}`);
+      console.log(` [BankRegister] Getting pending invoices for supplier ID: ${supplierId}`);
+      console.log(` [BankRegister] DEBUG: Method called with supplierId: ${supplierId}`);
       
       // Step 1: Get all unpaid AP invoices (we'll filter them)
       // Include 'Unpaid', 'Pending', and 'Partial' statuses
-      // 🔥 CRITICAL: Exclude deleted transactions from payment selection
+      //  CRITICAL: Exclude deleted transactions from payment selection
       const allPendingInvoices = await AccountsPayable.findAll({
         where: {
           status: {
             [Op.in]: ['Unpaid', 'Pending', 'Partial']
           },
-          // 🔥 CRITICAL: Exclude deleted transactions from payment selection
+          //  CRITICAL: Exclude deleted transactions from payment selection
           deletion_status: {
             [Op.notIn]: ['EXECUTED'] // Don't show executed deletions
           }
@@ -165,12 +165,12 @@ class BankRegisterService extends BaseService {
         order: [['registrationDate', 'ASC']]
       });
       
-      console.log(`🔍 [BankRegister] Found ${allPendingInvoices.length} total unpaid AP invoices (Unpaid, Pending, Partial)`);
-      console.log(`🔍 [BankRegister] DEBUG: Statuses included: Unpaid, Pending, Partial`);
+      console.log(` [BankRegister] Found ${allPendingInvoices.length} total unpaid AP invoices (Unpaid, Pending, Partial)`);
+      console.log(` [BankRegister] DEBUG: Statuses included: Unpaid, Pending, Partial`);
       
       // Debug: Log all found invoices
       allPendingInvoices.forEach((ap, index) => {
-        console.log(`🔍 [BankRegister] DEBUG Invoice ${index + 1}: ${ap.registrationNumber} - Status: ${ap.status} - Supplier: ${ap.supplierId} - Type: ${ap.relatedDocumentType}`);
+        console.log(` [BankRegister] DEBUG Invoice ${index + 1}: ${ap.registrationNumber} - Status: ${ap.status} - Supplier: ${ap.supplierId} - Type: ${ap.relatedDocumentType}`);
       });
       
       // Step 2: Filter invoices for this supplier
@@ -207,14 +207,14 @@ class BankRegisterService extends BaseService {
           debugInfo = `No match (supplierId: ${ap.supplierId}, relatedDocumentType: ${ap.relatedDocumentType})`;
         }
         
-        console.log(`🔍 [BankRegister] AP ${ap.registrationNumber}: ${debugInfo} -> ${includeInvoice ? 'INCLUDE' : 'EXCLUDE'}`);
+        console.log(` [BankRegister] AP ${ap.registrationNumber}: ${debugInfo} -> ${includeInvoice ? 'INCLUDE' : 'EXCLUDE'}`);
         
         if (includeInvoice) {
           filteredInvoices.push(ap);
         }
       }
       
-      console.log(`🔍 [BankRegister] Filtered to ${filteredInvoices.length} invoices for supplier ${supplierId}`);
+      console.log(` [BankRegister] Filtered to ${filteredInvoices.length} invoices for supplier ${supplierId}`);
       
       // Step 3: Transform the data to include invoice details for frontend display
       const result = filteredInvoices.map(ap => ({
@@ -233,7 +233,7 @@ class BankRegisterService extends BaseService {
         relatedDocumentType: ap.relatedDocumentType
       }));
       
-      console.log(`🔍 [BankRegister] Returning ${result.length} formatted invoices`);
+      console.log(` [BankRegister] Returning ${result.length} formatted invoices`);
       return result;
     });
   }
@@ -386,7 +386,7 @@ class BankRegisterService extends BaseService {
           status,
         }, { transaction });
         
-        // 🔄 Update related Business Expense if this AP is from a business expense
+        //  Update related Business Expense if this AP is from a business expense
         await this.updateRelatedBusinessExpense(apInvoice, paymentAmount, status, transaction);
       }
     } else {
@@ -404,7 +404,7 @@ class BankRegisterService extends BaseService {
             status,
           }, { transaction });
           
-          // 🔄 Update related Business Expense if this AP is from a business expense
+          //  Update related Business Expense if this AP is from a business expense
           await this.updateRelatedBusinessExpense(apInvoice, amount, status, transaction);
         }
       }
@@ -537,7 +537,7 @@ class BankRegisterService extends BaseService {
    */
   async createBankRegister(data: CreateBankRegisterRequest, externalTransaction?: Transaction): Promise<BankRegister> {
     return this.executeWithTransaction(async (transaction) => {
-      console.log('🏦 Service: createBankRegister called with data:', {
+      console.log(' Service: createBankRegister called with data:', {
         transactionType: data.transactionType,
         amount: data.amount,
         paymentMethod: data.paymentMethod,
@@ -615,7 +615,7 @@ class BankRegisterService extends BaseService {
         result = await this.processOutflowTransaction(data, registrationNumber, newBalance, transaction);
       }
       
-      console.log('✅ Bank register entry created successfully:', result.registrationNumber);
+      console.log(' Bank register entry created successfully:', result.registrationNumber);
       return result;
       
     }, externalTransaction);

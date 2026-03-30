@@ -81,7 +81,7 @@ export class CreditAwarePaymentService extends BaseService {
       const creditToUse = Math.min(totalAvailableCredit, actualPaymentAmount);
       let bankPaymentNeeded = Math.max(0, actualPaymentAmount - creditToUse);
 
-      console.log(`💡 SMART CALCULATION:`);
+      console.log(` SMART CALCULATION:`);
       console.log(`   Requested: ₹${request.requestedPaymentAmount}`);
       console.log(`   Invoice Balance: ₹${totalInvoiceBalance}`);
       console.log(`   Actual Payment: ₹${actualPaymentAmount}`);
@@ -93,7 +93,7 @@ export class CreditAwarePaymentService extends BaseService {
 
       // Step 5: Apply credit balances first (if available)
       if (creditToUse > 0) {
-        console.log('🔄 Applying existing credit balances...');
+        console.log(' Applying existing credit balances...');
         
         const creditTransaction = await sequelize.transaction();
         try {
@@ -115,7 +115,7 @@ export class CreditAwarePaymentService extends BaseService {
       // Step 6: Handle overpayment for zero credit balance case ONLY
       if (request.requestedPaymentAmount > totalInvoiceBalance && totalAvailableCredit === 0) {
         const overpaymentAmount = request.requestedPaymentAmount - totalInvoiceBalance;
-        console.log(`💰 Creating credit balance for overpayment: ₹${overpaymentAmount} (no existing credit)`);
+        console.log(` Creating credit balance for overpayment: ₹${overpaymentAmount} (no existing credit)`);
         
         const creditData = {
           type: 'SUPPLIER_CREDIT' as const,
@@ -131,16 +131,16 @@ export class CreditAwarePaymentService extends BaseService {
         
         const creditBalance = await creditBalanceService.createCreditBalance(creditData);
         newCreditCreated = overpaymentAmount;
-        console.log(`✅ Created credit balance: ${creditBalance.registrationNumber} for ₹${overpaymentAmount}`);
+        console.log(` Created credit balance: ${creditBalance.registrationNumber} for ₹${overpaymentAmount}`);
         
         // 🚨 CRITICAL FIX: Bank should pay the FULL requested amount for overpayment
         bankPaymentNeeded = request.requestedPaymentAmount; // FULL amount, not just invoice amount
-        console.log(`🏦 OVERPAYMENT SCENARIO: Bank will pay FULL requested amount: ₹${bankPaymentNeeded}`);
+        console.log(` OVERPAYMENT SCENARIO: Bank will pay FULL requested amount: ₹${bankPaymentNeeded}`);
       }
 
       // Step 7: 🏦 SMART BANK BALANCE VALIDATION (with credit balance info)
       if (bankPaymentNeeded > 0) {
-        console.log(`🔍 Validating bank account balance for payment of ₹${bankPaymentNeeded}...`);
+        console.log(` Validating bank account balance for payment of ₹${bankPaymentNeeded}...`);
         
         const BankAccount = (await import('../models/BankAccount')).default;
         const bankAccount = await BankAccount.findByPk(request.bankAccountId);
@@ -201,7 +201,7 @@ export class CreditAwarePaymentService extends BaseService {
       // Step 9: 🚨 CRITICAL FIX - Ensure final AP status reflects total payment
       // After both credit and bank payments, manually verify and update AP status
       if (creditUsed > 0 || bankPaymentNeeded > 0) {
-        console.log('🔄 Verifying final AP status after combined payments...');
+        console.log(' Verifying final AP status after combined payments...');
         
         const AccountsPayable = (await import('../models/AccountsPayable')).default;
         
@@ -216,7 +216,7 @@ export class CreditAwarePaymentService extends BaseService {
             const finalBalanceAmount = Math.max(0, totalInvoiceAmount - finalPaidAmount);
             const finalStatus = finalBalanceAmount <= 0.01 ? 'Paid' : 'Partial';
             
-            console.log(`🔍 Payment calculation for ${apInvoice.registrationNumber}:`);
+            console.log(` Payment calculation for ${apInvoice.registrationNumber}:`);
             console.log(`   - Invoice Amount: ₹${totalInvoiceAmount}`);
             console.log(`   - Credit Used: ₹${creditUsed}`);
             console.log(`   - Bank Payment: ₹${bankPaymentNeeded}`);
@@ -233,7 +233,7 @@ export class CreditAwarePaymentService extends BaseService {
               paidDate: finalStatus === 'Paid' ? new Date() : apInvoice.paidDate
             });
             
-            console.log(`✅ Final AP status corrected for ${apInvoice.registrationNumber}:`);
+            console.log(` Final AP status corrected for ${apInvoice.registrationNumber}:`);
             console.log(`   - Total Payment: ₹${totalPaymentMade} (₹${creditUsed} credit + ₹${bankPaymentNeeded} bank)`);
             console.log(`   - Final Status: ${finalStatus}`);
             console.log(`   - Paid Amount: ₹${finalPaidAmount}`);
@@ -256,7 +256,7 @@ export class CreditAwarePaymentService extends BaseService {
                   paymentStatus: beExpectedStatus
                 });
                 
-                console.log(`✅ Final Business Expense status corrected for ${businessExpense.registrationNumber}:`);
+                console.log(` Final Business Expense status corrected for ${businessExpense.registrationNumber}:`);
                 console.log(`   - BE Paid Amount: ₹${beExpectedPaidAmount}`);
                 console.log(`   - BE Balance: ₹${beExpectedBalanceAmount}`);
                 console.log(`   - BE Status: ${beExpectedStatus}`);
@@ -286,11 +286,11 @@ export class CreditAwarePaymentService extends BaseService {
         message: this.generateSmartPaymentMessage(creditUsed, bankPaymentNeeded, newCreditCreated)
       };
 
-      console.log('🎉 SMART credit-aware payment completed successfully:', result);
+      console.log(' SMART credit-aware payment completed successfully:', result);
       return result;
       
     } catch (error) {
-      console.error('❌ SMART credit-aware payment failed:', error);
+      console.error(' SMART credit-aware payment failed:', error);
       
       return {
         success: false,

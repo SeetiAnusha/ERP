@@ -49,7 +49,7 @@ export const recordPayment = async (req: Request, res: Response) => {
     );
     res.json(result);
   } catch (error: any) {
-    // 🎯 PHASE 1: Handle overpayment detection errors
+    //  PHASE 1: Handle overpayment detection errors
     if (error.code === 'OVERPAYMENT_DETECTED') {
       return res.status(400).json({
         error: 'Overpayment detected',

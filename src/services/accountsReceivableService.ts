@@ -45,7 +45,7 @@ class AccountsReceivableService extends BaseService {
    */
   async getAllAccountsReceivable(): Promise<any[]> {
     return this.executeWithRetry(async () => {
-      console.log('🔍 Service: getAllAccountsReceivable called');
+      console.log(' Service: getAllAccountsReceivable called');
       
       // Get all AR records
       const arRecords = await AccountsReceivable.findAll({
@@ -93,7 +93,7 @@ class AccountsReceivableService extends BaseService {
         })
       );
 
-      console.log(`✅ Retrieved ${arWithExpenses.length} AR records successfully`);
+      console.log(` Retrieved ${arWithExpenses.length} AR records successfully`);
       return arWithExpenses;
     });
   }
@@ -162,7 +162,7 @@ class AccountsReceivableService extends BaseService {
         status: 'Pending',
       }, { transaction });
       
-      console.log(`✅ Created AR ${registrationNumber} for amount ${data.amount}`);
+      console.log(` Created AR ${registrationNumber} for amount ${data.amount}`);
       return accountsReceivable;
     });
   }
@@ -206,7 +206,7 @@ class AccountsReceivableService extends BaseService {
         creditBalance = await this.createOverpaymentCredit(ar, overpaymentAmount);
       }
       
-      console.log(`✅ Payment recorded for AR ${ar.registrationNumber}: ${actualPaymentToAR}`);
+      console.log(` Payment recorded for AR ${ar.registrationNumber}: ${actualPaymentToAR}`);
       
       return {
         accountsReceivable: updatedAR,
@@ -326,7 +326,7 @@ class AccountsReceivableService extends BaseService {
       description: `Credit Card Processing Fee - ${ar.relatedDocumentNumber} - Original: ₹${ar.amount}, Received: ₹${paymentData.amount}`,
     }, { transaction });
     
-    console.log(`✅ Processing fee expense created: ₹${processingFeeAmount}`);
+    console.log(` Processing fee expense created: ₹${processingFeeAmount}`);
   }
 
   private async generateExpenseRegisterNumber(transaction: any): Promise<string> {
@@ -391,7 +391,7 @@ class AccountsReceivableService extends BaseService {
       balance: newBankAccountBalance,
     }, { transaction });
     
-    console.log(`✅ Bank register entry created for AR collection: ${amount}`);
+    console.log(` Bank register entry created for AR collection: ${amount}`);
   }
 
   private async updateARRecord(ar: AccountsReceivable, actualPaymentToAR: number, paymentData: RecordPaymentRequest, transaction: any): Promise<AccountsReceivable> {

@@ -50,7 +50,7 @@ export const checkCreditBalance = async (req: Request, res: Response) => {
     console.log('💡 Credit balance check result:', result);
     res.json(result);
   } catch (error: any) {
-    console.error('❌ Error checking credit balance:', error);
+    console.error(' Error checking credit balance:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -62,7 +62,7 @@ export const getPaymentPreview = async (req: Request, res: Response) => {
   try {
     const { supplierId, invoiceIds, requestedAmount, bankAccountId } = req.body;
     
-    console.log('🔍 Getting payment preview for:', { supplierId, invoiceIds, requestedAmount, bankAccountId });
+    console.log(' Getting payment preview for:', { supplierId, invoiceIds, requestedAmount, bankAccountId });
     
     const preview = await creditAwarePaymentService.getPaymentPreview(
       supplierId,
@@ -73,7 +73,7 @@ export const getPaymentPreview = async (req: Request, res: Response) => {
     
     res.json(preview);
   } catch (error: any) {
-    console.error('❌ Error getting payment preview:', error);
+    console.error(' Error getting payment preview:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -83,8 +83,8 @@ export const getPaymentPreview = async (req: Request, res: Response) => {
  */
 export const processPayment = async (req: Request, res: Response) => {
   try {
-    console.log('🎯 Processing credit-aware payment...');
-    console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
+    console.log(' Processing credit-aware payment...');
+    console.log(' Request body:', JSON.stringify(req.body, null, 2));
     
     const result = await creditAwarePaymentService.processCreditAwarePayment(req.body);
     
@@ -94,7 +94,7 @@ export const processPayment = async (req: Request, res: Response) => {
       res.status(400).json(result);
     }
   } catch (error: any) {
-    console.error('❌ Error processing credit-aware payment:', error);
+    console.error(' Error processing credit-aware payment:', error);
     res.status(500).json({ error: error.message });
   }
 };

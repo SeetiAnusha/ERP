@@ -210,7 +210,7 @@ class AccountsPayableService extends BaseService {
           status: {
             [Op.in]: ['Pending', 'Partial']
           },
-          // 🔥 CRITICAL: Exclude all deleted transactions from payment selection
+          //  CRITICAL: Exclude all deleted transactions from payment selection
           deletion_status: {
             [Op.in]: ['NONE', 'REQUESTED', 'APPROVED'] // Only show non-executed deletions
           }
@@ -287,8 +287,8 @@ class AccountsPayableService extends BaseService {
     notes?: string;
   }): Promise<AccountsPayable> {
     
-    // 🔄 UPDATED LOGIC: Credit card purchases don't reduce credit limit until payment
-    console.log(`📝 [AP Creation] Creating AP for ${purchaseData.paymentType} purchase - NO money movement yet`);
+    //  UPDATED LOGIC: Credit card purchases don't reduce credit limit until payment
+    console.log(` [AP Creation] Creating AP for ${purchaseData.paymentType} purchase - NO money movement yet`);
     
     const accountsPayableData: CreateAccountsPayableRequest = {
       type: purchaseData.paymentType === 'CREDIT_CARD' ? 'CREDIT_CARD_PURCHASE' : 'CREDIT_PURCHASE',
@@ -309,8 +309,8 @@ class AccountsPayableService extends BaseService {
       notes: purchaseData.notes
     };
     
-    // ✅ NO CREDIT CARD LIMIT REDUCTION HERE - happens only when "Pay" is clicked
-    console.log(`✅ [AP Created] ${purchaseData.registrationNumber}: Amount=${purchaseData.amount}, Status=Pending (no money moved)`);
+    //  NO CREDIT CARD LIMIT REDUCTION HERE - happens only when "Pay" is clicked
+    console.log(` [AP Created] ${purchaseData.registrationNumber}: Amount=${purchaseData.amount}, Status=Pending (no money moved)`);
     
     return this.createAccountsPayable(accountsPayableData);
   }
@@ -381,7 +381,7 @@ class AccountsPayableService extends BaseService {
       // Step 3: Process payment based on method
       const bankPaymentMethods = ['BANK_TRANSFER', 'CHECK', 'BANK', 'DEPOSIT', 'BANK_DEPOSIT', 'CHEQUE'];
       
-      console.log('🔍 Payment method routing:', {
+      console.log(' Payment method routing:', {
         paymentMethod: paymentData.paymentMethod,
         paymentMethodUpper: paymentData.paymentMethod?.toUpperCase(),
         bankAccountId: paymentData.bankAccountId,
@@ -392,17 +392,17 @@ class AccountsPayableService extends BaseService {
       });
       
       if (paymentData.bankAccountId && bankPaymentMethods.includes(paymentData.paymentMethod?.toUpperCase() || '')) {
-        console.log('🎯 Processing as BANK ACCOUNT payment');
+        console.log(' Processing as BANK ACCOUNT payment');
         await this.processBankAccountPayment(ap, paymentData, transaction);
       } else if (paymentData.cardId) {
-        console.log('🎯 Processing as CARD payment');
+        console.log(' Processing as CARD payment');
         await this.processCardPayment(ap, paymentData, transaction);
       } else if (paymentData.bankAccountId) {
-        console.log('🎯 Processing as FALLBACK BANK payment');
+        console.log(' Processing as FALLBACK BANK payment');
         // Fallback: if bankAccountId is provided but no specific method, treat as bank payment
         await this.processBankAccountPayment(ap, paymentData, transaction);
       } else {
-        console.log('❌ No payment processing path matched');
+        console.log(' No payment processing path matched');
         throw new ValidationError('Invalid payment method or missing required payment data');
       }
       
@@ -688,16 +688,16 @@ class AccountsPayableService extends BaseService {
             paymentStatus: newPaymentStatus
           }, { transaction });
           
-          console.log(`✅ Updated business expense ${businessExpense.registrationNumber}:`);
+          console.log(` Updated business expense ${businessExpense.registrationNumber}:`);
           console.log(`   - Paid Amount: ₹${currentPaidAmount} → ₹${newPaidAmount}`);
           console.log(`   - Balance: ₹${totalAmount - currentPaidAmount} → ₹${newBalanceAmount}`);
           console.log(`   - Status: ${businessExpense.paymentStatus} → ${newPaymentStatus}`);
         } else {
-          console.log(`⚠️ Business expense ${ap.relatedDocumentId} not found`);
+          console.log(` Business expense ${ap.relatedDocumentId} not found`);
         }
       }
     } catch (error) {
-      console.error('❌ Error updating related business expense:', error);
+      console.error(' Error updating related business expense:', error);
       // Don't throw - this shouldn't block the AP payment
       // The AP payment is the primary operation
     }
@@ -709,7 +709,7 @@ class AccountsPayableService extends BaseService {
    * Process bank account payment with balance validation
    */
   private async processBankAccountPayment(ap: AccountsPayable, paymentData: PaymentRequest, transaction: any): Promise<void> {
-    console.log('🏦 processBankAccountPayment called with:', {
+    console.log(' processBankAccountPayment called with:', {
       apId: ap.id,
       apRegistrationNumber: ap.registrationNumber,
       paymentAmount: paymentData.amount,
@@ -727,7 +727,7 @@ class AccountsPayableService extends BaseService {
     const paymentAmount = paymentData.amount;
     const currentBalance = Number(bankAccount.balance);
     
-    console.log('💰 Bank account validation:', {
+    console.log(' Bank account validation:', {
       bankAccountId: paymentData.bankAccountId,
       bankName: bankAccount.bankName,
       accountNumber: bankAccount.accountNumber,
@@ -744,12 +744,12 @@ class AccountsPayableService extends BaseService {
       `${bankAccount.bankName} - ${bankAccount.accountNumber}`
     );
 
-    // ✅ REMOVED: Credit card debt restoration logic - no longer needed with new approach
+    //  REMOVED: Credit card debt restoration logic - no longer needed with new approach
     // Credit card payments now directly reduce credit limit when paying (not when creating AP)
     
     console.log('🏦 Creating Bank Register entry using TransactionFactory...');
     
-    // ✅ REFACTORED: Use TransactionFactory instead of manual data construction
+    // REFACTORED: Use TransactionFactory instead of manual data construction
     try {
       const bankRegisterService = (await import('./bankRegisterService')).default;
       
@@ -778,11 +778,11 @@ class AccountsPayableService extends BaseService {
       // Use TransactionFactory to create bank register data
       const bankRegisterData = TransactionFactory.createAPBankEntry(context, options);
       
-      console.log('📋 Bank Register data from TransactionFactory:', JSON.stringify(bankRegisterData, null, 2));
+      console.log(' Bank Register data from TransactionFactory:', JSON.stringify(bankRegisterData, null, 2));
       
       const bankRegisterEntry = await bankRegisterService.createBankRegister(bankRegisterData, transaction);
       
-      console.log('✅ Bank Register entry created successfully:', {
+      console.log(' Bank Register entry created successfully:', {
         registrationNumber: bankRegisterEntry.registrationNumber,
         id: bankRegisterEntry.id,
         amount: bankRegisterEntry.amount,
@@ -790,7 +790,7 @@ class AccountsPayableService extends BaseService {
       });
       
     } catch (bankRegisterError: any) {
-      console.error('❌ Failed to create Bank Register entry:', bankRegisterError);
+      console.error(' Failed to create Bank Register entry:', bankRegisterError);
       console.error('Stack trace:', bankRegisterError.stack);
       throw bankRegisterError; // Re-throw to ensure transaction rollback
     }
@@ -847,7 +847,7 @@ class AccountsPayableService extends BaseService {
     const newBankBalance = currentBalance - amount;
     await bankAccount.update({ balance: newBankBalance }, { transaction });
     
-    // ✅ REFACTORED: Use TransactionFactory instead of removed createBankRegisterEntry method
+    //  REFACTORED: Use TransactionFactory instead of removed createBankRegisterEntry method
     const bankRegisterService = (await import('./bankRegisterService')).default;
     
     // Create AP context for TransactionFactory
@@ -887,7 +887,7 @@ class AccountsPayableService extends BaseService {
    * Process credit card payment
    */
   private async processCreditCardPayment(card: any, ap: AccountsPayable, amount: number, cardInfo: string, paymentData: PaymentRequest, transaction: any): Promise<void> {
-    // 🔄 UPDATED LOGIC: Use Credit Card Register instead of Bank Register
+    //  UPDATED LOGIC: Use Credit Card Register instead of Bank Register
     console.log(`💳 [Credit Card Payment] Processing payment for AP ${ap.registrationNumber} using card ${cardInfo}`);
     
     // Validate credit limit
@@ -906,7 +906,7 @@ class AccountsPayableService extends BaseService {
       `credit available on card ${cardInfo}`
     );
     
-    // ✅ Create Credit Card Register entry (this will also update the card's used credit)
+    //  Create Credit Card Register entry (this will also update the card's used credit)
     const creditCardRegisterService = (await import('./creditCardRegisterService')).default;
     
     const ccPaymentData = {
@@ -961,7 +961,7 @@ class AccountsPayableService extends BaseService {
     return lastTransaction ? Number(lastTransaction.balance) : 0;
   }
 
-  // ✅ REMOVED: getPaymentMethodForBankRegister method - now using TransactionFactory.getPaymentMethodForBankRegister()
+  //  REMOVED: getPaymentMethodForBankRegister method - now using TransactionFactory.getPaymentMethodForBankRegister()
   // This eliminates 15 lines of duplicated code
 }
 // Create singleton instance
