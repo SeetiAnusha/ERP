@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import TransactionImpactAnalysisService from '../services/TransactionImpactAnalysisService';
 import ApprovalWorkflowService from '../services/ApprovalWorkflowService';
-import TransactionDeletionService from '../services/TransactionDeletionService';
+import transactionDeletionService from '../services/TransactionDeletionService.refactored';
 import TransactionDeletionReason from '../models/TransactionDeletionReason';
 import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppError';
 
@@ -13,12 +13,10 @@ import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppE
 class TransactionDeletionController {
   private impactAnalysisService: TransactionImpactAnalysisService;
   private approvalWorkflowService: ApprovalWorkflowService;
-  private transactionDeletionService: TransactionDeletionService;
 
   constructor() {
     this.impactAnalysisService = new TransactionImpactAnalysisService();
     this.approvalWorkflowService = new ApprovalWorkflowService();
-    this.transactionDeletionService = new TransactionDeletionService();
   }
 
   /**
@@ -379,7 +377,7 @@ class TransactionDeletionController {
         return;
       }
 
-      await this.transactionDeletionService.executeApprovedDeletion({
+      await transactionDeletionService.executeApprovedDeletion({
         approvalRequestId: parseInt(requestId),
         executedBy: userId,
         ipAddress: req.ip,

@@ -7,7 +7,7 @@ import User from '../models/User';
 import TransactionDeletionReason from '../models/TransactionDeletionReason';
 import TransactionAuditTrail from '../models/TransactionAuditTrail';
 import TransactionImpactAnalysisService from './TransactionImpactAnalysisService';
-import  TransactionDeletionService  from './TransactionDeletionService';
+import  transactionDeletionService  from './TransactionDeletionService.refactored';
 import { BaseService } from '../core/BaseService';
 import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppError';
 import crypto from 'crypto';
@@ -40,12 +40,10 @@ interface ProcessApprovalStepData {
  */
 class ApprovalWorkflowService extends BaseService {
   private impactAnalysisService: TransactionImpactAnalysisService;
-  private transactionDeletionService: TransactionDeletionService;
 
   constructor() {
     super();
     this.impactAnalysisService = new TransactionImpactAnalysisService();
-    this.transactionDeletionService = new TransactionDeletionService();
   }
 
   /**
@@ -508,7 +506,7 @@ class ApprovalWorkflowService extends BaseService {
   ): Promise<void> {
     try {
       // Execute the deletion using TransactionDeletionService
-      await this.transactionDeletionService.executeApprovedDeletion({
+      await transactionDeletionService.executeApprovedDeletion({
         approvalRequestId: requestId,
         executedBy: executedBy,
         ipAddress: ipAddress,

@@ -379,7 +379,7 @@ export const updateSale = async (id: number, data: any) => {
   return await sale.update(data);
 };
 
-export const collectPayment = async (id: number, paymentData: { amount: number; paymentMethod: string }) => {
+export const collectPayment = async (id: number, paymentData: { amount: number; paymentMethod: string; cashRegisterId?: number; bankAccountId?: number }) => {
   const transaction = await sequelize.transaction();
   let committed = false;
   
@@ -387,58 +387,185 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
     const sale = await Sale.findByPk(id, { transaction });
     if (!sale) throw new Error('Sale not found');
     
-    const newCollectedAmount = Number(sale.collectedAmount) + paymentData.amount;  // Changed from paidAmount
+    const newCollectedAmount = Number(sale.collectedAmount) + paymentData.amount;
     const newBalanceAmount = Number(sale.total) - newCollectedAmount;
     
-    let collectionStatus = 'Not Collected';  // Changed from paymentStatus = 'Unpaid'
+    let collectionStatus = 'Not Collected';
     if (newCollectedAmount >= Number(sale.total)) {
-      collectionStatus = 'Collected';  // Changed from 'Paid'
+      collectionStatus = 'Collected';
     } else if (newCollectedAmount > 0) {
       collectionStatus = 'Partial';
     }
     
     await sale.update({
-      collectedAmount: newCollectedAmount,  // Changed from paidAmount
+      collectedAmount: newCollectedAmount,
       balanceAmount: newBalanceAmount,
-      collectionStatus,  // Changed from paymentStatus
+      collectionStatus,
     }, { transaction });
     
-    // Create cash register entry for payment collection
-    const CashRegister = (await import('../models/CashRegister')).default;
+    // ✅ FIX: Only create cash/bank register entries for sales that weren't already paid during creation
+    // Check if this sale was already fully paid during creation (CASH/CHEQUE/BANK_TRANSFER/DEPOSIT)
+    const wasAlreadyPaid = sale.collectionStatus === 'Collected' && Number(sale.collectedAmount) > 0;
+    
+    if (!wasAlreadyPaid) {
+      // This is a genuine payment collection for credit sales, debit/credit card settlements, etc.
       
-      // Get last cash register transaction for balance
-      const lastCashTransaction = await CashRegister.findOne({
-        where: {
-          registrationNumber: {
-            [Op.like]: 'CJ%'
-          }
-        },
-        order: [['id', 'DESC']],
-        transaction
-      });
-      
-      let nextCashNumber = 1;
-      if (lastCashTransaction) {
-        const lastNumber = parseInt(lastCashTransaction.registrationNumber.substring(2));
-        nextCashNumber = lastNumber + 1;
+      if (paymentData.paymentMethod.toUpperCase() === 'CASH' || paymentData.paymentMethod.toUpperCase() === 'CHEQUE') {
+        // ✅ CASH/CHEQUE Payment Collection
+        const CashRegister = (await import('../models/CashRegister')).default;
+        const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
+        
+        // Validate cash register selection
+        if (!paymentData.cashRegisterId) {
+          throw new Error('Cash register selection is required for cash/cheque payments');
+        }
+        
+        const cashRegister = await CashRegisterMaster.findByPk(paymentData.cashRegisterId, { transaction });
+        if (!cashRegister) {
+          throw new Error('Cash register not found');
+        }
+        
+        // Get last transaction for THIS SPECIFIC cash register
+        const lastCashTransaction = await CashRegister.findOne({
+          where: {
+            cashRegisterId: paymentData.cashRegisterId
+          },
+          order: [['id', 'DESC']],
+          transaction
+        });
+        
+        // Generate CJ registration number
+        const lastCJTransaction = await CashRegister.findOne({
+          where: {
+            registrationNumber: {
+              [Op.like]: 'CJ%'
+            }
+          },
+          order: [['id', 'DESC']],
+          transaction
+        });
+        
+        let nextCashNumber = 1;
+        if (lastCJTransaction) {
+          const lastNumber = parseInt(lastCJTransaction.registrationNumber.substring(2));
+          nextCashNumber = lastNumber + 1;
+        }
+        
+        const cashRegistrationNumber = `CJ${String(nextCashNumber).padStart(4, '0')}`;
+        const lastBalance = lastCashTransaction ? Number(lastCashTransaction.balance) : 0;
+        const newBalance = lastBalance + paymentData.amount;
+        
+        // Update cash register master balance
+        const currentMasterBalance = Number(cashRegister.balance || 0);
+        const newMasterBalance = currentMasterBalance + paymentData.amount;
+        await cashRegister.update({ balance: newMasterBalance }, { transaction });
+        
+        // Get client info for the cash register entry
+        const client = await Client.findByPk(sale.clientId, { transaction });
+        
+        await CashRegister.create({
+          registrationNumber: cashRegistrationNumber,
+          registrationDate: new Date(),
+          transactionType: 'INFLOW',
+          amount: paymentData.amount,
+          paymentMethod: paymentData.paymentMethod === 'CASH' ? 'Cash' : 'Cheque',
+          relatedDocumentType: 'Sale',
+          relatedDocumentNumber: sale.registrationNumber,
+          clientRnc: sale.clientRnc,
+          clientName: client?.name || '',
+          description: `Payment collection for sale ${sale.registrationNumber} via ${paymentData.paymentMethod} - Cash Register: ${cashRegister.name}`,
+          balance: newBalance,
+          cashRegisterId: paymentData.cashRegisterId,
+        }, { transaction });
+        
+      } else if (paymentData.paymentMethod.toUpperCase() === 'BANK_TRANSFER' || paymentData.paymentMethod.toUpperCase() === 'DEPOSIT') {
+        // ✅ BANK Payment Collection
+        const BankRegister = (await import('../models/BankRegister')).default;
+        const BankAccount = (await import('../models/BankAccount')).default;
+        
+        // Validate bank account selection
+        if (!paymentData.bankAccountId) {
+          throw new Error('Bank account selection is required for bank transfer/deposit payments');
+        }
+        
+        const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
+        if (!bankAccount) {
+          throw new Error('Bank account not found');
+        }
+        
+        // Update bank account balance
+        const currentBankBalance = Number(bankAccount.balance || 0);
+        const newBankBalance = currentBankBalance + paymentData.amount;
+        await bankAccount.update({ balance: newBankBalance }, { transaction });
+        
+        // Get last bank register transaction for THIS SPECIFIC bank account
+        const lastBankTransaction = await BankRegister.findOne({
+          where: {
+            bankAccountId: paymentData.bankAccountId
+          },
+          order: [['id', 'DESC']],
+          transaction
+        });
+        
+        // Generate CJ registration number for bank collection
+        const lastCJTransaction = await BankRegister.findOne({
+          where: {
+            registrationNumber: {
+              [Op.like]: 'CJ%'
+            }
+          },
+          order: [['id', 'DESC']],
+          transaction
+        });
+        
+        let nextBankNumber = 1;
+        if (lastCJTransaction) {
+          const lastNumber = parseInt(lastCJTransaction.registrationNumber.substring(2));
+          nextBankNumber = lastNumber + 1;
+        }
+        
+        const bankRegistrationNumber = `CJ${String(nextBankNumber).padStart(4, '0')}`;
+        const lastBalance = lastBankTransaction ? Number(lastBankTransaction.balance) : 0;
+        const newBalance = lastBalance + paymentData.amount;
+        
+        // Get client info for the bank register entry
+        const client = await Client.findByPk(sale.clientId, { transaction });
+        
+        await BankRegister.create({
+          registrationNumber: bankRegistrationNumber,
+          registrationDate: new Date(),
+          transactionType: 'INFLOW',
+          sourceTransactionType: 'SALE_COLLECTION',
+          amount: paymentData.amount,
+          paymentMethod: paymentData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit',
+          relatedDocumentType: 'Sale',
+          relatedDocumentNumber: sale.registrationNumber,
+          clientRnc: sale.clientRnc,
+          clientName: client?.name || '',
+          description: `Payment collection for sale ${sale.registrationNumber} via ${paymentData.paymentMethod} - Bank: ${bankAccount.bankName} (${bankAccount.accountNumber})`,
+          balance: newBalance,
+          bankAccountId: paymentData.bankAccountId,
+          bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+          originalPaymentType: paymentData.paymentMethod,
+        }, { transaction });
       }
       
-      const cashRegistrationNumber = `CJ${String(nextCashNumber).padStart(4, '0')}`;
-      const lastBalance = lastCashTransaction ? lastCashTransaction.balance : 0;
-      const newBalance = Number(lastBalance) + paymentData.amount;
-      
-      await CashRegister.create({
-        registrationNumber: cashRegistrationNumber,
-        registrationDate: new Date(),
-        transactionType: 'INFLOW',
-        amount: paymentData.amount,
-        paymentMethod: 'Cash',
-        relatedDocumentType: 'Sale',
-        relatedDocumentNumber: sale.registrationNumber,
-        clientRnc: sale.clientRnc,
-        description: `Payment received for sale ${sale.registrationNumber}`,
-        balance: newBalance,
-      }, { transaction });
+      // Update related Accounts Receivable records
+      const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
+      await AccountsReceivable.update({
+        receivedAmount: sequelize.literal(`receivedAmount + ${paymentData.amount}`),
+        balanceAmount: sequelize.literal(`balanceAmount - ${paymentData.amount}`),
+        status: newCollectedAmount >= Number(sale.total) ? 'Collected' : 'Partial'
+      }, {
+        where: {
+          relatedDocumentNumber: sale.registrationNumber,
+          status: { [Op.ne]: 'Collected' }
+        },
+        transaction
+      });
+    } else {
+      console.log(`ℹ️ [Payment Collection] Sale ${sale.registrationNumber} was already paid during creation - no additional cash/bank register entry needed`);
+    }
     
     await transaction.commit();
     committed = true;

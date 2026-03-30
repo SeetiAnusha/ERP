@@ -6,7 +6,7 @@ export const getAllAccountsPayable = async (req: Request, res: Response) => {
     // Extract query parameters for pagination and filtering
     const options = {
       page: req.query.page ? parseInt(req.query.page as string) : 1,
-      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+      limit: req.query.limit ? parseInt(req.query.limit as string) : 100,
       transactionType: req.query.transactionType as string,
       status: req.query.status as string,
       dateFrom: req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined,

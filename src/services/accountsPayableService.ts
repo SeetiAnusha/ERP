@@ -115,7 +115,7 @@ class AccountsPayableService extends BaseService {
     totalPages: number;
   }> {
     return this.executeWithRetry(async () => {
-      const { page = 1, limit = 50, transactionType, status, dateFrom, dateTo } = options;
+      const { page = 1, limit = 100, transactionType, status, dateFrom, dateTo } = options;
       const offset = (page - 1) * limit;
       
       // Validate pagination parameters

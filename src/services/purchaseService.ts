@@ -117,6 +117,7 @@ class PurchaseService extends BaseService {
    * Space Complexity: O(n + m) for processing data
    */
   async createPurchase(data: CreatePurchaseRequest): Promise<Purchase> {
+    console.log("data:", data);
     return this.executeWithTransaction(async (transaction) => {
       
       // Step 1: Comprehensive validation (O(1) complexity)

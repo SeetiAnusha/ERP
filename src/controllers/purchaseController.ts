@@ -99,6 +99,7 @@ export const getById = async (req: Request, res: Response) => {
 export const create = async (req: Request, res: Response) => {
   try {
     const purchase = await purchaseService.createPurchase(req.body);
+    console.log("purchase:",purchase);
     res.status(201).json(purchase);
   } catch (error: any) {
     console.error('Purchase creation error:', error);
