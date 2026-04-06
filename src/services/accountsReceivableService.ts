@@ -221,6 +221,9 @@ class AccountsReceivableService extends BaseService {
 
   /**
    * Delete accounts receivable
+   * 
+   * ⚠️ IMPORTANT: This is for DIRECT deletion (DELETE /api/accounts-receivable/:id)
+   * For APPROVAL-BASED deletion, use TransactionDeletionService with ARDeletionHandler
    */
   async deleteAccountsReceivable(id: number): Promise<{ message: string }> {
     return this.executeWithTransaction(async (transaction) => {
@@ -231,12 +234,19 @@ class AccountsReceivableService extends BaseService {
         throw new NotFoundError('Accounts Receivable not found');
       }
       
-      // Business rule validation
-      if (ar.status === 'Received' || Number(ar.receivedAmount) > 0) {
-        throw new BusinessLogicError('Cannot delete an AR with payments. Please reverse all payments first.');
+      const receivedAmount = Number(ar.receivedAmount || 0);
+      
+      // ✅ Simple validation: Block deletion if any payment received
+      if (receivedAmount > 0) {
+        throw new BusinessLogicError(
+          'Cannot delete an AR with payments. Please use the Transaction Deletion approval system for proper reversal.'
+        );
       }
       
+      // Only allow deletion of unpaid AR
       await ar.destroy({ transaction });
+      
+      console.log(`✅ [AR Deleted] ${ar.registrationNumber} deleted successfully (unpaid)`);
       
       return { message: 'Accounts Receivable deleted successfully' };
     });
@@ -303,46 +313,79 @@ class AccountsReceivableService extends BaseService {
     return { actualPaymentToAR, overpaymentAmount };
   }
 
-  private async createProcessingFeeExpense(ar: AccountsReceivable, processingFeeAmount: number, paymentData: RecordPaymentRequest, transaction: any): Promise<void> {
+  private async createProcessingFeeExpense(
+    ar: AccountsReceivable, 
+    processingFeeAmount: number, 
+    paymentData: RecordPaymentRequest, 
+    transaction: any
+  ): Promise<void> {
     const BusinessExpense = (await import('../models/BusinessExpense')).default;
+    const Client = (await import('../models/Client')).default;
     
-    // Generate expense registration number
-    const expenseRegistrationNumber = await this.generateExpenseRegisterNumber(transaction);
+    // Use the AR registration number
+    const expenseRegistrationNumber = ar.registrationNumber;
     
-    // Create business expense for processing fee
-    await BusinessExpense.create({
-      registrationNumber: expenseRegistrationNumber,
-      date: paymentData.receivedDate || new Date(),
-      supplierId: 1, // Default supplier ID - you may need to create a "Credit Card Processor" supplier
-      expenseCategoryId: 1, // Default expense category ID - you may need to create a "Processing Fees" category
-      expenseTypeId: 1, // Default expense type ID - you may need to create a "Credit Card Fees" type
-      expenseType: paymentData.processingFeeCategory || 'CREDIT_CARD_PROCESSING_FEE',
-      amount: processingFeeAmount,
-      paymentType: 'AUTOMATIC_DEDUCTION',
-      paidAmount: processingFeeAmount,
-      balanceAmount: 0,
-      status: 'COMPLETED',
-      paymentStatus: 'Paid',
-      description: `Credit Card Processing Fee - ${ar.relatedDocumentNumber} - Original: ₹${ar.amount}, Received: ₹${paymentData.amount}`,
-    }, { transaction });
-    
-    console.log(` Processing fee expense created: ₹${processingFeeAmount}`);
-  }
-
-  private async generateExpenseRegisterNumber(transaction: any): Promise<string> {
-    const BusinessExpense = (await import('../models/BusinessExpense')).default;
-    
-    const lastExpense = await BusinessExpense.findOne({
-      order: [['id', 'DESC']],
+    // Check if expense already exists
+    const existingExpense = await BusinessExpense.findOne({
+      where: { registrationNumber: expenseRegistrationNumber },
       transaction
     });
     
-    const lastNumber = lastExpense?.registrationNumber 
-      ? parseInt(lastExpense.registrationNumber.replace('EX', '')) 
-      : 0;
+    if (existingExpense) {
+      console.log(`⚠️ Processing fee expense already exists for ${expenseRegistrationNumber}, skipping creation`);
+      return;
+    }
     
-    return `EX${String(lastNumber + 1).padStart(4, '0')}`;
+    // ✅ Get client information from AR
+    const client = await Client.findByPk(ar.clientId, { transaction });
+    if (!client) {
+      throw new Error(`Client not found for AR ${ar.id}`);
+    }
+    
+    // ✅ Get card network name from AR (stored as string)
+    const cardNetworkName = ar.cardNetwork || 'Unknown Card Network';
+    
+    // ✅ SIMPLIFIED: Create business expense WITHOUT category/type
+    // Processing fees are identifiable by clientId and expenseType field
+    await BusinessExpense.create({
+      registrationNumber: expenseRegistrationNumber,
+      date: paymentData.receivedDate || new Date(),
+      
+      // ✅ CLIENT-RELATED (not supplier)
+      supplierId: null,
+      clientId: client.id,
+      clientRnc: client.rncCedula,
+      
+      // ✅ Card network information
+      cardPaymentNetworkId: null,
+      
+      // ✅ Related AR information for traceability
+      relatedARId: ar.id,
+      relatedDocumentType: 'AR_COLLECTION',
+      relatedDocumentNumber: ar.registrationNumber,
+      
+      // ✅ NO category/type - keep it simple
+      expenseCategoryId: undefined,
+      expenseTypeId: undefined,
+      expenseType: 'CREDIT_CARD_PROCESSING_FEE',
+      
+      // Amounts
+      amount: processingFeeAmount,
+      paidAmount: processingFeeAmount,
+      balanceAmount: 0,
+      
+      // Status
+      status: 'COMPLETED',
+      paymentStatus: 'Paid',
+      paymentType: 'AUTOMATIC_DEDUCTION',
+      
+      // Description with full context
+      description: `${cardNetworkName} Processing Fee - Client: ${client.name}${client.rncCedula ? ` (RNC: ${client.rncCedula})` : ''} - AR: ${ar.registrationNumber} - Original Amount: ₹${ar.amount}, Received: ₹${paymentData.amount}, Processing Fee: ₹${processingFeeAmount}`,
+    }, { transaction });
+    
+    console.log(`✅ Processing fee expense created for client "${client.name}" - ₹${processingFeeAmount} (${cardNetworkName})`);
   }
+
 
   private async processCardSalePayment(ar: AccountsReceivable, paymentData: RecordPaymentRequest, amount: number, transaction: any): Promise<void> {
     const BankRegister = (await import('../models/BankRegister')).default;
@@ -395,8 +438,20 @@ class AccountsReceivableService extends BaseService {
   }
 
   private async updateARRecord(ar: AccountsReceivable, actualPaymentToAR: number, paymentData: RecordPaymentRequest, transaction: any): Promise<AccountsReceivable> {
-    const newReceivedAmount = Number(ar.receivedAmount) + actualPaymentToAR;
-    const newBalanceAmount = Number(ar.amount) - newReceivedAmount;
+    let newReceivedAmount: number;
+    let newBalanceAmount: number;
+    
+    // Special handling for credit card sales
+    if (paymentData.isCardSale && (ar.type === 'CREDIT_CARD_SALE' || ar.type === 'DEBIT_CARD_SALE')) {
+      // For credit card sales, customer has paid the FULL amount
+      // The processing fee is a separate business expense, not a customer debt
+      newReceivedAmount = Number(ar.amount); // Full invoice amount
+      newBalanceAmount = 0; // Customer owes nothing
+    } else {
+      // Regular logic for other sale types
+      newReceivedAmount = Number(ar.receivedAmount) + actualPaymentToAR;
+      newBalanceAmount = Number(ar.amount) - newReceivedAmount;
+    }
     
     let status = 'Pending';
     
@@ -418,7 +473,8 @@ class AccountsReceivableService extends BaseService {
       status,
       receivedDate: status === 'Received' ? (paymentData.receivedDate || new Date()) : ar.receivedDate,
       notes: paymentData.notes || ar.notes,
-      actualBankDeposit: paymentData.isCardSale ? actualPaymentToAR : undefined,
+      actualBankDeposit: paymentData.isCardSale ? actualPaymentToAR : undefined, // This shows the actual bank deposit (₹9.00)
+      expectedBankDeposit: paymentData.isCardSale ? actualPaymentToAR : undefined, // ✅ Set expected deposit to actual payment amount (₹9, not ₹10)
       bankAccountId: paymentData.bankAccountId || undefined,
     }, { transaction });
     

@@ -1,16 +1,26 @@
 import CashRegister from '../models/CashRegister';
+import BankRegister from '../models/BankRegister';
 import Financer from '../models/Financer';
 import CashRegisterMaster from '../models/CashRegisterMaster';
+import BankAccount from '../models/BankAccount';
 import InvestmentAgreement from '../models/InvestmentAgreement';
 import { fixInvestmentStatus } from '../scripts/fixInvestmentStatus';
 
-// Get all investors with their investment details (CONTRIBUTION only)
+// Get all investors with their investment details (CONTRIBUTION from both Cash and Bank Register)
 export const getAllInvestors = async () => {
   try {
-    // Get all CONTRIBUTION transactions from Cash Register (investors only contribute, banks loan)
-    const contributionTransactions = await CashRegister.findAll({
+    // Get all CONTRIBUTION transactions from Cash Register
+    const contributionTransactionsCash = await CashRegister.findAll({
       where: {
-        relatedDocumentType: 'CONTRIBUTION' // Only CONTRIBUTION for investors
+        relatedDocumentType: 'CONTRIBUTION'
+      },
+      order: [['registrationDate', 'DESC']]
+    });
+
+    // ✅ NEW: Get all CONTRIBUTION transactions from Bank Register
+    const contributionTransactionsBank = await BankRegister.findAll({
+      where: {
+        relatedDocumentType: 'CONTRIBUTION'
       },
       order: [['registrationDate', 'DESC']]
     });
@@ -18,7 +28,7 @@ export const getAllInvestors = async () => {
     // Get all investor financers (only INVESTOR type)
     const financers = await Financer.findAll({
       where: { 
-        type: 'INVESTOR', // Only get INVESTOR type, not BANK or OTHER
+        type: 'INVESTOR',
         status: 'ACTIVE'
       }
     });
@@ -28,10 +38,13 @@ export const getAllInvestors = async () => {
       where: { status: 'ACTIVE' }
     });
 
+    // ✅ NEW: Get all bank accounts for bank info
+    const bankAccounts = await BankAccount.findAll();
+
     // Get all investment agreements for investors
     const investmentAgreements = await InvestmentAgreement.findAll({
       where: {
-        agreementType: 'INVESTMENT' // Only INVESTMENT agreements for investors
+        agreementType: 'INVESTMENT'
       }
     });
 
@@ -46,40 +59,136 @@ export const getAllInvestors = async () => {
 
       // Process each investment agreement
       financerAgreements.forEach(agreement => {
-        // Find all cash register transactions for this agreement
-        const agreementTransactions = contributionTransactions.filter(t => 
+        // Find all CASH register transactions for this agreement
+        const agreementTransactionsCash = contributionTransactionsCash.filter(t => 
           t.investmentAgreementId === agreement.id
         );
 
-        agreementTransactions.forEach(cashTransaction => {
-          // Find store details
+        agreementTransactionsCash.forEach(cashTransaction => {
           const store = cashRegisterMasters.find(s => s.id === cashTransaction.cashRegisterId);
           
           if (store) {
             const amount = parseFloat(cashTransaction.amount.toString());
             totalProvided += amount;
             
-            // For cash transactions, they are immediately "paid" when received
-            // Outstanding debt is tracked at agreement level (balanceAmount)
             transactions.push({
-              id: cashTransaction.id,
+              id: `cash-${cashTransaction.id}`,
               amount: amount,
-              paidAmount: amount, // Cash transactions are immediately paid
+              paidAmount: amount,
               date: cashTransaction.registrationDate,
               storeName: store.name,
               storeLocation: store.location,
               registrationNumber: cashTransaction.registrationNumber,
-              status: 'Paid', // Cash transactions are immediately paid
+              status: 'Paid',
               notes: cashTransaction.description,
-              type: 'CONTRIBUTION', // CONTRIBUTION only for investors
+              type: 'CONTRIBUTION',
               transactionType: cashTransaction.relatedDocumentType,
-              agreementNumber: agreement.agreementNumber
+              agreementNumber: agreement.agreementNumber,
+              paymentMethod: cashTransaction.paymentMethod || 'CASH',
+              source: 'Cash Register'
+            });
+          }
+        });
+
+        // ✅ NEW: Find all BANK register transactions for this agreement
+        const agreementTransactionsBank = contributionTransactionsBank.filter(t => 
+          (t as any).investmentAgreementId === agreement.id
+        );
+
+        agreementTransactionsBank.forEach(bankTransaction => {
+          const bankAccount = bankAccounts.find(b => b.id === bankTransaction.bankAccountId);
+          
+          if (bankAccount) {
+            const amount = parseFloat(bankTransaction.amount.toString());
+            totalProvided += amount;
+            
+            transactions.push({
+              id: `bank-${bankTransaction.id}`,
+              amount: amount,
+              paidAmount: amount,
+              date: bankTransaction.registrationDate,
+              storeName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+              storeLocation: 'Bank Account',
+              registrationNumber: bankTransaction.registrationNumber,
+              status: 'Paid',
+              notes: bankTransaction.description,
+              type: 'CONTRIBUTION',
+              transactionType: bankTransaction.relatedDocumentType,
+              agreementNumber: agreement.agreementNumber,
+              paymentMethod: bankTransaction.paymentMethod || 'BANK_TRANSFER',
+              source: 'Bank Register'
             });
           }
         });
 
         // Outstanding debt is the remaining balance on the agreement
         outstandingDebt += parseFloat(agreement.balanceAmount.toString());
+      });
+
+      // ✅ ALSO include transactions WITHOUT investment agreement (legacy/orphaned transactions)
+      const orphanedTransactionsCash = contributionTransactionsCash.filter(t => 
+        !t.investmentAgreementId
+      );
+
+      orphanedTransactionsCash.forEach(cashTransaction => {
+        if (transactions.some(t => t.id === `cash-${cashTransaction.id}`)) return;
+
+        const store = cashRegisterMasters.find(s => s.id === cashTransaction.cashRegisterId);
+        
+        if (store) {
+          const amount = parseFloat(cashTransaction.amount.toString());
+          totalProvided += amount;
+          
+          transactions.push({
+            id: `cash-${cashTransaction.id}`,
+            amount: amount,
+            paidAmount: amount,
+            date: cashTransaction.registrationDate,
+            storeName: store.name,
+            storeLocation: store.location,
+            registrationNumber: cashTransaction.registrationNumber,
+            status: 'Paid',
+            notes: cashTransaction.description || 'Legacy transaction (no agreement)',
+            type: 'CONTRIBUTION',
+            transactionType: cashTransaction.relatedDocumentType,
+            agreementNumber: 'N/A',
+            paymentMethod: cashTransaction.paymentMethod || 'CASH',
+            source: 'Cash Register'
+          });
+        }
+      });
+
+      // ✅ NEW: Include orphaned bank register transactions
+      const orphanedTransactionsBank = contributionTransactionsBank.filter(t => 
+        !(t as any).investmentAgreementId
+      );
+
+      orphanedTransactionsBank.forEach(bankTransaction => {
+        if (transactions.some(t => t.id === `bank-${bankTransaction.id}`)) return;
+
+        const bankAccount = bankAccounts.find(b => b.id === bankTransaction.bankAccountId);
+        
+        if (bankAccount) {
+          const amount = parseFloat(bankTransaction.amount.toString());
+          totalProvided += amount;
+          
+          transactions.push({
+            id: `bank-${bankTransaction.id}`,
+            amount: amount,
+            paidAmount: amount,
+            date: bankTransaction.registrationDate,
+            storeName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+            storeLocation: 'Bank Account',
+            registrationNumber: bankTransaction.registrationNumber,
+            status: 'Paid',
+            notes: bankTransaction.description || 'Legacy transaction (no agreement)',
+            type: 'CONTRIBUTION',
+            transactionType: bankTransaction.relatedDocumentType,
+            agreementNumber: 'N/A',
+            paymentMethod: bankTransaction.paymentMethod || 'BANK_TRANSFER',
+            source: 'Bank Register'
+          });
+        }
       });
 
       // Group transactions by store

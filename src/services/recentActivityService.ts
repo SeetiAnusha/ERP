@@ -1,4 +1,6 @@
 import CashRegister from '../models/CashRegister';
+import BankRegister from '../models/BankRegister';
+import BankAccount from '../models/BankAccount';
 import AccountsPayable from '../models/AccountsPayable';
 import Financer from '../models/Financer';
 import CashRegisterMaster from '../models/CashRegisterMaster';
@@ -7,15 +9,24 @@ import { Op } from 'sequelize';
 // Get recent investment and loan activity
 export const getRecentActivity = async (limit: number = 50) => {
   try {
-    // Get all CONTRIBUTION and LOAN transactions from CashRegister (correct source)
-    const transactions = await CashRegister.findAll({
+    // Get all CONTRIBUTION and LOAN transactions from Cash Register
+    const transactionsCash = await CashRegister.findAll({
       where: {
         relatedDocumentType: {
           [Op.in]: ['CONTRIBUTION', 'LOAN']
         }
       },
-      order: [['registrationDate', 'DESC']],
-      limit
+      order: [['registrationDate', 'DESC']]
+    });
+
+    // ✅ NEW: Get all CONTRIBUTION and LOAN transactions from Bank Register
+    const transactionsBank = await BankRegister.findAll({
+      where: {
+        relatedDocumentType: {
+          [Op.in]: ['CONTRIBUTION', 'LOAN']
+        }
+      },
+      order: [['registrationDate', 'DESC']]
     });
 
     // Get investment agreements to get financer details
@@ -32,15 +43,18 @@ export const getRecentActivity = async (limit: number = 50) => {
       where: { status: 'ACTIVE' }
     });
 
-    // Process activity data
-    const activities = transactions.map(transaction => {
+    // ✅ NEW: Get all bank accounts
+    const bankAccounts = await BankAccount.findAll();
+
+    // Process CASH register activity data
+    const activitiesCash = transactionsCash.map(transaction => {
       // Find the agreement for this transaction
       const agreement = agreements.find((a: any) => a.id === transaction.investmentAgreementId);
       const financer = agreement ? financers.find((f: any) => f.id === agreement.investorId) : null;
       const store = cashRegisterMasters.find(s => s.id === transaction.cashRegisterId);
 
       return {
-        id: transaction.id,
+        id: `cash-${transaction.id}`,
         date: transaction.registrationDate,
         type: transaction.relatedDocumentType,
         amount: parseFloat(transaction.amount.toString()),
@@ -69,11 +83,61 @@ export const getRecentActivity = async (limit: number = 50) => {
         agreementStatus: agreement?.status || 'Unknown',
         
         // Transaction details
-        paymentMethod: transaction.paymentMethod,
+        paymentMethod: transaction.paymentMethod || 'CASH',
         description: transaction.description,
-        status: 'Paid' // Cash transactions are always paid
+        status: 'Paid', // Cash transactions are always paid
+        source: 'Cash Register'
       };
     });
+
+    // ✅ NEW: Process BANK register activity data
+    const activitiesBank = transactionsBank.map(transaction => {
+      // Find the agreement for this transaction
+      const agreement = agreements.find((a: any) => a.id === (transaction as any).investmentAgreementId);
+      const financer = agreement ? financers.find((f: any) => f.id === agreement.investorId) : null;
+      const bankAccount = bankAccounts.find(b => b.id === transaction.bankAccountId);
+
+      return {
+        id: `bank-${transaction.id}`,
+        date: transaction.registrationDate,
+        type: transaction.relatedDocumentType,
+        amount: parseFloat(transaction.amount.toString()),
+        registrationNumber: transaction.registrationNumber,
+        
+        // Financer details
+        financerId: financer?.id || null,
+        financerName: financer?.name || 'Unknown',
+        financerCode: financer?.code || 'N/A',
+        financerType: financer?.type || 'Unknown',
+        financerContact: financer?.contactPerson || null,
+        financerPhone: financer?.phone || null,
+        
+        // Bank details (instead of store)
+        storeId: bankAccount?.id || null,
+        storeName: bankAccount ? `${bankAccount.bankName} - ${bankAccount.accountNumber}` : 'Unknown',
+        storeLocation: 'Bank Account',
+        storeCode: bankAccount?.accountNumber || 'N/A',
+        storeBalanceAfter: parseFloat(transaction.balance.toString()),
+        
+        // Agreement details
+        agreementId: agreement?.id || null,
+        agreementNumber: agreement?.agreementNumber || null,
+        agreementTotalAmount: agreement ? parseFloat(agreement.totalCommittedAmount.toString()) : 0,
+        agreementBalanceAmount: agreement ? parseFloat(agreement.balanceAmount.toString()) : 0,
+        agreementStatus: agreement?.status || 'Unknown',
+        
+        // Transaction details
+        paymentMethod: transaction.paymentMethod || 'BANK_TRANSFER',
+        description: transaction.description,
+        status: 'Paid', // Bank transactions are always paid
+        source: 'Bank Register'
+      };
+    });
+
+    // Combine and sort by date, then limit
+    const activities = [...activitiesCash, ...activitiesBank]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, limit);
 
     return activities;
   } catch (error: any) {
@@ -84,7 +148,20 @@ export const getRecentActivity = async (limit: number = 50) => {
 // Get activity by date range
 export const getActivityByDateRange = async (startDate: string, endDate: string) => {
   try {
-    const transactions = await CashRegister.findAll({
+    const transactionsCash = await CashRegister.findAll({
+      where: {
+        relatedDocumentType: {
+          [Op.in]: ['CONTRIBUTION', 'LOAN']
+        },
+        registrationDate: {
+          [Op.between]: [startDate, endDate]
+        }
+      },
+      order: [['registrationDate', 'DESC']]
+    });
+
+    // ✅ NEW: Get bank register transactions
+    const transactionsBank = await BankRegister.findAll({
       where: {
         relatedDocumentType: {
           [Op.in]: ['CONTRIBUTION', 'LOAN']
@@ -101,14 +178,15 @@ export const getActivityByDateRange = async (startDate: string, endDate: string)
     const agreements = await InvestmentAgreement.findAll();
     const financers = await Financer.findAll({ where: { status: 'ACTIVE' } });
     const cashRegisterMasters = await CashRegisterMaster.findAll({ where: { status: 'ACTIVE' } });
+    const bankAccounts = await BankAccount.findAll();
 
-    const activities = transactions.map(transaction => {
+    const activitiesCash = transactionsCash.map(transaction => {
       const agreement = agreements.find((a: any) => a.id === transaction.investmentAgreementId);
       const financer = agreement ? financers.find((f: any) => f.id === agreement.investorId) : null;
       const store = cashRegisterMasters.find(s => s.id === transaction.cashRegisterId);
 
       return {
-        id: transaction.id,
+        id: `cash-${transaction.id}`,
         date: transaction.registrationDate,
         type: transaction.relatedDocumentType,
         amount: parseFloat(transaction.amount.toString()),
@@ -119,9 +197,39 @@ export const getActivityByDateRange = async (startDate: string, endDate: string)
         storeLocation: store?.location || '',
         storeBalanceAfter: parseFloat(transaction.balance.toString()),
         agreementNumber: agreement?.agreementNumber || 'N/A',
-        status: 'Paid' // Cash transactions are always paid
+        paymentMethod: transaction.paymentMethod || 'CASH',
+        status: 'Paid', // Cash transactions are always paid
+        source: 'Cash Register'
       };
     });
+
+    // ✅ NEW: Process bank register transactions
+    const activitiesBank = transactionsBank.map(transaction => {
+      const agreement = agreements.find((a: any) => a.id === (transaction as any).investmentAgreementId);
+      const financer = agreement ? financers.find((f: any) => f.id === agreement.investorId) : null;
+      const bankAccount = bankAccounts.find(b => b.id === transaction.bankAccountId);
+
+      return {
+        id: `bank-${transaction.id}`,
+        date: transaction.registrationDate,
+        type: transaction.relatedDocumentType,
+        amount: parseFloat(transaction.amount.toString()),
+        registrationNumber: transaction.registrationNumber,
+        financerName: financer?.name || 'Unknown',
+        financerType: financer?.type || 'Unknown',
+        storeName: bankAccount ? `${bankAccount.bankName} - ${bankAccount.accountNumber}` : 'Unknown',
+        storeLocation: 'Bank Account',
+        storeBalanceAfter: parseFloat(transaction.balance.toString()),
+        agreementNumber: agreement?.agreementNumber || 'N/A',
+        paymentMethod: transaction.paymentMethod || 'BANK_TRANSFER',
+        status: 'Paid', // Bank transactions are always paid
+        source: 'Bank Register'
+      };
+    });
+
+    // Combine and sort by date
+    const activities = [...activitiesCash, ...activitiesBank]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return activities;
   } catch (error: any) {

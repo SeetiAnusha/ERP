@@ -101,11 +101,16 @@ export const getInvestmentAgreementById = async (id: number) => {
 };
 
 // Update agreement when money is received
-export const updateAgreementOnPayment = async (agreementId: number, receivedAmount: number) => {
-  const transaction = await sequelize.transaction();
+export const updateAgreementOnPayment = async (
+  agreementId: number, 
+  receivedAmount: number,
+  externalTransaction?: any
+) => {
+  const transaction = externalTransaction || await sequelize.transaction();
+  const shouldCommit = !externalTransaction;
   
   try {
-    const agreement = await InvestmentAgreement.findByPk(agreementId);
+    const agreement = await InvestmentAgreement.findByPk(agreementId, { transaction });
     if (!agreement) {
       throw new Error('Investment agreement not found');
     }
@@ -132,11 +137,15 @@ export const updateAgreementOnPayment = async (agreementId: number, receivedAmou
       status: newStatus,
     }, { transaction });
 
-    await transaction.commit();
+    if (shouldCommit) {
+      await transaction.commit();
+    }
     return agreement;
     
   } catch (error) {
-    await transaction.rollback();
+    if (shouldCommit) {
+      await transaction.rollback();
+    }
     throw error;
   }
 };

@@ -43,7 +43,7 @@ interface TransactionNode {
 }
 
 interface ReversalOperation {
-  type: 'BANK_REVERSAL' | 'CASH_REVERSAL' | 'CC_REGISTER_REVERSAL' | 'STATUS_UPDATE' | 'SOFT_DELETE' | 'CREATE_REVERSAL_AP' | 'CREATE_MANUAL_TASK' | 'RESTORE_CREDIT_LIMIT' | 'BANK_BALANCE_UPDATE' | 'INVENTORY_RESTORE';
+  type: 'BANK_REVERSAL' | 'CASH_REVERSAL' | 'CC_REGISTER_REVERSAL' | 'STATUS_UPDATE' | 'SOFT_DELETE' | 'CREATE_REVERSAL_AP' | 'CREATE_MANUAL_TASK' | 'RESTORE_CREDIT_LIMIT' | 'BANK_BALANCE_UPDATE' | 'INVENTORY_RESTORE' | 'DELETE_PROCESSING_FEE' | 'REVERSE_EXPECTED_DEPOSIT';
   targetTable: string;
   targetId: number;
   data: any;
@@ -92,6 +92,7 @@ export class TransactionDeletionService extends BaseService {
   async executeApprovedDeletion(data: ExecuteDeletionData): Promise<void> {
     return this.executeWithTransaction(async (transaction) => {
       console.log(` [DSA-Optimized] Starting deletion execution for request ${data.approvalRequestId}`);
+      console.log("data:",data);
       
       // Step 1: Validate approval request (keep existing logic)
       const approvalRequest = await this.validateApprovalRequest(data.approvalRequestId, transaction);
@@ -104,6 +105,7 @@ export class TransactionDeletionService extends BaseService {
       );
       
       console.log(` [Graph Analysis] Built dependency graph with ${dependencyGraph.nodes.length} nodes, ${dependencyGraph.edges.length} edges`);
+      console.log('nodes:',dependencyGraph.nodes);
       
       // Step 3: Generate reversal operations for all nodes (delegated to handlers)
       const reversalOperations: ReversalOperation[] = [];
@@ -119,6 +121,7 @@ export class TransactionDeletionService extends BaseService {
       }
       
       console.log(` [Operations Generated] Total operations: ${reversalOperations.length}`);
+      console.log('reversalOperations:',reversalOperations),
       
       // Step 4: Execute all operations in batches (delegated to BatchProcessor)
       await this.batchProcessor.executeBatchOperations(reversalOperations, transaction);

@@ -12,7 +12,7 @@ import BankAccount from '../../../models/BankAccount';
 import { BaseService } from '../../../core/BaseService';
 
 interface ReversalOperation {
-  type: 'BANK_REVERSAL' | 'CASH_REVERSAL' | 'CC_REGISTER_REVERSAL' | 'STATUS_UPDATE' | 'SOFT_DELETE' | 'CREATE_REVERSAL_AP' | 'CREATE_MANUAL_TASK' | 'RESTORE_CREDIT_LIMIT' | 'BANK_BALANCE_UPDATE' | 'INVENTORY_RESTORE';
+  type: 'BANK_REVERSAL' | 'CASH_REVERSAL' | 'CC_REGISTER_REVERSAL' | 'STATUS_UPDATE' | 'SOFT_DELETE' | 'CREATE_REVERSAL_AP' | 'CREATE_MANUAL_TASK' | 'RESTORE_CREDIT_LIMIT' | 'BANK_BALANCE_UPDATE' | 'INVENTORY_RESTORE' | 'DELETE_PROCESSING_FEE' | 'REVERSE_EXPECTED_DEPOSIT';
   targetTable: string;
   targetId: number;
   data: any;
@@ -34,6 +34,8 @@ export class BatchProcessor extends BaseService {
     
     // Execute in priority order
     const executionOrder = [
+      'DELETE_PROCESSING_FEE',      // First: delete processing fee expenses
+      'REVERSE_EXPECTED_DEPOSIT',   // Second: reverse expected deposits from bank accounts
       'BANK_REVERSAL',
       'CC_REGISTER_REVERSAL', 
       'CASH_REVERSAL',
@@ -42,7 +44,8 @@ export class BatchProcessor extends BaseService {
       'CREATE_REVERSAL_AP',
       'RESTORE_CREDIT_LIMIT',
       'CREATE_MANUAL_TASK',
-      'BANK_BALANCE_UPDATE'
+      'BANK_BALANCE_UPDATE',
+      'INVENTORY_RESTORE'
     ];
     
     for (const operationType of executionOrder) {
@@ -51,6 +54,12 @@ export class BatchProcessor extends BaseService {
         console.log(`🔄 [Batch Execution] Processing ${ops.length} ${operationType} operations`);
         
         switch (operationType) {
+          case 'DELETE_PROCESSING_FEE':
+            await this.executeDeleteProcessingFeeBatch(ops, transaction);
+            break;
+          // case 'REVERSE_EXPECTED_DEPOSIT':
+          //   await this.executeReverseExpectedDepositBatch(ops, transaction);
+          //   break;
           case 'BANK_REVERSAL':
             await this.executeBankReversalBatch(ops, transaction);
             break;
@@ -382,7 +391,8 @@ export class BatchProcessor extends BaseService {
       'accounts_receivables': '../../../models/AccountsReceivable',
       'bank_registers': '../../../models/BankRegister',
       'cash_registers': '../../../models/CashRegister',
-      'business_expenses': '../../../models/BusinessExpense'
+      'business_expenses': '../../../models/BusinessExpense',
+      'expenses': '../../../models/Expense'  // ✅ Added legacy expenses table
     };
     
     const modelPath = modelMap[tableName];
@@ -468,6 +478,98 @@ export class BatchProcessor extends BaseService {
         
       } catch (error: any) {
         console.error(`❌ [Inventory Restore Error] Failed to restore product ${productId}:`, error.message);
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * ✅ Execute reverse expected deposit operations in batch
+   * Reverses the expectedBankDeposit from bank account for deleted card payments
+   */
+  // private async executeReverseExpectedDepositBatch(
+  //   operations: ReversalOperation[],
+  //   transaction: Transaction
+  // ): Promise<void> {
+  //   console.log(`💳 [Batch Processor] Executing ${operations.length} REVERSE_EXPECTED_DEPOSIT operations`);
+    
+  //   for (const op of operations) {
+  //     const { amount, arRegistrationNumber, description, deletion_approval_id } = op.data;
+      
+  //     try {
+  //       const bankAccount = await BankAccount.findByPk(op.targetId, { transaction });
+  //       if (!bankAccount) {
+  //         console.warn(`⚠️ [Expected Deposit Reversal] Bank account ${op.targetId} not found, skipping`);
+  //         continue;
+  //       }
+        
+  //       const currentBalance = parseFloat(bankAccount.balance.toString());
+  //       const depositAmount = parseFloat(amount.toString());
+  //       const newBalance = currentBalance - depositAmount;
+        
+  //       console.log(`💳 [Expected Deposit Reversal] BEFORE: Bank ${bankAccount.bankName} (${bankAccount.accountNumber}) Balance: ₹${currentBalance}`);
+  //       console.log(`💳 [Expected Deposit Reversal] Reversing: ₹${depositAmount} for AR ${arRegistrationNumber}`);
+  //       console.log(`💳 [Expected Deposit Reversal] AFTER: New Balance will be: ₹${newBalance}`);
+        
+  //       await bankAccount.update({ balance: newBalance }, { transaction });
+        
+  //       console.log(`✅ [Expected Deposit Reversed] ${bankAccount.bankName} (${bankAccount.accountNumber}): ${currentBalance} → ${newBalance} (-${depositAmount}) - AR ${arRegistrationNumber} deleted`);
+        
+  //     } catch (error: any) {
+  //       console.error(`❌ [Expected Deposit Reversal Error] Failed to reverse deposit:`, error.message);
+  //       throw error;
+  //     }
+  //   }
+  // }
+
+  /**
+   * ✅ NEW: Execute delete processing fee operations in batch
+   * Deletes processing fee expenses when card payment AR is deleted
+   * Handles BOTH legacy expenses table and business_expenses table
+   */
+  private async executeDeleteProcessingFeeBatch(
+    operations: ReversalOperation[],
+    transaction: Transaction
+  ): Promise<void> {
+    const BusinessExpense = (await import('../../../models/BusinessExpense')).default;
+    const Expense = (await import('../../../models/Expense')).default;
+    
+    for (const op of operations) {
+      const { originalExpense, isLegacyExpense, deletion_status, deleted_at, deleted_by, deletion_reason_code, deletion_memo, deletion_approval_id } = op.data;
+      
+      try {
+        if (isLegacyExpense) {
+          // ✅ Legacy expenses table - just update status (no deletion_status field)
+          await Expense.update({
+            status: 'DELETED'
+          }, {
+            where: { id: op.targetId },
+            transaction,
+            validate: false  // ✅ Skip validation during deletion
+          });
+          
+          console.log(`💰 [Processing Fee Deleted] Legacy Expense ${originalExpense.registrationNumber} (₹${originalExpense.amount}) - Status: DELETED`);
+        } else {
+          // ✅ Business expenses table - soft delete with deletion_status
+          // ✅ CRITICAL FIX: Use validate: false to bypass supplierId/clientId validation
+          await BusinessExpense.update({
+            deletion_status,
+            deleted_at,
+            deleted_by,
+            deletion_reason_code,
+            deletion_memo,
+            deletion_approval_id
+          }, {
+            where: { id: op.targetId },
+            transaction,
+            validate: false  // ✅ CRITICAL: Skip validation to avoid "Either supplierId or clientId must be provided" error
+          });
+          
+          console.log(`💰 [Processing Fee Deleted] Business Expense ${originalExpense.registrationNumber} (₹${originalExpense.amount}) - Reason: ${deletion_memo}`);
+        }
+        
+      } catch (error: any) {
+        console.error(`❌ [Processing Fee Deletion Error] Failed to delete expense ${op.targetId} from ${op.targetTable}:`, error.message);
         throw error;
       }
     }

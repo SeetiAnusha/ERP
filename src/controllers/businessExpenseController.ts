@@ -524,7 +524,7 @@ export const payBusinessExpense = async (req: Request, res: Response) => {
  */
 export const getBusinessExpenseDashboard = async (req: Request, res: Response) => {
   try {
-    const { period = 'month' } = req.query;
+    const { period = 'all' } = req.query;
 
     console.log(`[BusinessExpenseController] Getting dashboard data for period: ${period}`);
 

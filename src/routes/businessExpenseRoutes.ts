@@ -43,7 +43,7 @@ router.post('/:id/pay', businessExpenseController.payBusinessExpense);
 /**
  * @route   GET /api/business-expenses/dashboard
  * @desc    Get business expense dashboard data
- * @query   period (month, quarter, year)
+ * @query   period (all, week, month, quarter, year) - defaults to 'all'
  * @access  Public
  */
 router.get('/dashboard', businessExpenseController.getBusinessExpenseDashboard);

@@ -1,4 +1,6 @@
 import CashRegister from '../models/CashRegister';
+import BankRegister from '../models/BankRegister';
+import BankAccount from '../models/BankAccount';
 import Financer from '../models/Financer';
 import CashRegisterMaster from '../models/CashRegisterMaster';
 import { Op } from 'sequelize';
@@ -6,8 +8,16 @@ import { Op } from 'sequelize';
 // Get all banks with their loan details
 export const getAllBanks = async () => {
   try {
-    // Get all LOAN transactions from CashRegister
-    const loanTransactions = await CashRegister.findAll({
+    // Get all LOAN transactions from Cash Register
+    const loanTransactionsCash = await CashRegister.findAll({
+      where: {
+        relatedDocumentType: 'LOAN'
+      },
+      order: [['registrationDate', 'DESC']]
+    });
+
+    // ✅ NEW: Get all LOAN transactions from Bank Register
+    const loanTransactionsBank = await BankRegister.findAll({
       where: {
         relatedDocumentType: 'LOAN'
       },
@@ -45,6 +55,9 @@ export const getAllBanks = async () => {
       where: { status: 'ACTIVE' }
     });
 
+    // ✅ NEW: Get all bank accounts for bank info
+    const bankAccounts = await BankAccount.findAll();
+
     // Process bank data
     const bankData = banks.map(bank => {
       // Find all loan agreements for this bank
@@ -60,18 +73,18 @@ export const getAllBanks = async () => {
         totalLoaned += parseFloat(agreement.totalCommittedAmount.toString());
         outstandingDebt += parseFloat(agreement.balanceAmount.toString());
 
-        // Find cash register transactions for this loan agreement
-        const agreementTransactions = loanTransactions.filter(t => 
+        // Find CASH register transactions for this loan agreement
+        const agreementTransactionsCash = loanTransactionsCash.filter(t => 
           t.investmentAgreementId === agreement.id
         );
 
-        agreementTransactions.forEach((cashTransaction: any) => {
+        agreementTransactionsCash.forEach((cashTransaction: any) => {
           // Find store details
           const store = cashRegisterMasters.find(s => s.id === cashTransaction.cashRegisterId);
           
           if (store) {
             loans.push({
-              id: cashTransaction.id,
+              id: `cash-${cashTransaction.id}`,
               amount: parseFloat(cashTransaction.amount.toString()),
               paidAmount: parseFloat(cashTransaction.amount.toString()),
               date: cashTransaction.registrationDate,
@@ -84,10 +97,109 @@ export const getAllBanks = async () => {
               agreementId: agreement.id,
               agreementNumber: agreement.agreementNumber,
               interestRate: agreement.interestRate,
-              maturityDate: agreement.maturityDate
+              maturityDate: agreement.maturityDate,
+              paymentMethod: cashTransaction.paymentMethod || 'CASH',
+              source: 'Cash Register'
             });
           }
         });
+
+        // ✅ NEW: Find BANK register transactions for this loan agreement
+        const agreementTransactionsBank = loanTransactionsBank.filter(t => 
+          (t as any).investmentAgreementId === agreement.id
+        );
+
+        agreementTransactionsBank.forEach((bankTransaction: any) => {
+          // Find bank account details
+          const bankAccount = bankAccounts.find(b => b.id === bankTransaction.bankAccountId);
+          
+          if (bankAccount) {
+            loans.push({
+              id: `bank-${bankTransaction.id}`,
+              amount: parseFloat(bankTransaction.amount.toString()),
+              paidAmount: parseFloat(bankTransaction.amount.toString()),
+              date: bankTransaction.registrationDate,
+              storeName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+              storeLocation: 'Bank Account',
+              registrationNumber: bankTransaction.registrationNumber,
+              status: 'Paid',
+              notes: bankTransaction.description,
+              type: 'LOAN',
+              agreementId: agreement.id,
+              agreementNumber: agreement.agreementNumber,
+              interestRate: agreement.interestRate,
+              maturityDate: agreement.maturityDate,
+              paymentMethod: bankTransaction.paymentMethod || 'BANK_TRANSFER',
+              source: 'Bank Register'
+            });
+          }
+        });
+      });
+
+      // ✅ NEW: Include orphaned CASH register transactions (no agreement)
+      const orphanedTransactionsCash = loanTransactionsCash.filter(t => 
+        !t.investmentAgreementId && !loans.some(l => l.id === `cash-${t.id}`)
+      );
+
+      orphanedTransactionsCash.forEach((cashTransaction: any) => {
+        const store = cashRegisterMasters.find(s => s.id === cashTransaction.cashRegisterId);
+        
+        if (store) {
+          const amount = parseFloat(cashTransaction.amount.toString());
+          totalLoaned += amount;
+          
+          loans.push({
+            id: `cash-${cashTransaction.id}`,
+            amount: amount,
+            paidAmount: amount,
+            date: cashTransaction.registrationDate,
+            storeName: store.name,
+            storeLocation: store.location,
+            registrationNumber: cashTransaction.registrationNumber,
+            status: 'Paid',
+            notes: cashTransaction.description || 'Legacy transaction (no agreement)',
+            type: 'LOAN',
+            agreementId: null,
+            agreementNumber: 'N/A',
+            interestRate: null,
+            maturityDate: null,
+            paymentMethod: cashTransaction.paymentMethod || 'CASH',
+            source: 'Cash Register'
+          });
+        }
+      });
+
+      // ✅ NEW: Include orphaned BANK register transactions (no agreement)
+      const orphanedTransactionsBank = loanTransactionsBank.filter(t => 
+        !(t as any).investmentAgreementId && !loans.some(l => l.id === `bank-${t.id}`)
+      );
+
+      orphanedTransactionsBank.forEach((bankTransaction: any) => {
+        const bankAccount = bankAccounts.find(b => b.id === bankTransaction.bankAccountId);
+        
+        if (bankAccount) {
+          const amount = parseFloat(bankTransaction.amount.toString());
+          totalLoaned += amount;
+          
+          loans.push({
+            id: `bank-${bankTransaction.id}`,
+            amount: amount,
+            paidAmount: amount,
+            date: bankTransaction.registrationDate,
+            storeName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+            storeLocation: 'Bank Account',
+            registrationNumber: bankTransaction.registrationNumber,
+            status: 'Paid',
+            notes: bankTransaction.description || 'Legacy transaction (no agreement)',
+            type: 'LOAN',
+            agreementId: null,
+            agreementNumber: 'N/A',
+            interestRate: null,
+            maturityDate: null,
+            paymentMethod: bankTransaction.paymentMethod || 'BANK_TRANSFER',
+            source: 'Bank Register'
+          });
+        }
       });
 
       // Method 2: FALLBACK - Use AccountsPayable for existing data
@@ -101,7 +213,7 @@ export const getAllBanks = async () => {
           outstandingDebt += parseFloat(ap.balanceAmount.toString());
 
           // Find corresponding cash register transaction
-          const cashTransaction = loanTransactions.find((t: any) => 
+          const cashTransaction = loanTransactionsCash.find((t: any) => 
             t.registrationNumber === ap.relatedDocumentNumber
           );
 
@@ -111,7 +223,7 @@ export const getAllBanks = async () => {
             
             if (store) {
               loans.push({
-                id: ap.id,
+                id: `legacy-${ap.id}`,
                 amount: parseFloat(ap.amount.toString()),
                 paidAmount: parseFloat(ap.paidAmount.toString()),
                 date: ap.registrationDate,
@@ -124,7 +236,9 @@ export const getAllBanks = async () => {
                 agreementId: null,
                 agreementNumber: 'Legacy',
                 interestRate: null,
-                maturityDate: null
+                maturityDate: null,
+                paymentMethod: 'CASH',
+                source: 'Cash Register (Legacy)'
               });
             }
           }
@@ -220,7 +334,26 @@ export const getBankById = async (bankId: number) => {
         transactions.push({
           agreement: agreement.toJSON(),
           cashTransaction: cashTransaction.toJSON(),
-          store: store?.toJSON()
+          store: store?.toJSON(),
+          source: 'Cash Register'
+        });
+      }
+
+      // ✅ NEW: Get bank register transactions for these agreements
+      const bankTransactions = await BankRegister.findAll({
+        where: { 
+          investmentAgreementId: agreement.id,
+          relatedDocumentType: 'LOAN'
+        }
+      });
+
+      for (const bankTransaction of bankTransactions) {
+        const bankAccount = await BankAccount.findByPk(bankTransaction.bankAccountId);
+        transactions.push({
+          agreement: agreement.toJSON(),
+          bankTransaction: bankTransaction.toJSON(),
+          bankAccount: bankAccount?.toJSON(),
+          source: 'Bank Register'
         });
       }
     }

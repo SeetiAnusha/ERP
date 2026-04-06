@@ -668,10 +668,13 @@ class BusinessExpenseService {
       dateFrom,
       dateTo,
       page = 1,
-      limit = 50
+      limit = 1000  // ✅ INCREASED: Allow more records (was 50)
     } = filters;
 
     const whereClause: any = {};
+
+    // ✅ CRITICAL: Exclude soft-deleted expenses
+    // whereClause.deletion_status = { [Op.ne]: 'EXECUTED' };
 
     // Apply filters
     if (categoryId) whereClause.expenseCategoryId = categoryId;
@@ -680,7 +683,8 @@ class BusinessExpenseService {
     if (status) whereClause.status = status;
     if (paymentStatus) whereClause.paymentStatus = paymentStatus;
 
-    // Date range filter
+    // ✅ FIXED: Only apply date filter if explicitly provided
+    // Don't filter by date if no date range is specified
     if (dateFrom || dateTo) {
       whereClause.date = {};
       if (dateFrom) whereClause.date[Op.gte] = dateFrom;
@@ -695,7 +699,15 @@ class BusinessExpenseService {
         {
           model: Supplier,
           as: 'supplier',
-          attributes: ['id', 'name', 'rnc']
+          attributes: ['id', 'name', 'rnc'],
+          required: false  // ✅ Make optional (processing fees don't have supplier)
+        },
+        // ✅ NEW: Include Client for processing fees
+        {
+          model: (await import('../models/Client')).default,
+          as: 'client',
+          attributes: ['id', 'name', 'rncCedula'],
+          required: false
         },
         {
           model: ExpenseCategory,
@@ -707,15 +719,31 @@ class BusinessExpenseService {
           as: 'expenseTypeModel',
           attributes: ['id', 'name', 'code']
         },
+        // ✅ NEW: Include related AR for processing fees
+        {
+          model: (await import('../models/AccountsReceivable')).default,
+          as: 'relatedAR',
+          attributes: ['id', 'registrationNumber', 'amount', 'cardNetwork'],
+          required: false
+        },
+        // ✅ NEW: Include card payment network for processing fees
+        {
+          model: (await import('../models/CardPaymentNetwork')).default,
+          as: 'cardNetwork',
+          attributes: ['id', 'name', 'type', 'processingFee'],
+          required: false
+        },
         {
           model: BankAccount,
           as: 'bankAccount',
-          attributes: ['id', 'bankName', 'accountNumber']
+          attributes: ['id', 'bankName', 'accountNumber'],
+          required: false
         },
         {
           model: Card,
           as: 'card',
-          attributes: ['id', 'cardName', 'cardBrand', 'cardNumberLast4']
+          attributes: ['id', 'cardName', 'cardBrand', 'cardNumberLast4'],
+          required: false
         }
       ],
       order: [['date', 'DESC'], ['createdAt', 'DESC']],
@@ -988,9 +1016,9 @@ class BusinessExpenseService {
   /**
    * Get expense dashboard data
    */
-  static async getDashboardData(period: string = 'month') {
+  static async getDashboardData(period: string = 'all') {
     const now = new Date();
-    let startDate: Date;
+    let startDate: Date | null = null;
 
     switch (period) {
       case 'year':
@@ -1000,17 +1028,40 @@ class BusinessExpenseService {
         const quarter = Math.floor(now.getMonth() / 3);
         startDate = new Date(now.getFullYear(), quarter * 3, 1);
         break;
-      default: // month
+      case 'month':
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'week':
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 7);
+        break;
+      case 'all':
+      default:
+        // No date filter - get all records
+        startDate = null;
+    }
+
+    // ✅ FIX: Build where clause with proper filters to exclude deleted and reversed records
+    const whereClause: any = {
+      // Exclude deleted records (CRITICAL FIX)
+      [Op.or]: [
+        { deletion_status: null },
+        { deletion_status: { [Op.ne]: 'EXECUTED' } }
+      ],
+      // Exclude reversed records (CRITICAL FIX)
+      status: { [Op.ne]: 'REVERSED' }
+    };
+    
+    // Add date filter if period is not 'all'
+    if (startDate) {
+      whereClause.date = {
+        [Op.gte]: startDate,
+        [Op.lte]: now
+      };
     }
 
     const expenses = await BusinessExpense.findAll({
-      where: {
-        date: {
-          [Op.gte]: startDate,
-          [Op.lte]: now
-        }
-      },
+      where: whereClause,
       include: [
         {
           model: ExpenseCategory,
@@ -1020,14 +1071,47 @@ class BusinessExpenseService {
       ]
     });
 
-    const totalAmount = expenses.reduce((sum, expense) => sum + parseFloat(expense.amount.toString()), 0);
-    const paidAmount = expenses.reduce((sum, expense) => sum + parseFloat(expense.paidAmount.toString()), 0);
+    // ✅ IMPROVED: Calculate totals with validation and error handling
+    const totalAmount = expenses.reduce((sum, expense) => {
+      const amount = parseFloat(expense.amount.toString());
+      if (isNaN(amount) || amount < 0) {
+        console.warn(`[BusinessExpenseService] Invalid amount for expense ${expense.id}: ${expense.amount}`);
+        return sum;
+      }
+      return sum + amount;
+    }, 0);
+    
+    const paidAmount = expenses.reduce((sum, expense) => {
+      const paid = parseFloat(expense.paidAmount.toString());
+      if (isNaN(paid) || paid < 0) {
+        console.warn(`[BusinessExpenseService] Invalid paidAmount for expense ${expense.id}: ${expense.paidAmount}`);
+        return sum;
+      }
+      return sum + paid;
+    }, 0);
+    
     const balanceAmount = totalAmount - paidAmount;
     const paymentPercentage = totalAmount > 0 ? (paidAmount / totalAmount) * 100 : 0;
 
-    // Group by category for topCategories
+    console.log(`[BusinessExpenseService] Dashboard calculation for period '${period}':`, {
+      totalExpenses: expenses.length,
+      totalAmount,
+      paidAmount,
+      balanceAmount,
+      paymentPercentage: paymentPercentage.toFixed(2) + '%'
+    });
+
+    // ✅ IMPROVED: Group by category with validation
     const categoryGroups = expenses.reduce((acc: any, expense) => {
-      const categoryId = expense.expenseCategoryId;
+      // Handle undefined categoryId for processing fees
+      const categoryId = expense.expenseCategoryId ?? 0;
+      const amount = parseFloat(expense.amount.toString());
+      
+      // Skip invalid amounts
+      if (isNaN(amount) || amount < 0) {
+        console.warn(`[BusinessExpenseService] Skipping expense ${expense.id} in category grouping due to invalid amount`);
+        return acc;
+      }
       
       if (!acc[categoryId]) {
         acc[categoryId] = {
@@ -1038,7 +1122,7 @@ class BusinessExpenseService {
       }
       
       acc[categoryId].count += 1;
-      acc[categoryId].amount += parseFloat(expense.amount.toString());
+      acc[categoryId].amount += amount;
       return acc;
     }, {});
 
@@ -1046,9 +1130,15 @@ class BusinessExpenseService {
       .sort((a: any, b: any) => b.amount - a.amount)
       .slice(0, 10);
 
-    // Group by status for breakdowns
+    // ✅ IMPROVED: Group by status with validation
     const statusGroups = expenses.reduce((acc: any, expense) => {
-      const status = expense.paymentStatus;
+      const status = expense.paymentStatus || 'Unknown';
+      const amount = parseFloat(expense.amount.toString());
+      
+      // Skip invalid amounts
+      if (isNaN(amount) || amount < 0) {
+        return acc;
+      }
       
       if (!acc[status]) {
         acc[status] = {
@@ -1059,15 +1149,21 @@ class BusinessExpenseService {
       }
       
       acc[status].count += 1;
-      acc[status].amount += parseFloat(expense.amount.toString());
+      acc[status].amount += amount;
       return acc;
     }, {});
 
     const byStatus = Object.values(statusGroups);
 
-    // Group by payment type for breakdowns
+    // ✅ IMPROVED: Group by payment type with validation
     const typeGroups = expenses.reduce((acc: any, expense) => {
-      const transactionType = expense.paymentType;
+      const transactionType = expense.paymentType || 'Unknown';
+      const amount = parseFloat(expense.amount.toString());
+      
+      // Skip invalid amounts
+      if (isNaN(amount) || amount < 0) {
+        return acc;
+      }
       
       if (!acc[transactionType]) {
         acc[transactionType] = {
@@ -1078,7 +1174,7 @@ class BusinessExpenseService {
       }
       
       acc[transactionType].count += 1;
-      acc[transactionType].amount += parseFloat(expense.amount.toString());
+      acc[transactionType].amount += amount;
       return acc;
     }, {});
 
@@ -1087,7 +1183,7 @@ class BusinessExpenseService {
     return {
       period,
       dateRange: {
-        start: startDate.toISOString(),
+        start: startDate ? startDate.toISOString() : 'All Time',
         end: now.toISOString()
       },
       summary: {
