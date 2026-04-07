@@ -3,8 +3,11 @@ import * as creditBalanceController from '../controllers/creditBalanceController
 
 const router = express.Router();
 
+// Get all credit balances (with pagination support)
+router.get('/', creditBalanceController.getAllCreditBalances);
+
 // Get all active credit balances
-router.get('/', creditBalanceController.getAllActiveCreditBalances);
+router.get('/active', creditBalanceController.getAllActiveCreditBalances);
 
 // Get credit balance by ID
 router.get('/:id', creditBalanceController.getCreditBalanceById);

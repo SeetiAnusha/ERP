@@ -820,8 +820,11 @@ class CashRegisterService extends BaseService {
 export const cashRegisterService = new CashRegisterService();
 
 // Export individual methods for backward compatibility
-export const getAllCashTransactions = () => 
-  cashRegisterService.getAllCashTransactions();
+export const getAllCashTransactions = (options?: any) => 
+  cashRegisterService.getAllCashTransactions(options);
+
+export const getAllCashTransactionsWithPagination = (options?: any) => 
+  cashRegisterService.getAllCashTransactions(options);
 
 export const getCashTransactionById = (id: number) => 
   cashRegisterService.getCashTransactionById(id);

@@ -16,25 +16,28 @@ import creditCardRegisterService from '../services/creditCardRegisterService';
  */
 export const getAllCreditCardRegister = async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      cardId,
-      transactionType,
-      page = 1,
-      limit = 50,
-      dateFrom,
-      dateTo
-    } = req.query;
-
-    const options = {
-      cardId: cardId ? parseInt(cardId as string) : undefined,
-      transactionType: transactionType as 'CHARGE' | 'REFUND' | 'ADJUSTMENT' | undefined,
-      page: parseInt(page as string),
-      limit: parseInt(limit as string),
-      dateFrom: dateFrom ? new Date(dateFrom as string) : undefined,
-      dateTo: dateTo ? new Date(dateTo as string) : undefined
-    };
-
-    const result = await creditCardRegisterService.getAllCreditCardRegister(options);
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        cardId: req.query.cardId ? parseInt(req.query.cardId as string) : undefined,
+        transactionType: req.query.transactionType as 'CHARGE' | 'REFUND' | 'ADJUSTMENT' | undefined,
+        dateFrom: req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined,
+        dateTo: req.query.dateTo ? new Date(req.query.dateTo as string) : undefined
+      };
+      
+      console.log('🔍 CreditCardRegister Controller: Pagination requested');
+      const result = await creditCardRegisterService.getAllCreditCardRegister(options);
+      res.json(result);
+      return;
+    }
+    
+    // Backward compatibility
+    const result = await creditCardRegisterService.getAllCreditCardRegister({});
     
     res.status(200).json({
       success: true,

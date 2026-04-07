@@ -16,6 +16,7 @@ import sequelize from '../config/database';
 import BankRegister from '../models/BankRegister';
 import BankAccount from '../models/BankAccount';
 import AccountsPayable from '../models/AccountsPayable';
+import BusinessExpense from '../models/BusinessExpense';
 import { TransactionType } from '../types/TransactionType';
 import { transactionTypeTracker, SourceSystem, DestinationTable } from './transactionTypeTracker';
 import { BaseService } from '../core/BaseService';
@@ -44,6 +45,7 @@ interface CreateBankRegisterRequest {
   bankAccountId?: number;
   bankAccountName?: string;
   bankAccountNumber?: string;
+  accountType?: 'CHECKING' | 'SAVINGS'; // Account type from bank_accounts table
   referenceNumber?: string;
   chequeNumber?: string;
   transferNumber?: string;
@@ -102,20 +104,54 @@ class BankRegisterService extends BaseService {
   // ==================== PUBLIC API METHODS ====================
   
   /**
-   * Get all bank registers with optional filtering
-   * Time Complexity: O(n) where n = number of records
-   * Space Complexity: O(n) for result set
+   * Get all bank registers with pagination, search, and filters
+   * Time Complexity: O(n) where n = records per page (not total records!)
+   * Space Complexity: O(n) for result set per page
+   * 
+   * @param options - Query options including pagination, search, and filters
+   * @returns Paginated response with bank registers and metadata
+   * 
+   * @example
+   * // Simple pagination
+   * const result = await service.getAllBankRegisters({ page: 1, limit: 50 });
+   * 
+   * @example
+   * // With search
+   * const result = await service.getAllBankRegisters({ 
+   *   search: 'BR0001',
+   *   page: 1,
+   *   limit: 50
+   * });
+   * 
+   * @example
+   * // With filters
+   * const result = await service.getAllBankRegisters({
+   *   transactionType: 'INFLOW',
+   *   bankAccountId: 5,
+   *   dateFrom: '2024-01-01',
+   *   dateTo: '2024-12-31',
+   *   page: 1,
+   *   limit: 50
+   * });
    */
-  async getAllBankRegisters(): Promise<BankRegister[]> {
+  async getAllBankRegisters(options: any = {}): Promise<any> {
     return this.executeWithRetry(async () => {
-      console.log(' Service: getAllBankRegisters called');
+      console.log(' Service: getAllBankRegisters called with options:', options);
       
-      const registers = await BankRegister.findAll({
-        order: [['registrationDate', 'DESC']],
-      });
+      // Use generic pagination from BaseService
+      const result = await this.getAllWithPagination(
+        BankRegister,
+        {
+          ...options,
+          // Define searchable fields
+          searchFields: ['registrationNumber', 'description', 'clientName', 'clientRnc', 'ncf'],
+          // Define date field for date range filtering
+          dateField: 'registrationDate'
+        }
+      );
       
-      console.log(` Retrieved ${registers.length} bank registers successfully`);
-      return registers;
+      console.log(` Retrieved ${result.data.length} of ${result.pagination.total} bank registers (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+      return result;
     });
   }
 
@@ -188,7 +224,6 @@ class BankRegisterService extends BaseService {
         // Check 2: Business expense from this supplier
         else if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
           try {
-            const BusinessExpense = (await import('../models/BusinessExpense')).default;
             const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId);
             
             if (businessExpense && businessExpense.supplierId === supplierId) {
@@ -553,11 +588,20 @@ class BankRegisterService extends BaseService {
         throw new ValidationError('Transaction type must be either INFLOW or OUTFLOW');
       }
       
-      // Populate bank account name if bankAccountId is provided but bankAccountName is not
+      // Populate bank account details if bankAccountId is provided
       if (data.bankAccountId && !data.bankAccountName) {
         const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
         if (bankAccount) {
           data.bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
+          data.accountType = bankAccount.accountType; // Store account type
+        }
+      } else if (data.bankAccountId && data.bankAccountName) {
+        // If bankAccountName is provided but accountType is not, fetch it
+        if (!data.accountType) {
+          const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
+          if (bankAccount) {
+            data.accountType = bankAccount.accountType;
+          }
         }
       }
       
@@ -748,57 +792,28 @@ class BankRegisterService extends BaseService {
   }
   /**
    * Get entries by transaction type with pagination
-   * Time Complexity: O(n) where n = number of matching records
-   * Space Complexity: O(n) for result set
+   * Time Complexity: O(n) where n = records per page
+   * Space Complexity: O(n) for result set per page
    */
   async getEntriesByTransactionType(
     transactionType: TransactionType,
-    options: {
-      page?: number;
-      limit?: number;
-      dateFrom?: Date;
-      dateTo?: Date;
-    } = {}
-  ): Promise<{
-    entries: BankRegister[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+    options: any = {}
+  ): Promise<any> {
     return this.executeWithRetry(async () => {
-      const { page = 1, limit = 50, dateFrom, dateTo } = options;
-      const offset = (page - 1) * limit;
+      this.validateEnum(transactionType, 'Transaction type', Object.values(TransactionType));
       
-      // Validate pagination parameters
-      this.validateNumeric(page, 'Page', { min: 1 });
-      this.validateNumeric(limit, 'Limit', { min: 1, max: 1000 });
-      
-      const whereClause: any = {
-        sourceTransactionType: transactionType
-      };
-      
-      // Add date range filter
-      if (dateFrom || dateTo) {
-        whereClause.registrationDate = {};
-        if (dateFrom) whereClause.registrationDate[Op.gte] = dateFrom;
-        if (dateTo) whereClause.registrationDate[Op.lte] = dateTo;
-      }
-      
-      const { rows: entries, count: total } = await BankRegister.findAndCountAll({
-        where: whereClause,
-        order: [['registrationDate', 'DESC'], ['createdAt', 'DESC']],
-        limit,
-        offset
-      });
-      
-      return {
-        entries,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit)
-      };
+      // Use generic pagination with additional WHERE clause
+      return await this.getAllWithPagination(
+        BankRegister,
+        {
+          ...options,
+          searchFields: ['registrationNumber', 'description', 'clientName'],
+          dateField: 'registrationDate'
+        },
+        {
+          sourceTransactionType: transactionType
+        }
+      );
     });
   }
 
@@ -958,9 +973,6 @@ class BankRegisterService extends BaseService {
       if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
         console.log(`🔄 [BankRegister] Updating related business expense ${ap.relatedDocumentId} for AP payment`);
         
-        // Import BusinessExpense model
-        const BusinessExpense = (await import('../models/BusinessExpense')).default;
-        
         // Get the business expense
         const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId, { transaction });
         
@@ -1012,7 +1024,8 @@ export default bankRegisterService;
 // ==================== BACKWARD COMPATIBILITY EXPORTS ====================
 // Maintain compatibility with existing functional exports
 
-export const getAllBankRegisters = () => bankRegisterService.getAllBankRegisters();
+export const getAllBankRegisters = (options?: any) => bankRegisterService.getAllBankRegisters(options);
+export const getAllBankRegistersWithPagination = (options?: any) => bankRegisterService.getAllBankRegisters(options);
 export const getBankRegisterById = (id: number) => bankRegisterService.getBankRegisterById(id);
 export const getPendingAPInvoices = (supplierId: number) => bankRegisterService.getPendingAPInvoices(supplierId);
 export const createBankRegister = (data: any, externalTransaction?: Transaction) => 

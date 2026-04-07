@@ -3,6 +3,27 @@ import * as saleService from '../services/saleService';
 
 export const getAll = async (req: Request, res: Response) => {
   try {
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        filters: req.query.filters ? JSON.parse(req.query.filters as string) : {}
+      };
+      
+      console.log('🔍 Sale Controller: Pagination requested with options:', options);
+      const result = await saleService.getAllSalesWithPagination(options);
+      console.log('✅ Sale Controller: Returning paginated result:', { 
+        dataCount: result.data?.length, 
+        total: result.pagination?.total 
+      });
+      return res.json(result);
+    }
+    
+    // Backward compatibility - return all records
     const sales = await saleService.getAllSales();
     res.json(sales);
   } catch (error: any) {

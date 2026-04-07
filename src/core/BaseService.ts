@@ -315,4 +315,45 @@ export abstract class BaseService {
   protected roundCurrency(amount: number): number {
     return Math.round(amount * 100) / 100;
   }
+  
+  // ==================== PAGINATION METHODS ====================
+  
+  /**
+   * Generic pagination method for any Sequelize model
+   * Provides consistent pagination across all services
+   * 
+   * @param model - Sequelize model class
+   * @param options - Query options (pagination, filters, search)
+   * @param additionalWhere - Additional WHERE conditions
+   * @param include - Sequelize associations to include
+   * @returns Paginated response with data and metadata
+   * 
+   * @example
+   * // In any service extending BaseService:
+   * async getAllRecords(options: QueryOptions) {
+   *   return this.getAllWithPagination(
+   *     MyModel,
+   *     {
+   *       ...options,
+   *       searchFields: ['name', 'code'],
+   *       dateField: 'createdAt'
+   *     }
+   *   );
+   * }
+   */
+  protected async getAllWithPagination<T extends any>(
+    model: any,
+    options: any = {},
+    additionalWhere: any = {},
+    include: any[] = []
+  ): Promise<any> {
+    const { PaginationService } = await import('./PaginationService');
+    
+    return await PaginationService.paginate(
+      model,
+      options,
+      additionalWhere,
+      include
+    );
+  }
 }

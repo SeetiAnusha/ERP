@@ -1,6 +1,34 @@
 import { Request, Response } from 'express';
 import * as creditBalanceService from '../services/creditBalanceService';
 
+export const getAllCreditBalances = async (req: Request, res: Response) => {
+  try {
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        entityType: req.query.entityType as string,
+        entityId: req.query.entityId ? parseInt(req.query.entityId as string) : undefined
+      };
+      
+      console.log('🔍 CreditBalance Controller: Pagination requested');
+      const result = await creditBalanceService.getAllCreditBalancesWithPagination(options);
+      return res.json(result);
+    }
+    
+    // Backward compatibility - return all records
+    const creditBalances = await creditBalanceService.getAllCreditBalances({});
+    res.json(creditBalances);
+  } catch (error: any) {
+    console.error('❌ Error fetching credit balances:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const getAllActiveCreditBalances = async (req: Request, res: Response) => {
   try {
     console.log(' Fetching all active credit balances...');

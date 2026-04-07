@@ -73,26 +73,48 @@ class CreditCardRegisterService extends BaseService {
     limit?: number;
     dateFrom?: Date;
     dateTo?: Date;
-  } = {}): Promise<{
-    entries: CreditCardRegister[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  } = {}): Promise<any> {
     return this.executeWithRetry(async () => {
-      const { page = 1, limit = 50, cardId, transactionType, dateFrom, dateTo } = options;
-      const offset = (page - 1) * limit;
+      console.log('🔍 Service: getAllCreditCardRegister called with options:', options);
       
-      // Validate pagination parameters
-      this.validateNumeric(page, 'Page number', { min: 1 });
-      this.validateNumeric(limit, 'Limit', { min: 1, max: 100 });
+      // Check if pagination is requested
+      if (options.page || options.limit) {
+        // Build additional where clause for filters
+        const additionalWhere: any = {
+          deletion_status: { [Op.ne]: 'EXECUTED' }
+        };
+        
+        if (options.cardId) {
+          this.validateNumeric(options.cardId, 'Card ID', { min: 1 });
+          additionalWhere.cardId = options.cardId;
+        }
+        
+        if (options.transactionType) {
+          this.validateEnum(options.transactionType, 'Transaction type', ['CHARGE', 'REFUND', 'ADJUSTMENT']);
+          additionalWhere.transactionType = options.transactionType;
+        }
+        
+        // Use generic pagination from BaseService
+        const result = await this.getAllWithPagination(
+          CreditCardRegister,
+          {
+            ...options,
+            searchFields: ['registrationNumber', 'cardIssuer', 'description'],
+            dateField: 'registrationDate'
+          },
+          additionalWhere
+        );
+        
+        console.log(`✅ Retrieved ${result.data.length} of ${result.pagination.total} credit card transactions (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+        return result;
+      }
       
+      // Backward compatibility - return all records with filters
+      const { cardId, transactionType, dateFrom, dateTo } = options;
       const whereClause: any = {
         deletion_status: { [Op.ne]: 'EXECUTED' }
       };
       
-      // Add filters
       if (cardId) {
         this.validateNumeric(cardId, 'Card ID', { min: 1 });
         whereClause.cardId = cardId;
@@ -109,20 +131,12 @@ class CreditCardRegisterService extends BaseService {
         if (dateTo) whereClause.registrationDate[Op.lte] = dateTo;
       }
       
-      const { rows: entries, count: total } = await CreditCardRegister.findAndCountAll({
+      const entries = await CreditCardRegister.findAll({
         where: whereClause,
-        order: [['registrationDate', 'DESC'], ['createdAt', 'DESC']],
-        limit,
-        offset
+        order: [['registrationDate', 'DESC'], ['createdAt', 'DESC']]
       });
       
-      return {
-        entries,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit)
-      };
+      return entries;
     });
   }
 

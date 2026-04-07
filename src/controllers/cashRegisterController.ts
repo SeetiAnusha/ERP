@@ -3,8 +3,33 @@ import * as cashRegisterService from '../services/cashRegisterService';
 
 export const getAll = async (req: Request, res: Response) => {
   try {
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        filters: req.query.filters ? JSON.parse(req.query.filters as string) : {}
+      };
+      
+      // Handle transactionType filter
+      if (req.query.transactionType && req.query.transactionType !== 'All') {
+        options.transactionType = req.query.transactionType;
+      }
+      
+      // Handle cashRegisterId filter
+      if (req.query.cashRegisterId) {
+        options.cashRegisterId = parseInt(req.query.cashRegisterId as string);
+      }
+      
+      const result = await cashRegisterService.getAllCashTransactionsWithPagination(options);
+      return res.json(result);
+    }
+    
+    // Backward compatibility - return all records
     const result = await cashRegisterService.getAllCashTransactions();
-    // Return just the transactions array for frontend compatibility
     res.json(result.transactions);
   } catch (error: any) {
     res.status(500).json({ error: error.message });

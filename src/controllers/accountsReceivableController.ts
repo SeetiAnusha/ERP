@@ -4,6 +4,32 @@ import * as accountsReceivableCollectionService from '../services/accountsReceiv
 
 export const getAllAccountsReceivable = async (req: Request, res: Response) => {
   try {
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        filters: req.query.filters ? JSON.parse(req.query.filters as string) : {}
+      };
+      
+      // Handle status filter
+      if (req.query.status && req.query.status !== 'All') {
+        options.status = req.query.status;
+      }
+      
+      // Handle type filter
+      if (req.query.type && req.query.type !== 'All') {
+        options.type = req.query.type;
+      }
+      
+      const result = await accountsReceivableService.getAllAccountsReceivableWithPagination(options);
+      return res.json(result);
+    }
+    
+    // Backward compatibility - return all records
     const accountsReceivable = await accountsReceivableService.getAllAccountsReceivable();
     res.json(accountsReceivable);
   } catch (error: any) {

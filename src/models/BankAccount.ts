@@ -32,6 +32,16 @@ BankAccount.init(
     accountNumber: {
       type: DataTypes.STRING(100),
       allowNull: false,
+      validate: {
+        is: {
+          args: /^\d{4}$/,
+          msg: 'Account number must be exactly 4 digits (last 4 digits of your account)'
+        },
+        len: {
+          args: [4, 4],
+          msg: 'Account number must be exactly 4 digits'
+        }
+      }
     },
     accountType: {
       type: DataTypes.ENUM('CHECKING', 'SAVINGS'),

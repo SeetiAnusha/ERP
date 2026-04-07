@@ -107,31 +107,37 @@ class AccountsPayableService extends BaseService {
     limit?: number;
     dateFrom?: Date;
     dateTo?: Date;
-  } = {}): Promise<{
-    entries: AccountsPayable[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
+  } = {}): Promise<any> {
     return this.executeWithRetry(async () => {
+      console.log('🔍 Service: getAllAccountsPayable called with options:', options);
+      
+      // Check if pagination is requested
+      if (options.page || options.limit) {
+        // Use generic pagination from BaseService
+        const result = await this.getAllWithPagination(
+          AccountsPayable,
+          {
+            ...options,
+            searchFields: ['registrationNumber', 'supplierName', 'supplierRnc', 'cardIssuer'],
+            dateField: 'registrationDate'
+          }
+        );
+        
+        console.log(`✅ Retrieved ${result.data.length} of ${result.pagination.total} AP records (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+        return result;
+      }
+      
+      // Backward compatibility - return all records
       const { page = 1, limit = 100, transactionType, status, dateFrom, dateTo } = options;
       const offset = (page - 1) * limit;
       
-      // Validate pagination parameters
-      this.validateNumeric(page, 'Page number', { min: 1 });
-      this.validateNumeric(limit, 'Limit', { min: 1, max: 100 });
-      
       const whereClause: any = {};
       
-      // Add filters with validation
       if (transactionType) {
-        this.validateEnum(transactionType, 'Transaction type', Object.values(TransactionType));
         whereClause.sourceTransactionType = transactionType;
       }
       
       if (status) {
-        this.validateEnum(status, 'Status', ['Pending', 'Partial', 'Paid']);
         whereClause.status = status;
       }
       

@@ -3,9 +3,31 @@ import * as bankRegisterService from '../services/bankRegisterService';
 
 export const getAll = async (req: Request, res: Response) => {
   try {
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        filters: req.query.filters ? JSON.parse(req.query.filters as string) : {}
+      };
+      
+      // Handle transactionType filter - ignore "All"
+      if (req.query.transactionType && req.query.transactionType !== 'All') {
+        options.transactionType = req.query.transactionType;
+      }
+      
+      const result = await bankRegisterService.getAllBankRegistersWithPagination(options);
+      return res.json(result);
+    }
+    
+    // Backward compatibility - return all records
     const registers = await bankRegisterService.getAllBankRegisters();
     res.json(registers);
   } catch (error: any) {
+    console.error('❌ Error in bank register getAll:', error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -4,6 +4,7 @@ import Client from '../models/Client';
 import Product from '../models/Product';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
+import { BaseService } from '../core/BaseService';
 
 // Helper function for currency formatting
 const formatCurrency = (amount: number): string => {
@@ -12,6 +13,35 @@ const formatCurrency = (amount: number): string => {
     currency: 'USD',
   }).format(amount);
 };
+
+// ✅ NEW: Class-based service for pagination support
+class SaleService extends BaseService {
+  async getAllSalesWithPagination(options: any = {}): Promise<any> {
+    return this.executeWithRetry(async () => {
+      console.log('🔍 Service: getAllSalesWithPagination called with options:', options);
+      
+      // Use generic pagination from BaseService
+      const result = await this.getAllWithPagination(
+        Sale,
+        {
+          ...options,
+          searchFields: ['registrationNumber', 'ncf', 'clientName'],
+          dateField: 'registrationDate'
+        },
+        {}, // Additional where clause
+        [ // Include associations
+          { model: Client, as: 'client' },
+          { model: SaleItem, as: 'items' }
+        ]
+      );
+      
+      console.log(`✅ Retrieved ${result.data.length} of ${result.pagination.total} sales (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+      return result;
+    });
+  }
+}
+
+const saleService = new SaleService();
 
 export const getAllSales = async () => {
   return await Sale.findAll({
@@ -624,3 +654,7 @@ export const deleteSale = async (id: number) => {
     throw error;
   }
 };
+
+
+// ✅ NEW: Export pagination method
+export const getAllSalesWithPagination = (options?: any) => saleService.getAllSalesWithPagination(options);

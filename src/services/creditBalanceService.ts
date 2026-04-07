@@ -42,9 +42,28 @@ class CreditBalanceService extends BaseService {
   /**
    * Get all credit balances with filtering and validation
    */
-  async getAllCreditBalances(entityType?: 'CLIENT' | 'SUPPLIER', entityId?: number): Promise<CreditBalance[]> {
+  async getAllCreditBalances(options: any = {}): Promise<any> {
     return this.executeWithRetry(async () => {
-      console.log('🔍 Service: getAllCreditBalances called with entityType:', entityType, 'entityId:', entityId);
+      console.log('🔍 Service: getAllCreditBalances called with options:', options);
+      
+      // Check if pagination is requested
+      if (options.page || options.limit) {
+        // Use generic pagination from BaseService
+        const result = await this.getAllWithPagination(
+          CreditBalance,
+          {
+            ...options,
+            searchFields: ['registrationNumber', 'relatedEntityName', 'originalTransactionNumber'],
+            dateField: 'registrationDate'
+          }
+        );
+        
+        console.log(` Retrieved ${result.data.length} of ${result.pagination.total} credit balances (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+        return result;
+      }
+      
+      // Backward compatibility - return all records with filters
+      const { entityType, entityId } = options;
       
       // Build where clause based on filters
       const whereClause: any = {};
@@ -744,8 +763,11 @@ export { CreditBalanceService };
 export const creditBalanceService = new CreditBalanceService();
 
 // Export individual methods for backward compatibility
-export const getAllCreditBalances = (entityType?: 'CLIENT' | 'SUPPLIER', entityId?: number) => 
-  creditBalanceService.getAllCreditBalances(entityType, entityId);
+export const getAllCreditBalances = (options?: any) => 
+  creditBalanceService.getAllCreditBalances(options);
+
+export const getAllCreditBalancesWithPagination = (options?: any) => 
+  creditBalanceService.getAllCreditBalances(options);
 
 export const getCreditBalanceById = (id: number) => 
   creditBalanceService.getCreditBalanceById(id);

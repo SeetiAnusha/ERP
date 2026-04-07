@@ -43,11 +43,27 @@ class AccountsReceivableService extends BaseService {
   /**
    * Get all accounts receivable with related expense data
    */
-  async getAllAccountsReceivable(): Promise<any[]> {
+  async getAllAccountsReceivable(options: any = {}): Promise<any> {
     return this.executeWithRetry(async () => {
-      console.log(' Service: getAllAccountsReceivable called');
+      console.log(' Service: getAllAccountsReceivable called with options:', options);
       
-      // Get all AR records
+      // Check if pagination is requested
+      if (options.page || options.limit) {
+        // Use generic pagination from BaseService
+        const result = await this.getAllWithPagination(
+          AccountsReceivable,
+          {
+            ...options,
+            searchFields: ['registrationNumber', 'clientName', 'clientRnc', 'cardNetwork'],
+            dateField: 'registrationDate'
+          }
+        );
+        
+        console.log(` Retrieved ${result.data.length} of ${result.pagination.total} AR records (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+        return result;
+      }
+      
+      // Backward compatibility - return all records with expenses
       const arRecords = await AccountsReceivable.findAll({
         order: [['registrationDate', 'DESC']],
       });
@@ -558,7 +574,8 @@ class AccountsReceivableService extends BaseService {
 export const accountsReceivableService = new AccountsReceivableService();
 
 // Export individual methods for backward compatibility
-export const getAllAccountsReceivable = () => accountsReceivableService.getAllAccountsReceivable();
+export const getAllAccountsReceivable = (options?: any) => accountsReceivableService.getAllAccountsReceivable(options);
+export const getAllAccountsReceivableWithPagination = (options?: any) => accountsReceivableService.getAllAccountsReceivable(options);
 export const getAccountsReceivableById = (id: number) => accountsReceivableService.getAccountsReceivableById(id);
 export const getPendingAccountsReceivable = () => accountsReceivableService.getPendingAccountsReceivable();
 export const createAccountsReceivable = (data: CreateARRequest) => accountsReceivableService.createAccountsReceivable(data);

@@ -3,6 +3,22 @@ import * as clientService from '../services/clientService';
 
 export const getAll = async (req: Request, res: Response) => {
   try {
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options: any = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        filters: req.query.filters ? JSON.parse(req.query.filters as string) : {}
+      };
+      
+      const result = await clientService.getAllClientsWithPagination(options);
+      return res.json(result);
+    }
+    
+    // Backward compatibility - return all records
     const clients = await clientService.getAllClients();
     res.json(clients);
   } catch (error: any) {

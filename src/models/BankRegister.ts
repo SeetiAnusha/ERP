@@ -7,10 +7,10 @@ class BankRegister extends Model {
   public registrationNumber!: string;
   public registrationDate!: Date;
   public transactionType!: 'INFLOW' | 'OUTFLOW';
-  public sourceTransactionType!: TransactionType; // NEW FIELD
+  public sourceTransactionType!: TransactionType;
   public amount!: number;
-  public paymentMethod!: string; // 'Bank Transfer', 'Deposit'
-  public relatedDocumentType!: string; // 'Purchase', 'Sale', 'Payment'
+  public paymentMethod!: string;
+  public relatedDocumentType!: string;
   public relatedDocumentNumber!: string;
   public clientRnc!: string;
   public clientName!: string;
@@ -20,14 +20,32 @@ class BankRegister extends Model {
   public bankAccountName?: string;
   public bankAccountNumber?: string;
   public referenceNumber?: string;
-  // Phase 3: Added for bank account tracking
+  
+  // Bank account tracking
   public bankAccountId?: number;
-  // Phase 4: Added for supplier payments and auto-numbering
-  public chequeNumber?: string;      // Auto-generated: CK0001, CK0002...
-  public transferNumber?: string;    // Auto-generated: TF0001, TF0002...
-  public supplierId?: number;        // For supplier payments
-  public invoiceIds?: string;        // JSON array of AP invoice IDs
-  public originalPaymentType?: string; // Original payment type from AP/AR (CREDIT, CASH, etc.)
+  public accountType?: 'CHECKING' | 'SAVINGS';
+  
+  // Supplier payments and auto-numbering
+  public chequeNumber?: string;
+  public transferNumber?: string;
+  public supplierId?: number;
+  public invoiceIds?: string;
+  public originalPaymentType?: string;
+  
+  // Soft delete and transaction reversal fields
+  public deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
+  public deleted_at?: Date;
+  public deleted_by?: number;
+  public deletion_reason_code?: string;
+  public deletion_memo?: string;
+  public deletion_approval_id?: number;
+  public reversal_transaction_id?: number;
+  public is_reversal?: boolean;
+  public original_transaction_id?: number;
+  
+  // Timestamps (automatically added by Sequelize)
+  public readonly createdAt!: Date;
+  public readonly updatedAt!: Date;
 }
 
 BankRegister.init(
@@ -118,6 +136,11 @@ BankRegister.init(
         model: 'bank_accounts',
         key: 'id',
       },
+    },
+    // Account type from bank_accounts table
+    accountType: {
+      type: DataTypes.ENUM('CHECKING', 'SAVINGS'),
+      allowNull: true,
     },
     // Phase 4: Added for supplier payments and auto-numbering
     chequeNumber: {

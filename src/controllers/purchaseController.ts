@@ -11,10 +11,24 @@ export const getAll = async (req: Request, res: Response) => {
   try {
     console.log('📊 GET /api/purchases - Query params:', req.query);
     
-    // Extract and validate query parameters
-    const transactionType = req.query.transaction_type as string;
+    // ✅ Check if pagination is requested
+    if (req.query.page || req.query.limit) {
+      const options = {
+        page: req.query.page ? parseInt(req.query.page as string) : 1,
+        limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+        search: req.query.search as string,
+        sortBy: req.query.sortBy as string,
+        sortOrder: req.query.sortOrder as 'ASC' | 'DESC',
+        filters: req.query.filters ? JSON.parse(req.query.filters as string) : {}
+      };
+      
+      const result = await purchaseService.getAllPurchasesWithPagination(options);
+      console.log(`✅ Retrieved paginated purchases: page ${options.page}, total ${result.pagination.total}`);
+      return res.json(result);
+    }
     
-    // Get purchases with optional filtering
+    // Backward compatibility - return all records with optional filtering
+    const transactionType = req.query.transaction_type as string;
     const purchases = await purchaseService.getAllPurchases(transactionType);
     
     console.log(`✅ Retrieved ${purchases.length} purchases`);

@@ -91,6 +91,11 @@ class PurchaseService extends BaseService {
     });
   }
 
+  // ✅ NEW: Pagination support for purchases
+  async getAllPurchasesWithPagination(options?: any) {
+    return this.getAllWithPagination(Purchase, options);
+  }
+
   /**
    * Get purchase by ID with progressive association loading
    * Time Complexity: O(1) for primary key lookup
@@ -1539,6 +1544,9 @@ export const updatePurchase = (id: number, data: any) => purchaseService.updateP
 export const collectPayment = (id: number, paymentData: { amount: number; paymentMethod: string }) => 
   purchaseService.collectPayment(id, paymentData);
 export const deletePurchase = (id: number) => purchaseService.deletePurchase(id);
+
+// ✅ NEW: Export pagination method
+export const getAllPurchasesWithPagination = (options?: any) => purchaseService.getAllPurchasesWithPagination(options);
 
 // Export the service class for direct usage if needed
 export { PurchaseService };
