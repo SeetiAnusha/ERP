@@ -176,7 +176,7 @@ const startServer = async () => {
         try {
           // Use the comprehensive model registry for safe sync
           const { syncAllModels } = await import('./models/index');
-          await syncAllModels({ force: false, alter: false });
+          await syncAllModels({ force: true, alter: false });
           console.log('✅ Comprehensive model sync completed');
         } catch (manualError: any) {
           console.error('❌ Comprehensive sync failed:', manualError.message);
