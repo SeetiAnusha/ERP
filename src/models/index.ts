@@ -5,7 +5,6 @@
  * CRITICAL: This prevents missing tables in production
  */
 
-import { Sequelize } from 'sequelize';
 import sequelize from '../config/database';
 
 // ===== CORE BUSINESS MODELS =====
@@ -25,6 +24,7 @@ import Client from './Client';
 import ClientCredit from './ClientCredit';
 import ClientPaymentMethod from './ClientPaymentMethod';
 import CreditBalance from './CreditBalance';
+import CreditCardFee from './CreditCardFee';
 import CreditCardNetwork from './CreditCardNetwork';
 import CreditCardRegister from './CreditCardRegister';
 import DataClassificationMetadata from './DataClassificationMetadata';
@@ -85,6 +85,7 @@ export const ALL_MODELS = {
   ClientCredit,
   ClientPaymentMethod,
   CreditBalance,
+  CreditCardFee,
   CreditCardNetwork,
   CreditCardRegister,
   DataClassificationMetadata,
@@ -235,6 +236,7 @@ export {
   ClientCredit,
   ClientPaymentMethod,
   CreditBalance,
+  CreditCardFee,
   CreditCardNetwork,
   CreditCardRegister,
   DataClassificationMetadata,
