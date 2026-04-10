@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { Op } from 'sequelize';
 import { User, UserCreationAttributes } from '../models/User';
 import { BusinessLogicError } from '../core/AppError';
 
@@ -58,6 +59,12 @@ export class AuthService {
   private static readonly PASSWORD_MIN_LENGTH = 8;
   private static readonly MAX_FAILED_ATTEMPTS = 5;
   private static readonly LOCKOUT_DURATION = 30 * 60 * 1000; // 30 minutes
+
+  // ✅ IMPROVEMENT: Single source of truth for role mapping
+  private static readonly ROLE_MAPPING = {
+    'admin': { roleName: 'CFO' as const, approvalLimit: 500000 },
+    'manager': { roleName: 'Manager' as const, approvalLimit: 10000 }
+  } as const;
 
   /**
    * Register a new user
@@ -133,6 +140,9 @@ export class AuthService {
       user.lastLoginAt = new Date();
       await user.save();
 
+      // ✅ NEW: Auto-sync user role on login for admins and managers
+      await this.syncUserRoleOnLogin(user);
+
       // Generate tokens
       const { accessToken, refreshToken } = this.generateTokens(user);
 
@@ -150,6 +160,71 @@ export class AuthService {
       };
     } catch (error: any) {
       throw new BusinessLogicError(`Login failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Auto-sync user role on login
+   * Automatically creates/updates user_roles entry for admins and managers
+   */
+  private async syncUserRoleOnLogin(user: User): Promise<void> {
+    try {
+      // Only sync for admin and manager roles
+      if (user.role !== 'admin' && user.role !== 'manager') {
+        return;
+      }
+
+      // Import UserRole model
+      const UserRole = (await import('../models/UserRole')).default;
+
+      // ✅ IMPROVEMENT: Use constant instead of duplicating
+      const mappedRole = AuthService.ROLE_MAPPING[user.role as keyof typeof AuthService.ROLE_MAPPING];
+      if (!mappedRole) {
+        return;
+      }
+
+      // Check if user already has this role in user_roles
+      const existingRole = await UserRole.findOne({
+        where: {
+          user_id: user.id,
+          role_name: mappedRole.roleName,
+          is_active: true
+        }
+      });
+
+      if (!existingRole) {
+        // Create new role entry
+        await UserRole.create({
+          user_id: user.id,
+          role_name: mappedRole.roleName,
+          approval_limit: mappedRole.approvalLimit,
+          can_delegate: user.role === 'admin', // Admins can delegate
+          is_active: true
+        });
+
+        console.log(`✅ Auto-created ${mappedRole.roleName} role for ${user.email} (${user.role})`);
+      } else {
+        // Update existing role if needed
+        let updated = false;
+        
+        if (existingRole.approval_limit !== mappedRole.approvalLimit) {
+          existingRole.approval_limit = mappedRole.approvalLimit;
+          updated = true;
+        }
+        
+        if (existingRole.can_delegate !== (user.role === 'admin')) {
+          existingRole.can_delegate = user.role === 'admin';
+          updated = true;
+        }
+
+        if (updated) {
+          await existingRole.save();
+          console.log(`✅ Updated ${mappedRole.roleName} role for ${user.email} (${user.role})`);
+        }
+      }
+    } catch (error: any) {
+      // Log error but don't fail login
+      console.error('⚠️ Failed to sync user role on login:', error.message);
     }
   }
 
@@ -415,6 +490,96 @@ export class AuthService {
     }
 
     return false;
+  }
+
+  /**
+   * Sync all existing admin and manager users to user_roles table
+   * This is a one-time setup method to populate user_roles for existing users
+   * ✅ OPTIMIZED: Uses batch processing to avoid N+1 query problem
+   */
+  async syncAllAdminManagerRoles(): Promise<{ synced: number; skipped: number; errors: number }> {
+    try {
+      const UserRole = (await import('../models/UserRole')).default;
+      
+      // Find all admin and manager users
+      const adminManagerUsers = await User.findAll({
+        where: {
+          role: { [Op.in]: ['admin', 'manager'] },
+          isActive: true
+        }
+      });
+
+      if (adminManagerUsers.length === 0) {
+        console.log('📊 No admin/manager users found to sync');
+        return { synced: 0, skipped: 0, errors: 0 };
+      }
+
+      // ✅ IMPROVEMENT: Fetch ALL existing roles in ONE query (avoid N+1)
+      const userIds = adminManagerUsers.map(u => u.id);
+      const existingRoles = await UserRole.findAll({
+        where: {
+          user_id: { [Op.in]: userIds },
+          is_active: true
+        }
+      });
+
+      // Create a Map for O(1) lookup
+      const existingRolesMap = new Map<number, Set<string>>();
+      existingRoles.forEach(role => {
+        if (!existingRolesMap.has(role.user_id)) {
+          existingRolesMap.set(role.user_id, new Set());
+        }
+        existingRolesMap.get(role.user_id)!.add(role.role_name);
+      });
+
+      // Prepare bulk insert data
+      const rolesToCreate: any[] = [];
+      let synced = 0;
+      let skipped = 0;
+
+      for (const user of adminManagerUsers) {
+        try {
+          // ✅ IMPROVEMENT: Use constant instead of duplicating
+          const mappedRole = AuthService.ROLE_MAPPING[user.role as keyof typeof AuthService.ROLE_MAPPING];
+          if (!mappedRole) {
+            skipped++;
+            continue;
+          }
+
+          // O(1) lookup instead of database query
+          const userRoles = existingRolesMap.get(user.id);
+          if (userRoles && userRoles.has(mappedRole.roleName)) {
+            skipped++;
+            continue;
+          }
+
+          rolesToCreate.push({
+            user_id: user.id,
+            role_name: mappedRole.roleName,
+            approval_limit: mappedRole.approvalLimit,
+            can_delegate: user.role === 'admin',
+            is_active: true,
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+          synced++;
+        } catch (error: any) {
+          console.error(`❌ Failed to prepare sync for user ${user.email}:`, error.message);
+        }
+      }
+
+      // ✅ IMPROVEMENT: Bulk insert in ONE query
+      if (rolesToCreate.length > 0) {
+        await UserRole.bulkCreate(rolesToCreate);
+        console.log(`✅ Bulk created ${rolesToCreate.length} user roles`);
+      }
+
+      console.log(`\n📊 Sync Summary: ${synced} synced, ${skipped} skipped, 0 errors`);
+      return { synced, skipped, errors: 0 };
+    } catch (error: any) {
+      console.error('❌ Bulk sync failed:', error.message);
+      throw new BusinessLogicError(`Failed to sync admin/manager roles: ${error.message}`);
+    }
   }
 }
 

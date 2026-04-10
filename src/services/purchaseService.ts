@@ -17,6 +17,11 @@ import { BaseService } from '../core/BaseService';
 import { ValidationFramework, ValidationSchemas } from '../core/ValidationFramework';
 import { serviceConfig, PaymentTypeHelper } from '../config/ServiceConfig';
 
+// ✅ PHASE 2: Import GL Posting Services
+// import GLPostingService from './accounting/GLPostingService';
+// import AccountingRulesEngine from './accounting/AccountingRulesEngine';
+// import { SourceModule } from '../models/accounting/GeneralLedger';
+
 // Import associations to ensure they're loaded
 import '../models/associations';
 
@@ -93,7 +98,19 @@ class PurchaseService extends BaseService {
 
   // ✅ NEW: Pagination support for purchases
   async getAllPurchasesWithPagination(options?: any) {
-    return this.getAllWithPagination(Purchase, options);
+    return this.getAllWithPagination(
+      Purchase, 
+      options,
+      {}, // additionalWhere
+      [
+        { 
+          model: Supplier, 
+          as: 'supplier',
+          required: false,
+          attributes: ['id', 'name', 'rnc']
+        }
+      ]
+    );
   }
 
   /**
@@ -150,7 +167,7 @@ class PurchaseService extends BaseService {
         ncf: data.ncf,
         purchaseType: data.purchaseType,
         paymentType: data.paymentType,
-        date: data.date,
+        date: new Date(data.date), // ✅ Convert to Date object
         registrationNumber,
         registrationDate: new Date(),
         productTotal: data.productTotal || data.total,
@@ -161,11 +178,11 @@ class PurchaseService extends BaseService {
         bankAccountId: data.bankAccountId,
         cardId: data.cardId,
         chequeNumber: data.chequeNumber,
-        chequeDate: data.chequeDate,
+        chequeDate: data.chequeDate ? new Date(data.chequeDate) : undefined, // ✅ Convert to Date
         transferNumber: data.transferNumber,
-        transferDate: data.transferDate,
+        transferDate: data.transferDate ? new Date(data.transferDate) : undefined, // ✅ Convert to Date
         paymentReference: data.paymentReference,
-        voucherDate: data.voucherDate,
+        voucherDate: data.voucherDate ? new Date(data.voucherDate) : undefined, // ✅ Convert to Date
         // Payment status - spread first, then override status to ensure it's not null
         ...paymentStatus,
         status: 'COMPLETED', // Ensure status is never null - must be last to override any conflicts
@@ -186,6 +203,9 @@ class PurchaseService extends BaseService {
       if (data.associatedInvoices && data.associatedInvoices.length > 0) {
         await this.processAssociatedInvoicesBatch(data.associatedInvoices, registrationNumber, purchase.id, transaction);
       }
+      
+      // ✅ PHASE 2: Step 9 - Post GL Entries
+      // await this.postPurchaseGLEntries(data, purchase, mainPurchaseAmount, transaction);
       
       // Return complete purchase
       return purchase;
@@ -881,13 +901,15 @@ class PurchaseService extends BaseService {
   }, transaction?: any): Promise<void> {
     const BankRegister = (await import('../models/BankRegister')).default;
     
-    // ⭐ NEW: Get bank account name if bankAccountId is provided
+    // ⭐ NEW: Get bank account name and account type if bankAccountId is provided
     let bankAccountName = '';
+    let accountType: 'CHECKING' | 'SAVINGS' | undefined = undefined;
     if (data.bankAccountId) {
       const BankAccount = (await import('../models/BankAccount')).default;
       const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
       if (bankAccount) {
         bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
+        accountType = bankAccount.accountType;  // ✅ FIX: Store account type
       }
     }
     
@@ -914,6 +936,7 @@ class PurchaseService extends BaseService {
       balance: newBalance,
       bankAccountId: data.bankAccountId,
       bankAccountName: bankAccountName,  // ⭐ NEW: Bank account name
+      accountType: accountType,  // ✅ FIX: Store account type
       chequeNumber: data.chequeNumber || null,
       transferNumber: data.transferNumber || null,
       referenceNumber: data.referenceNumber || null,
@@ -978,14 +1001,56 @@ class PurchaseService extends BaseService {
     }
 
     try {
+      // ✅ Track total paid amount from associated invoices
+      let totalAssociatedPaid = 0;
+      
       // Process invoices sequentially to avoid transaction conflicts
       for (const invoice of invoices) {
         try {
           await this.processAssociatedInvoice(invoice, registrationNumber, purchaseId, transaction);
+          
+          // ✅ Track paid amounts for immediate payment types
+          const invoicePaymentType = invoice.paymentType?.toUpperCase();
+          const invoiceAmount = Number(invoice.amount || 0);
+          
+          if (invoicePaymentType === 'DEBIT_CARD' || 
+              invoicePaymentType === 'CHEQUE' || 
+              invoicePaymentType === 'BANK_TRANSFER' || 
+              invoicePaymentType === 'DEPOSIT') {
+            totalAssociatedPaid += invoiceAmount;
+          }
         } catch (invoiceError: any) {
           console.error(`❌ Failed to process associated invoice ${invoice.concept}:`, invoiceError.message);
           // Re-throw to abort the entire purchase creation
           throw invoiceError;
+        }
+      }
+      
+      // ✅ Update purchase paidAmount if any associated invoices were paid immediately
+      if (totalAssociatedPaid > 0) {
+        const purchase = await Purchase.findByPk(purchaseId, { transaction });
+        if (purchase) {
+          const currentPaid = Number(purchase.paidAmount || 0);
+          const newPaidAmount = currentPaid + totalAssociatedPaid;
+          const currentBalance = Number(purchase.balanceAmount || 0);
+          const newBalanceAmount = Math.max(0, currentBalance - totalAssociatedPaid);
+          
+          // Determine new payment status
+          const totalAmount = newPaidAmount + newBalanceAmount;
+          let newPaymentStatus: 'Paid' | 'Unpaid' | 'Partial' = 'Unpaid';
+          if (newPaidAmount >= totalAmount && totalAmount > 0) {
+            newPaymentStatus = 'Paid';
+          } else if (newPaidAmount > 0) {
+            newPaymentStatus = 'Partial';
+          }
+          
+          await purchase.update({
+            paidAmount: this.roundCurrency(newPaidAmount),
+            balanceAmount: this.roundCurrency(newBalanceAmount),
+            paymentStatus: newPaymentStatus,
+          }, { transaction });
+          
+          console.log(`✅ Updated purchase ${registrationNumber} - Added ${totalAssociatedPaid.toFixed(2)} from associated invoices. Total paid: ${newPaidAmount.toFixed(2)}, Balance: ${newBalanceAmount.toFixed(2)}, Status: ${newPaymentStatus}`);
         }
       }
       
@@ -1079,6 +1144,8 @@ class PurchaseService extends BaseService {
       ncf: invoice.ncf || '',
       description: `Invoice: ${invoice.concept} for purchase ${registrationNumber} via DEBIT card ${card.cardBrand || ''} ****${card.cardNumberLast4} - Bank: ${bankAccount.bankName}`,
       bankAccountId: card.bankAccountId,
+      referenceNumber: invoice.paymentReference,
+      originalPaymentType: invoice.originalPaymentType
     }, transaction);
   }
   
@@ -1122,7 +1189,7 @@ class PurchaseService extends BaseService {
     };
     
     const apEntryData = TransactionFactory.createAPEntry(context, {
-      type: 'CREDIT_CARD_PURCHASE',
+      type: 'CREDIT_CARD_INVOICEASSOCIATE',
       documentType: 'InvoiceAssociate',
       supplierName: cardInfo || 'Credit Card Company',
       supplierRnc: invoice.supplierRnc || '',
@@ -1165,7 +1232,7 @@ class PurchaseService extends BaseService {
     };
     
     const apEntryData = TransactionFactory.createAPEntry(context, {
-      type: 'SUPPLIER_CREDIT',
+      type: 'SUPPLIER_CREDIT_INVOICEASSOCIATE',
       documentType: 'InvoiceAssociate',
       supplierName: invoice.supplierName || 'Unknown Supplier',
       supplierRnc: invoice.supplierRnc || '',
@@ -1245,7 +1312,8 @@ class PurchaseService extends BaseService {
         return;
       }
 
-      // Create associated invoice with validated data
+      // ✅ NO DUPLICATION: Reuse same payment field structure as Purchase model
+      // ✅ PROFESSIONAL FIX: Convert null to undefined for TypeScript compatibility
       const invoiceData = {
         purchaseId: purchaseId,
         supplierRnc: String(invoice.supplierRnc || ''),
@@ -1258,9 +1326,18 @@ class PurchaseService extends BaseService {
         amount: Number(invoice.amount || 0),
         purchaseType: String(invoice.purchaseType || 'Service'),
         paymentType: String(invoice.paymentType || 'CREDIT'),
+        // ✅ Payment method fields (same structure as Purchase - NO DUPLICATION)
+        // ✅ Convert null to undefined for TypeScript compatibility
+        bankAccountId: invoice.bankAccountId || undefined,
+        cardId: invoice.cardId || undefined,
+        chequeNumber: invoice.chequeNumber || undefined,
+        chequeDate: invoice.chequeDate ? new Date(invoice.chequeDate) : undefined,
+        transferNumber: invoice.transferNumber || undefined,
+        transferDate: invoice.transferDate ? new Date(invoice.transferDate) : undefined,
+        paymentReference: invoice.paymentReference || undefined,
+        voucherDate: invoice.voucherDate ? new Date(invoice.voucherDate) : undefined,
       };
       
-      // Create without sourceTransactionType since column doesn't exist
       await AssociatedInvoice.create(invoiceData, { transaction });
       
     } catch (error: any) {
@@ -1528,6 +1605,51 @@ class PurchaseService extends BaseService {
       // Continue - invoices might not exist
     }
   }
+  
+  // ==================== PHASE 2: GL POSTING METHODS ====================
+  
+  /**
+   * Post GL entries for purchase transaction
+   * Creates balanced debit/credit entries in General Ledger
+   */
+  // private async postPurchaseGLEntries(
+  //   data: CreatePurchaseRequest,
+  //   purchase: Purchase,
+  //   amount: number,
+  //   transaction: any
+  // ): Promise<void> {
+  //   try {
+  //     console.log('📊 PHASE 2: Posting GL entries for purchase', purchase.registrationNumber);
+      
+  //     // Determine GL entries based on payment type
+  //     const paymentType = data.paymentType.toUpperCase();
+  //     let glEntries;
+      
+  //     if (paymentType === 'CREDIT' || paymentType === 'CREDIT_CARD') {
+  //       // Purchase on credit: Debit Inventory, Credit AP
+  //       glEntries = AccountingRulesEngine.getPurchaseOnCreditGLEntries(amount);
+  //     } else {
+  //       // Purchase with payment: Debit Inventory, Credit Cash/Bank
+  //       glEntries = AccountingRulesEngine.getPurchaseGLEntries(amount, paymentType);
+  //     }
+      
+  //     // Post to General Ledger
+  //     await GLPostingService.postGLEntries({
+  //       entryDate: purchase.date,
+  //       sourceModule: SourceModule.PURCHASE,
+  //       sourceTransactionId: purchase.id,
+  //       sourceTransactionNumber: purchase.registrationNumber,
+  //       entries: glEntries,
+  //       createdBy: undefined, // TODO: Add user ID from request context
+  //     }, transaction);
+      
+  //     console.log('✅ GL entries posted successfully for purchase', purchase.registrationNumber);
+  //   } catch (error: any) {
+  //     console.error('❌ Failed to post GL entries for purchase:', error.message);
+  //     // Re-throw to rollback entire transaction
+  //     throw new BusinessLogicError(`GL posting failed: ${error.message}`);
+  //   }
+  // }
 }
 
 // Create singleton instance

@@ -8,9 +8,12 @@ import ExpenseType from '../models/ExpenseType';
 import BankAccount from '../models/BankAccount';
 import Card from '../models/Card';
 import { TransactionType } from '../types/TransactionType';
+import { BaseService } from '../core/BaseService';
+import { ValidationError, NotFoundError, BusinessLogicError, InsufficientBalanceError } from '../core/AppError';
 
 /**
- * BusinessExpenseService - Handles all business expense operations
+ * BusinessExpenseService - Class-based implementation following current service pattern
+ * Handles all business expense operations with proper validation and error handling
  * Separate from purchases to maintain clean data separation
  */
 
@@ -66,11 +69,14 @@ interface GetBusinessExpensesFilters {
   limit?: number;
 }
 
-class BusinessExpenseService {
+class BusinessExpenseService extends BaseService {
+  
+  // ==================== PUBLIC API METHODS ====================
+  
   /**
    * Generate unique registration number for business expense
    */
-  private static async generateRegistrationNumber(): Promise<string> {
+  private async generateExpenseRegistrationNumber(): Promise<string> {
     const today = new Date();
     const year = today.getFullYear();
     const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -100,7 +106,7 @@ class BusinessExpenseService {
   /**
    * Calculate payment status based on amounts
    */
-  private static calculatePaymentStatus(total: number, paid: number): string {
+  private calculatePaymentStatus(total: number, paid: number): string {
     if (paid === 0) return 'Unpaid';
     if (paid >= total) return 'Paid';
     return 'Partial';
@@ -109,15 +115,13 @@ class BusinessExpenseService {
   /**
    * Create new business expense with associated costs and register entries
    */
-  static async createBusinessExpense(data: CreateBusinessExpenseData): Promise<BusinessExpense> {
-    const transaction: Transaction = await sequelize.transaction();
-    
-    try {
+  async createBusinessExpense(data: CreateBusinessExpenseData): Promise<BusinessExpense> {
+    return this.executeWithTransaction(async (transaction) => {
       // Step 1: Comprehensive validation
       await this.validateBusinessExpenseData(data);
       
       // Step 2: Generate registration number
-      const registrationNumber = await this.generateRegistrationNumber();
+      const registrationNumber = await this.generateExpenseRegistrationNumber();
       
       // Step 3: Calculate payment status and amounts based on payment type
       const paymentInfo = this.calculatePaymentInfo(data.paymentType, data.amount);
@@ -157,108 +161,136 @@ class BusinessExpenseService {
       if (data.associatedCosts && data.associatedCosts.length > 0) {
         await this.processAssociatedCosts(data.associatedCosts, businessExpense.id, transaction);
       }
-
-      await transaction.commit();
       
-      // Return with associations
-      return await this.getBusinessExpenseById(businessExpense.id);
-      
-    } catch (error) {
-      await transaction.rollback();
-      console.error('Error creating business expense:', error);
-      throw error;
-    }
+      // Return with associations - ✅ FIXED: Pass transaction to query within transaction context
+      return await this.getBusinessExpenseById(businessExpense.id, transaction);
+    });
   }
 
   /**
-   * Create appropriate financial entry (Bank Register or Accounts Payable)
-   * based on payment type
-   */
-  /**
    * Comprehensive validation for business expense data
    */
-  private static async validateBusinessExpenseData(data: CreateBusinessExpenseData): Promise<void> {
-    // Basic validations
-    if (!data.supplierId) throw new Error('Supplier is required');
-    if (!data.amount || data.amount <= 0) throw new Error('Amount must be greater than 0');
-    if (!data.paymentType) throw new Error('Payment type is required');
-    if (!data.expenseCategoryId) throw new Error('Expense category is required');
-    if (!data.expenseTypeId) throw new Error('Expense type is required');
-    
-    // Payment method specific validations
-    const paymentType = data.paymentType.toUpperCase();
-    
-    // Bank payment validations
-    if (['BANK_TRANSFER', 'CHEQUE', 'DEPOSIT'].includes(paymentType)) {
-      if (!data.bankAccountId) {
-        throw new Error(`Bank account selection is mandatory for ${data.paymentType} payments`);
+  private async validateBusinessExpenseData(data: CreateBusinessExpenseData): Promise<void> {
+    try {
+      // Basic validations
+      if (!data.supplierId) throw new ValidationError('Supplier is required');
+      if (!data.amount || data.amount <= 0) throw new ValidationError('Amount must be greater than 0');
+      if (!data.paymentType) throw new ValidationError('Payment type is required');
+      if (!data.expenseCategoryId) throw new ValidationError('Expense category is required');
+      if (!data.expenseTypeId) throw new ValidationError('Expense type is required');
+      
+      // Supplier validation
+      const supplier = await Supplier.findByPk(data.supplierId);
+      if (!supplier) {
+        throw new NotFoundError('Selected supplier not found');
       }
       
-      // Validate bank account exists and has sufficient balance
-      const BankAccount = (await import('../models/BankAccount')).default;
-      const bankAccount = await BankAccount.findByPk(data.bankAccountId);
-      if (!bankAccount) {
-        throw new Error('Selected bank account not found');
+      if (supplier.status !== 'ACTIVE') {
+        throw new BusinessLogicError('Selected supplier is not active');
       }
       
-      if (bankAccount.status !== 'ACTIVE') {
-        throw new Error('Selected bank account is not active');
+      // Expense category validation
+      const expenseCategory = await ExpenseCategory.findByPk(data.expenseCategoryId);
+      if (!expenseCategory) {
+        throw new NotFoundError('Selected expense category not found');
       }
       
-      const currentBalance = Number(bankAccount.balance || 0);
-      if (currentBalance < data.amount) {
-        throw new Error(
-          `Insufficient balance in ${bankAccount.bankName} (${bankAccount.accountNumber}). ` +
-          `Available: ₹${currentBalance.toFixed(2)}, Required: ₹${data.amount.toFixed(2)}`
-        );
-      }
-    }
-    
-    // Credit card validations
-    if (paymentType === 'CREDIT_CARD') {
-      if (!data.cardId) {
-        throw new Error('Credit card selection is mandatory for credit card payments');
+      // Expense type validation
+      const expenseType = await ExpenseType.findByPk(data.expenseTypeId);
+      if (!expenseType) {
+        throw new NotFoundError('Selected expense type not found');
       }
       
-      // Validate credit card exists and has sufficient limit
-      const Card = (await import('../models/Card')).default;
-      const card = await Card.findByPk(data.cardId);
-      if (!card) {
-        throw new Error('Selected credit card not found');
+      // Payment method specific validations
+      const paymentType = data.paymentType.toUpperCase();
+      
+      // Bank payment validations
+      if (['BANK_TRANSFER', 'CHEQUE', 'CHECK', 'DEPOSIT', 'BANK_DEPOSIT'].includes(paymentType)) {
+        if (!data.bankAccountId) {
+          throw new ValidationError(`Bank account selection is mandatory for ${data.paymentType} payments`);
+        }
+        
+        // Validate bank account exists and has sufficient balance
+        const bankAccount = await BankAccount.findByPk(data.bankAccountId);
+        if (!bankAccount) {
+          throw new NotFoundError('Selected bank account not found');
+        }
+        
+        if (bankAccount.status !== 'ACTIVE') {
+          throw new BusinessLogicError('Selected bank account is not active');
+        }
+        
+        const currentBalance = Number(bankAccount.balance || 0);
+        if (currentBalance < data.amount) {
+          throw new InsufficientBalanceError(
+            `Insufficient balance in ${bankAccount.bankName} (${bankAccount.accountNumber}). ` +
+            `Available: ${currentBalance.toFixed(2)}, Required: ${data.amount.toFixed(2)}`
+          );
+        }
       }
       
-      if (card.status !== 'ACTIVE') {
-        throw new Error('Selected credit card is not active');
+      // Credit card validations
+      if (paymentType === 'CREDIT_CARD') {
+        if (!data.cardId) {
+          throw new ValidationError('Credit card selection is mandatory for credit card payments');
+        }
+        
+        // Validate credit card exists and has sufficient limit
+        const card = await Card.findByPk(data.cardId);
+        if (!card) {
+          throw new NotFoundError('Selected credit card not found');
+        }
+        
+        if (card.status !== 'ACTIVE') {
+          throw new BusinessLogicError('Selected credit card is not active');
+        }
+        
+        const creditLimit = Number(card.creditLimit || 0);
+        const usedCredit = Number(card.usedCredit || 0);
+        const availableCredit = creditLimit - usedCredit;
+        
+        if (availableCredit < data.amount) {
+          throw new InsufficientBalanceError(
+            `Insufficient credit limit on ${card.cardName || 'Credit Card'}. ` +
+            `Available: ${availableCredit.toFixed(2)}, Required: ${data.amount.toFixed(2)}`
+          );
+        }
       }
       
-      const creditLimit = Number(card.creditLimit || 0);
-      const usedCredit = Number(card.usedCredit || 0);
-      const availableCredit = creditLimit - usedCredit;
-      
-      if (availableCredit < data.amount) {
-        throw new Error(
-          `Insufficient credit limit on ${card.cardName || 'Credit Card'}. ` +
-          `Available: ₹${availableCredit.toFixed(2)}, Required: ₹${data.amount.toFixed(2)}`
-        );
+      // Debit card validations
+      if (paymentType === 'DEBIT_CARD') {
+        if (!data.cardId) {
+          throw new ValidationError('Debit card selection is mandatory for debit card payments');
+        }
+        
+        const card = await Card.findByPk(data.cardId);
+        if (!card) {
+          throw new NotFoundError('Selected debit card not found');
+        }
+        
+        if (card.status !== 'ACTIVE') {
+          throw new BusinessLogicError('Selected debit card is not active');
+        }
       }
-    }
-    
-    // Supplier validation
-    const Supplier = (await import('../models/Supplier')).default;
-    const supplier = await Supplier.findByPk(data.supplierId);
-    if (!supplier) {
-      throw new Error('Selected supplier not found');
-    }
-    
-    if (supplier.status !== 'ACTIVE') {
-      throw new Error('Selected supplier is not active');
+    } catch (error: any) {
+      // Re-throw AppError types as-is
+      if (error instanceof ValidationError || 
+          error instanceof NotFoundError || 
+          error instanceof BusinessLogicError || 
+          error instanceof InsufficientBalanceError) {
+        throw error;
+      }
+      
+      // Wrap unexpected errors
+      console.error('[BusinessExpenseService] Validation error:', error);
+      throw new ValidationError(`Validation failed: ${error.message}`);
     }
   }
 
   /**
    * Calculate payment information based on payment type
    */
-  private static calculatePaymentInfo(paymentType: string, amount: number): {
+  private calculatePaymentInfo(paymentType: string, amount: number): {
     paidAmount: number;
     balanceAmount: number;
     paymentStatus: string;
@@ -298,7 +330,7 @@ class BusinessExpenseService {
   /**
    * Process payment based on type with dual recording
    */
-  private static async processExpensePayment(
+  private async processExpensePayment(
     data: CreateBusinessExpenseData,
     businessExpense: BusinessExpense,
     transaction: Transaction
@@ -334,7 +366,7 @@ class BusinessExpenseService {
    * Process bank payment (Bank Transfer, Cheque, Deposit)
    * Records in both Expense Management and Bank Register
    */
-  private static async processBankExpensePayment(
+  private async processBankExpensePayment(
     data: CreateBusinessExpenseData,
     businessExpense: BusinessExpense,
     transaction: Transaction
@@ -381,6 +413,7 @@ class BusinessExpenseService {
       balance: newBalance,
       bankAccountId: data.bankAccountId,
       bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+      accountType: bankAccount.accountType,  // ✅ FIX: Store account type
       chequeNumber: data.chequeNumber,
       transferNumber: data.transferNumber,
       supplierId: data.supplierId,
@@ -394,7 +427,7 @@ class BusinessExpenseService {
    * Process credit card payment
    * Records in both Expense Management and Accounts Payable
    */
-  private static async processCreditCardExpensePayment(
+  private async processCreditCardExpensePayment(
     data: CreateBusinessExpenseData,
     businessExpense: BusinessExpense,
     transaction: Transaction
@@ -451,7 +484,7 @@ class BusinessExpenseService {
    * Process credit payment
    * Records in both Expense Management and Accounts Payable
    */
-  private static async processCreditExpensePayment(
+  private async processCreditExpensePayment(
     data: CreateBusinessExpenseData,
     businessExpense: BusinessExpense,
     transaction: Transaction
@@ -503,7 +536,7 @@ class BusinessExpenseService {
   /**
    * Process associated costs with proper payment routing
    */
-  private static async processAssociatedCosts(
+  private async processAssociatedCosts(
     associatedCosts: any[],
     businessExpenseId: number,
     transaction: Transaction
@@ -539,7 +572,7 @@ class BusinessExpenseService {
   /**
    * Process bank payment for associated cost
    */
-  private static async processAssociatedCostBankPayment(cost: any, transaction: Transaction): Promise<void> {
+  private async processAssociatedCostBankPayment(cost: any, transaction: Transaction): Promise<void> {
     if (!cost.bankAccountId) return;
     
     const BankAccount = (await import('../models/BankAccount')).default;
@@ -577,6 +610,7 @@ class BusinessExpenseService {
       balance: newBalance,
       bankAccountId: cost.bankAccountId,
       bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+      accountType: bankAccount.accountType,  // ✅ FIX: Store account type
       originalPaymentType: cost.paymentType
     }, { transaction });
   }
@@ -584,7 +618,7 @@ class BusinessExpenseService {
   /**
    * Process credit card payment for associated cost
    */
-  private static async processAssociatedCostCreditCardPayment(cost: any, transaction: Transaction): Promise<void> {
+  private async processAssociatedCostCreditCardPayment(cost: any, transaction: Transaction): Promise<void> {
     if (!cost.cardId) return;
     
     const Card = (await import('../models/Card')).default;
@@ -600,8 +634,9 @@ class BusinessExpenseService {
   }
   /**
    * Get business expense by ID with all associations
+   * ✅ FIXED: Now accepts optional transaction parameter for use within transactions
    */
-  static async getBusinessExpenseById(id: number): Promise<BusinessExpense> {
+  async getBusinessExpenseById(id: number, transaction?: Transaction): Promise<BusinessExpense> {
     const expense = await BusinessExpense.findByPk(id, {
       include: [
         {
@@ -645,11 +680,12 @@ class BusinessExpenseService {
             }
           ]
         }
-      ]
+      ],
+      transaction // ✅ FIXED: Pass transaction to query
     });
 
     if (!expense) {
-      throw new Error(`Business expense with ID ${id} not found`);
+      throw new NotFoundError(`Business expense with ID ${id} not found`);
     }
 
     return expense;
@@ -657,8 +693,9 @@ class BusinessExpenseService {
 
   /**
    * Get all business expenses with filtering and pagination
+   * ✅ UPDATED: Excludes processing fees (expenses with clientId) - they are shown in Credit Card Fees page
    */
-  static async getBusinessExpenses(filters: GetBusinessExpensesFilters = {}) {
+  async getBusinessExpenses(filters: GetBusinessExpensesFilters = {}) {
     const {
       categoryId,
       typeId,
@@ -668,13 +705,18 @@ class BusinessExpenseService {
       dateFrom,
       dateTo,
       page = 1,
-      limit = 1000  // ✅ INCREASED: Allow more records (was 50)
+      limit = 50  // ✅ FIXED: Proper pagination limit (was 1000)
     } = filters;
 
     const whereClause: any = {};
 
     // ✅ CRITICAL: Exclude soft-deleted expenses
     // whereClause.deletion_status = { [Op.ne]: 'EXECUTED' };
+
+    // ✅ NEW: Exclude processing fees (they have clientId, not supplierId)
+    // Processing fees are now managed in the dedicated Credit Card Fees page
+    whereClause.supplierId = { [Op.ne]: null };  // Must have a supplier
+    whereClause.clientId = null;  // Must NOT have a client
 
     // Apply filters
     if (categoryId) whereClause.expenseCategoryId = categoryId;
@@ -700,13 +742,6 @@ class BusinessExpenseService {
           model: Supplier,
           as: 'supplier',
           attributes: ['id', 'name', 'rnc'],
-          required: false  // ✅ Make optional (processing fees don't have supplier)
-        },
-        // ✅ NEW: Include Client for processing fees
-        {
-          model: (await import('../models/Client')).default,
-          as: 'client',
-          attributes: ['id', 'name', 'rncCedula'],
           required: false
         },
         {
@@ -718,20 +753,6 @@ class BusinessExpenseService {
           model: ExpenseType,
           as: 'expenseTypeModel',
           attributes: ['id', 'name', 'code']
-        },
-        // ✅ NEW: Include related AR for processing fees
-        {
-          model: (await import('../models/AccountsReceivable')).default,
-          as: 'relatedAR',
-          attributes: ['id', 'registrationNumber', 'amount', 'cardNetwork'],
-          required: false
-        },
-        // ✅ NEW: Include card payment network for processing fees
-        {
-          model: (await import('../models/CardPaymentNetwork')).default,
-          as: 'cardNetwork',
-          attributes: ['id', 'name', 'type', 'processingFee'],
-          required: false
         },
         {
           model: BankAccount,
@@ -756,17 +777,17 @@ class BusinessExpenseService {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit),
+      hasNextPage: page < Math.ceil(total / limit),
+      hasPreviousPage: page > 1
     };
   }
 
   /**
    * Update business expense
    */
-  static async updateBusinessExpense(id: number, updateData: Partial<CreateBusinessExpenseData>): Promise<BusinessExpense> {
-    const transaction: Transaction = await sequelize.transaction();
-    
-    try {
+  async updateBusinessExpense(id: number, updateData: Partial<CreateBusinessExpenseData>): Promise<BusinessExpense> {
+    return this.executeWithTransaction(async (transaction) => {
       const expense = await BusinessExpense.findByPk(id);
       if (!expense) {
         throw new Error(`Business expense with ID ${id} not found`);
@@ -781,19 +802,16 @@ class BusinessExpenseService {
       }
 
       await expense.update(updateData, { transaction });
-      await transaction.commit();
 
-      return await this.getBusinessExpenseById(id);
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
+      // ✅ FIXED: Pass transaction to query within transaction context
+      return await this.getBusinessExpenseById(id, transaction);
+    });
   }
 
   /**
    * Pay a business expense (updates both expense and AP)
    */
-  static async payBusinessExpense(expenseId: number, paymentData: {
+  async payBusinessExpense(expenseId: number, paymentData: {
     paymentMethod: string;
     bankAccountId?: number;
     cardId?: number;
@@ -807,9 +825,7 @@ class BusinessExpenseService {
     paymentReference?: string;
     voucherDate?: Date;
   }): Promise<any> {
-    const transaction: any = await sequelize.transaction();
-    
-    try {
+    return this.executeWithTransaction(async (transaction) => {
       // Step 1: Get the business expense
       const expense = await BusinessExpense.findByPk(expenseId, { transaction });
       if (!expense) {
@@ -854,24 +870,19 @@ class BusinessExpenseService {
       // Step 5: Update related AP entry if it exists
       await this.updateRelatedAccountsPayable(expense, paymentData.amount, transaction);
 
-      await transaction.commit();
-
       return {
-        expense: await this.getBusinessExpenseById(expenseId),
+        // ✅ FIXED: Pass transaction to query within transaction context
+        expense: await this.getBusinessExpenseById(expenseId, transaction),
         paymentResult,
         message: `Payment of ₹${paymentData.amount} processed successfully. New status: ${newPaymentStatus}`
       };
-
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
+    });
   }
 
   /**
    * Process bank payment for expense
    */
-  private static async processBankPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
+  private async processBankPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
     if (!paymentData.bankAccountId) {
       throw new Error('Bank account is required for bank payments');
     }
@@ -919,6 +930,7 @@ class BusinessExpenseService {
       balance: newBalance,
       bankAccountId: paymentData.bankAccountId,
       bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+      accountType: bankAccount.accountType,  // ✅ FIX: Store account type
       chequeNumber: paymentData.chequeNumber,
       transferNumber: paymentData.transferNumber,
       supplierId: expense.supplierId,
@@ -931,7 +943,7 @@ class BusinessExpenseService {
   /**
    * Process credit card payment for expense
    */
-  private static async processCreditCardPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
+  private async processCreditCardPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
     if (!paymentData.cardId) {
       throw new Error('Credit card is required for credit card payments');
     }
@@ -960,7 +972,7 @@ class BusinessExpenseService {
   /**
    * Process cash payment for expense
    */
-  private static async processCashPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
+  private async processCashPaymentForExpense(expense: any, paymentData: any, transaction: any): Promise<any> {
     // For cash payments, we just record the payment - no additional register entries needed
     return { cashPayment: true, amount: paymentData.amount };
   }
@@ -968,7 +980,7 @@ class BusinessExpenseService {
   /**
    * Update related Accounts Payable entry
    */
-  private static async updateRelatedAccountsPayable(expense: any, paymentAmount: number, transaction: any): Promise<void> {
+  private async updateRelatedAccountsPayable(expense: any, paymentAmount: number, transaction: any): Promise<void> {
     try {
       const AccountsPayable = (await import('../models/AccountsPayable')).default;
       
@@ -1001,22 +1013,42 @@ class BusinessExpenseService {
   }
 
   /**
-   * Delete business expense (soft delete by updating status)
+   * Delete business expense with proper validation
+   * 
+   * ⚠️ IMPORTANT: This is for DIRECT deletion (DELETE /api/business-expenses/:id)
+   * For APPROVAL-BASED deletion, use TransactionDeletionService with BusinessExpenseDeletionHandler
    */
-  static async deleteBusinessExpense(id: number): Promise<boolean> {
-    const expense = await BusinessExpense.findByPk(id);
-    if (!expense) {
-      throw new Error(`Business expense with ID ${id} not found`);
-    }
-
-    await expense.update({ status: 'CANCELLED' });
-    return true;
+  async deleteBusinessExpense(id: number): Promise<{ message: string }> {
+    return this.executeWithTransaction(async (transaction) => {
+      this.validateNumeric(id, 'Business Expense ID', { min: 1 });
+      
+      const expense = await BusinessExpense.findByPk(id, { transaction });
+      if (!expense) {
+        throw new NotFoundError('Business expense not found');
+      }
+      
+      const paidAmount = Number(expense.paidAmount || 0);
+      
+      // ✅ Simple validation: Block deletion if any payment made
+      if (paidAmount > 0) {
+        throw new BusinessLogicError(
+          'Cannot delete a business expense with payments. Please use the Transaction Deletion approval system for proper reversal.'
+        );
+      }
+      
+      // Only allow deletion of unpaid expenses
+      await expense.destroy({ transaction });
+      
+      console.log(`✅ [Business Expense Deleted] ${expense.registrationNumber} deleted successfully (unpaid)`);
+      
+      return { message: 'Business expense deleted successfully' };
+    });
   }
 
   /**
    * Get expense dashboard data
    */
-  static async getDashboardData(period: string = 'all') {
+  async getDashboardData(period: string = 'all') {
     const now = new Date();
     let startDate: Date | null = null;
 
@@ -1202,4 +1234,6 @@ class BusinessExpenseService {
   }
 }
 
-export default BusinessExpenseService;
+// Export singleton instance
+const businessExpenseService = new BusinessExpenseService();
+export default businessExpenseService;

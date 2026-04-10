@@ -495,7 +495,7 @@ class CreditCardRegisterService extends BaseService {
       nextNumber = parseInt(lastNumberStr) + 1;
     }
     
-    return `CC${dateStr}${String(nextNumber).padStart(3, '0')}`;
+    return `CCR${dateStr}${String(nextNumber).padStart(3, '0')}`;
   }
 }
 

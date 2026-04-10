@@ -21,6 +21,7 @@ interface CreateApprovalRequestData {
   customMemo?: string;
   ipAddress?: string;
   userAgent?: string;
+  selectedApproverId?: number; // ✅ NEW: User-selected approver
 }
 
 interface ProcessApprovalStepData {
@@ -112,7 +113,8 @@ class ApprovalWorkflowService extends BaseService {
       // Create approval steps based on required approvals
       await this.createApprovalSteps(
         approvalRequest.id, 
-        impactAnalysis.requiredApprovals, 
+        impactAnalysis.requiredApprovals,
+        data.selectedApproverId, // ✅ NEW: Pass selected approver
         transaction
       );
 
@@ -280,6 +282,7 @@ class ApprovalWorkflowService extends BaseService {
 
   /**
    * Get pending approval requests for a specific user
+   * ✅ UPDATED: Now checks both approver_id (specific assignment) and approver_role (general)
    */
   async getPendingApprovalsForUser(userId: number): Promise<any[]> {
     return this.executeWithRetry(async () => {
@@ -294,11 +297,21 @@ class ApprovalWorkflowService extends BaseService {
 
       const roleNames = userRoles.map(role => role.role_name);
 
-      // Get pending approval steps for user's roles
+      // ✅ IMPROVED: Get pending approval steps where:
+      // 1. User is specifically assigned (approver_id = userId), OR
+      // 2. User has the required role AND no specific approver assigned
       const pendingSteps = await ApprovalStep.findAll({
         where: {
-          approver_role: { [Op.in]: roleNames },
-          status: 'Pending'
+          status: 'Pending',
+          [Op.or]: [
+            { approver_id: userId }, // ✅ Specifically assigned to this user
+            {
+              [Op.and]: [
+                { approver_role: { [Op.in]: roleNames } }, // Has required role
+                { approver_id: { [Op.is]: null } as any } // ✅ FIXED: Type cast for null check
+              ]
+            }
+          ]
         },
         include: [
           {
@@ -332,6 +345,8 @@ class ApprovalWorkflowService extends BaseService {
         custom_memo: step.request.custom_memo,
         step_number: step.step_number,
         approver_role: step.approver_role,
+        approver_id: step.approver_id, // ✅ NEW: Show if specifically assigned
+        is_assigned_to_me: step.approver_id === userId, // ✅ NEW: Flag if assigned to current user
         required_by: step.required_by,
         risk_level: step.request.impact_analysis?.riskLevel,
         impact_analysis: step.request.impact_analysis,
@@ -414,28 +429,39 @@ class ApprovalWorkflowService extends BaseService {
 
   /**
    * Create approval steps based on required approvals
+   * ✅ PROFESSIONAL FIX: Creates only ONE approval step (not multiple)
+   * - One person approves once with their highest authority level
+   * - Assigns to specific approver if provided by user
    */
   private async createApprovalSteps(
     requestId: number, 
-    requiredApprovals: string[], 
-    transaction: Transaction
+    requiredApprovals: string[],
+    selectedApproverId?: number, // ✅ Specific approver selected by user
+    transaction?: Transaction
   ): Promise<void> {
-    for (let i = 0; i < requiredApprovals.length; i++) {
-      const role = requiredApprovals[i];
-      
-      // Calculate required by date (24-72 hours based on role)
-      const hoursToAdd = this.getApprovalTimeoutHours(role);
-      const requiredBy = new Date();
-      requiredBy.setHours(requiredBy.getHours() + hoursToAdd);
-
-      await ApprovalStep.create({
-        request_id: requestId,
-        step_number: i + 1,
-        approver_role: role,
-        required_by: requiredBy,
-        status: 'Pending'
-      }, { transaction });
+    // ✅ PROFESSIONAL: requiredApprovals now contains only ONE level (highest needed)
+    // Example: ['CFO'] instead of ['Manager', 'Controller', 'CFO']
+    
+    if (requiredApprovals.length === 0) {
+      throw new ValidationError('No approval level determined');
     }
+
+    // ✅ Create only ONE approval step (not multiple)
+    const role = requiredApprovals[0]; // Only one role needed
+    
+    // Calculate required by date (24-72 hours based on role)
+    const hoursToAdd = this.getApprovalTimeoutHours(role);
+    const requiredBy = new Date();
+    requiredBy.setHours(requiredBy.getHours() + hoursToAdd);
+
+    await ApprovalStep.create({
+      request_id: requestId,
+      step_number: 1, // ✅ Always step 1 (only one step)
+      approver_role: role,
+      approver_id: selectedApproverId, // ✅ Assign to selected approver (if provided)
+      required_by: requiredBy,
+      status: 'Pending'
+    }, { transaction });
   }
 
   /**

@@ -15,6 +15,15 @@ interface AssociatedInvoiceAttributes {
   amount: number;
   purchaseType: string;
   paymentType?: string;
+  // Payment method fields (same as Purchase model - NO DUPLICATION)
+  bankAccountId?: number;
+  cardId?: number;
+  chequeNumber?: string;
+  chequeDate?: Date;
+  transferNumber?: string;
+  transferDate?: Date;
+  paymentReference?: string;
+  voucherDate?: Date;
   // sourceTransactionType: TransactionType; // Temporarily removed - column doesn't exist in DB
   createdAt?: Date;
   updatedAt?: Date;
@@ -35,6 +44,15 @@ class AssociatedInvoice extends Model<AssociatedInvoiceAttributes, AssociatedInv
   public amount!: number;
   public purchaseType!: string;
   public paymentType?: string;
+  // Payment method fields (same as Purchase model - NO DUPLICATION)
+  public bankAccountId?: number;
+  public cardId?: number;
+  public chequeNumber?: string;
+  public chequeDate?: Date;
+  public transferNumber?: string;
+  public transferDate?: Date;
+  public paymentReference?: string;
+  public voucherDate?: Date;
   // public sourceTransactionType!: TransactionType; // Temporarily removed - column doesn't exist in DB
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -93,6 +111,47 @@ AssociatedInvoice.init(
     },
     paymentType: {
       type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    // Payment method fields (same as Purchase model - NO DUPLICATION)
+    bankAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'bank_accounts',
+        key: 'id',
+      },
+    },
+    cardId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'cards',
+        key: 'id',
+      },
+    },
+    chequeNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    chequeDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    transferNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    transferDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    paymentReference: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    voucherDate: {
+      type: DataTypes.DATE,
       allowNull: true,
     },
     // sourceTransactionType: {

@@ -31,10 +31,20 @@ import UserRole from './UserRole';
 import ApprovalRequest from './ApprovalRequest';
 import ApprovalStep from './ApprovalStep';
 import TransactionAuditTrail from './TransactionAuditTrail';
+import CreditCardFee from './CreditCardFee';
+import AccountsReceivable from './AccountsReceivable';
 
 // Investment Summary associations
 CashRegister.belongsTo(CashRegisterMaster, { foreignKey: 'cashRegisterId', as: 'cashRegisterMaster' });
 CashRegisterMaster.hasMany(CashRegister, { foreignKey: 'cashRegisterId', as: 'transactions' });
+
+// Cash Register - Bank Account association (for outflows)
+CashRegister.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'bankAccount' });
+BankAccount.hasMany(CashRegister, { foreignKey: 'bankAccountId', as: 'cashTransactions' });
+
+// Bank Register - Bank Account association
+// BankRegister.belongsTo(BankAccount, { foreignKey: 'bankAccountId', as: 'bankAccount' });
+// BankAccount.hasMany(BankRegister, { foreignKey: 'bankAccountId', as: 'bankTransactions' });
 
 // Remove problematic foreign key constraint - keep as optional reference only
 // AccountsPayable.belongsTo(Financer, { foreignKey: 'supplierId', as: 'financer' });
@@ -131,6 +141,17 @@ ApprovalStep.belongsTo(User, { foreignKey: 'approved_by', as: 'approvedByUser' }
 TransactionAuditTrail.belongsTo(User, { foreignKey: 'user_id', as: 'auditUser' });
 TransactionAuditTrail.belongsTo(ApprovalRequest, { foreignKey: 'approval_id', as: 'approvalRequest' });
 
+// Credit Card Fee associations
+CreditCardFee.belongsTo(Client, { foreignKey: 'customerId', as: 'customer' });
+CreditCardFee.belongsTo(AccountsReceivable, { foreignKey: 'arId', as: 'accountsReceivable' });
+CreditCardFee.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+
+// Accounts Receivable associations
+AccountsReceivable.hasMany(CreditCardFee, { foreignKey: 'arId', as: 'creditCardFees' });
+
+// Client associations for credit card fees
+Client.hasMany(CreditCardFee, { foreignKey: 'customerId', as: 'creditCardFees' });
+
 export default {
   Purchase,
   PurchaseItem,
@@ -158,4 +179,6 @@ export default {
   ApprovalRequest,
   ApprovalStep,
   TransactionAuditTrail,
+  CreditCardFee,
+  AccountsReceivable,
 };

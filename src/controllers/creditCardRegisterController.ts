@@ -36,13 +36,15 @@ export const getAllCreditCardRegister = async (req: Request, res: Response): Pro
       return;
     }
     
-    // Backward compatibility
-    const result = await creditCardRegisterService.getAllCreditCardRegister({});
+    // ✅ No pagination - return entries directly
+    const entries = await creditCardRegisterService.getAllCreditCardRegister({});
+    
+    console.log('✅ CreditCardRegister Controller: Returning', Array.isArray(entries) ? entries.length : 0, 'entries');
     
     res.status(200).json({
       success: true,
       message: 'Credit card register entries retrieved successfully',
-      data: result
+      data: entries // This will be an array
     });
   } catch (error: any) {
     console.error('Error retrieving credit card register entries:', error);

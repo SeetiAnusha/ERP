@@ -57,6 +57,12 @@ import TransactionDeletionReason from './TransactionDeletionReason';
 import User from './User';
 import UserRole from './UserRole';
 
+// ===== ACCOUNTING MODELS (DOUBLE-ENTRY) =====
+import ChartOfAccounts from './accounting/ChartOfAccounts';
+import GeneralLedger from './accounting/GeneralLedger';
+import AccountBalance from './accounting/AccountBalance';
+import FiscalPeriod from './accounting/FiscalPeriod';
+
 /**
  * COMPLETE MODEL REGISTRY
  * Every model MUST be listed here to ensure table creation
@@ -110,6 +116,12 @@ export const ALL_MODELS = {
   // User & Auth
   User,
   UserRole,
+  
+  // Accounting (Double-Entry)
+  ChartOfAccounts,
+  GeneralLedger,
+  AccountBalance,
+  FiscalPeriod,
 };
 
 /**
@@ -124,6 +136,9 @@ export function setupAssociations() {
   
   // Import business expense associations
   require('./businessExpenseAssociations');
+  
+  // Import accounting associations
+  require('./accounting/associations');
   
   console.log('✅ All associations loaded');
 }
@@ -245,6 +260,10 @@ export {
   TransactionDeletionReason,
   User,
   UserRole,
+  ChartOfAccounts,
+  GeneralLedger,
+  AccountBalance,
+  FiscalPeriod,
 };
 
 export default ALL_MODELS;

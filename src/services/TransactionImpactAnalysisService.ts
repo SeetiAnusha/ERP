@@ -733,21 +733,32 @@ class TransactionImpactAnalysisService extends BaseService {
 
   /**
    * Determine required approvals based on amount, risk level, and entity type
+   * ✅ PROFESSIONAL FIX: Returns only ONE approval level (highest needed)
+   * One person = One approval (not multiple approvals from same person)
    */
   private determineRequiredApprovals(amount: number, riskLevel: string, entityType: string): string[] {
-    const approvals = ['Manager']; // Always need manager approval
+    // Determine the HIGHEST approval level needed
+    let requiredLevel = 'Manager'; // Default minimum
 
-    // Amount-based approvals
-    if (amount > 1000 || riskLevel === 'MEDIUM') approvals.push('Controller');
-    if (amount > 10000 || riskLevel === 'HIGH') approvals.push('CFO');
-    if (amount > 50000 || riskLevel === 'CRITICAL') approvals.push('Board');
-
-    // Entity-specific approvals
-    if (entityType === 'Payment' && amount > 5000) {
-      if (!approvals.includes('CFO')) approvals.push('CFO');
+    // Amount-based approval level (highest wins)
+    if (amount > 50000 || riskLevel === 'CRITICAL') {
+      requiredLevel = 'Board';
+    } else if (amount > 10000 || riskLevel === 'HIGH') {
+      requiredLevel = 'CFO';
+    } else if (amount > 1000 || riskLevel === 'MEDIUM') {
+      requiredLevel = 'Controller';
     }
 
-    return approvals;
+    // Entity-specific overrides (if higher authority needed)
+    if (entityType === 'Payment' && amount > 5000) {
+      // If payment > $5,000, need at least CFO
+      if (requiredLevel === 'Manager' || requiredLevel === 'Controller') {
+        requiredLevel = 'CFO';
+      }
+    }
+
+    // ✅ Return only ONE approval level (not multiple)
+    return [requiredLevel];
   }
 
   /**

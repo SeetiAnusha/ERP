@@ -344,6 +344,46 @@ export class AuthController {
       });
     }
   }
+
+  /**
+   * Sync all admin/manager roles (one-time setup)
+   * This endpoint syncs all existing admin and manager users to user_roles table
+   */
+  async syncAdminManagerRoles(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+      
+      if (!userId) {
+        throw new BusinessLogicError('User not authenticated');
+      }
+
+      // Check if user is admin
+      const User = require('../models/User').default;
+      const user = await User.findByPk(userId);
+
+      if (!user || user.role !== 'admin') {
+        res.status(403).json({
+          success: false,
+          message: 'Only admins can sync user roles',
+        });
+        return;
+      }
+
+      const result = await authService.syncAllAdminManagerRoles();
+
+      res.status(200).json({
+        success: true,
+        message: 'Admin and manager roles synced successfully',
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to sync roles',
+        error: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      });
+    }
+  }
 }
 
 export default new AuthController();

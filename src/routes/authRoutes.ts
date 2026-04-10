@@ -18,4 +18,7 @@ router.get('/profile', authMiddleware, authController.getProfile);
 router.put('/profile', authMiddleware, authController.updateProfile);
 router.post('/change-password', authMiddleware, authController.changePassword);
 
+// Admin-only routes
+router.post('/sync-admin-manager-roles', authMiddleware, authController.syncAdminManagerRoles);
+
 export default router;

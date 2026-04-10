@@ -6,6 +6,7 @@ import * as creditBalanceService from './creditBalanceService';
 import { BaseService } from '../core/BaseService';
 import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppError';
 import { TransactionType } from '../types/TransactionType';
+import { FeeStatus } from '../models/CreditCardFee';
 
 interface RecordPaymentRequest {
   amount: number;
@@ -335,71 +336,102 @@ class AccountsReceivableService extends BaseService {
     paymentData: RecordPaymentRequest, 
     transaction: any
   ): Promise<void> {
-    const BusinessExpense = (await import('../models/BusinessExpense')).default;
-    const Client = (await import('../models/Client')).default;
-    
-    // Use the AR registration number
-    const expenseRegistrationNumber = ar.registrationNumber;
-    
-    // Check if expense already exists
-    const existingExpense = await BusinessExpense.findOne({
-      where: { registrationNumber: expenseRegistrationNumber },
-      transaction
-    });
-    
-    if (existingExpense) {
-      console.log(`⚠️ Processing fee expense already exists for ${expenseRegistrationNumber}, skipping creation`);
-      return;
+    try {
+      console.log(`🔍 [Processing Fee] Starting creation for AR ${ar.registrationNumber}, fee amount: ${processingFeeAmount}`);
+      
+      const CreditCardFee = (await import('../models/CreditCardFee')).default;
+      const Client = (await import('../models/Client')).default;
+      const CardPaymentNetwork = (await import('../models/CardPaymentNetwork')).default;
+      
+      // Use the AR registration number as transaction number
+      const transactionNumber = ar.registrationNumber;
+      
+      // Check if fee already exists
+      const existingFee = await CreditCardFee.findOne({
+        where: { transactionNumber: transactionNumber },
+        transaction
+      });
+      
+      if (existingFee) {
+        console.log(`⚠️ Processing fee already exists for ${transactionNumber}, skipping creation`);
+        return;
+      }
+      
+      // ✅ Get client information from AR
+      if (!ar.clientId) {
+        console.log(`⚠️ No clientId in AR ${ar.registrationNumber}, skipping processing fee creation`);
+        return;
+      }
+      
+      const client = await Client.findByPk(ar.clientId, { transaction });
+      if (!client) {
+        console.log(`⚠️ Client ${ar.clientId} not found for AR ${ar.id}, skipping processing fee creation`);
+        return;
+      }
+      
+      console.log(`✅ Found client: ${client.name} (ID: ${client.id})`);
+      
+      // ✅ Get card network name from AR (stored as string)
+      const cardNetworkName = ar.cardNetwork || 'Unknown Card Network';
+      console.log(`📱 Card network: ${cardNetworkName}`);
+      
+      // ✅ Try to find the card payment network by name to get fee percentage
+      let feePercentage = 0;
+      if (cardNetworkName) {
+        const cardNetwork = await CardPaymentNetwork.findOne({
+          where: { name: cardNetworkName },
+          transaction
+        });
+        if (cardNetwork && cardNetwork.processingFee) {
+          feePercentage = Number(cardNetwork.processingFee);
+          console.log(`✅ Found card network with fee: ${feePercentage}%`);
+        } else {
+          // Calculate percentage from amounts if network not found
+          const originalAmount = Number(ar.amount);
+          if (originalAmount > 0) {
+            feePercentage = (processingFeeAmount / originalAmount) * 100;
+            console.log(`📊 Calculated fee percentage: ${feePercentage}%`);
+          }
+        }
+      }
+      
+      // ✅ Create credit card fee record
+      console.log(`💳 Creating credit card fee record...`);
+      const fee = await CreditCardFee.create({
+        transactionDate: paymentData.receivedDate || new Date(),
+        transactionNumber: transactionNumber,
+        
+        // Client information
+        customerId: client.id,
+        customerName: client.name,
+        
+        // Fee details
+        paymentAmount: Number(ar.amount),
+        feePercentage: feePercentage,
+        feeAmount: processingFeeAmount,
+        netAmount: Number(ar.amount) - processingFeeAmount,
+        
+        // Card information
+        cardType: undefined, // Can be enhanced later if we track card types
+        cardLastFour: undefined,
+        
+        // Related AR information for traceability
+        arId: ar.id,
+        arRegistrationNumber: ar.registrationNumber,
+        
+        // Status
+        status: FeeStatus.RECORDED,
+        
+        // Notes with full context
+        notes: `${cardNetworkName} Processing Fee - Client: ${client.name}${client.rncCedula ? ` (RNC: ${client.rncCedula})` : ''} - AR: ${ar.registrationNumber} - Original Amount: ₹${ar.amount}, Received: ₹${paymentData.amount}, Processing Fee: ₹${processingFeeAmount}. Automatically created from AR collection.`,
+      }, { transaction });
+      
+      console.log(`✅ Credit card processing fee created successfully! ID: ${fee.id}, Client: "${client.name}", Amount: ₹${processingFeeAmount} (${cardNetworkName})`);
+    } catch (error: any) {
+      console.error(`❌ Error creating processing fee for AR ${ar.registrationNumber}:`, error.message);
+      console.error(`Stack trace:`, error.stack);
+      // Don't throw - allow the AR payment to succeed even if fee creation fails
     }
-    
-    // ✅ Get client information from AR
-    const client = await Client.findByPk(ar.clientId, { transaction });
-    if (!client) {
-      throw new Error(`Client not found for AR ${ar.id}`);
-    }
-    
-    // ✅ Get card network name from AR (stored as string)
-    const cardNetworkName = ar.cardNetwork || 'Unknown Card Network';
-    
-    // ✅ SIMPLIFIED: Create business expense WITHOUT category/type
-    // Processing fees are identifiable by clientId and expenseType field
-    await BusinessExpense.create({
-      registrationNumber: expenseRegistrationNumber,
-      date: paymentData.receivedDate || new Date(),
-      
-      // ✅ CLIENT-RELATED (not supplier)
-      supplierId: null,
-      clientId: client.id,
-      clientRnc: client.rncCedula,
-      
-      // ✅ Card network information
-      cardPaymentNetworkId: null,
-      
-      // ✅ Related AR information for traceability
-      relatedARId: ar.id,
-      relatedDocumentType: 'AR_COLLECTION',
-      relatedDocumentNumber: ar.registrationNumber,
-      
-      // ✅ NO category/type - keep it simple
-      expenseCategoryId: undefined,
-      expenseTypeId: undefined,
-      expenseType: 'CREDIT_CARD_PROCESSING_FEE',
-      
-      // Amounts
-      amount: processingFeeAmount,
-      paidAmount: processingFeeAmount,
-      balanceAmount: 0,
-      
-      // Status
-      status: 'COMPLETED',
-      paymentStatus: 'Paid',
-      paymentType: 'AUTOMATIC_DEDUCTION',
-      
-      // Description with full context
-      description: `${cardNetworkName} Processing Fee - Client: ${client.name}${client.rncCedula ? ` (RNC: ${client.rncCedula})` : ''} - AR: ${ar.registrationNumber} - Original Amount: ₹${ar.amount}, Received: ₹${paymentData.amount}, Processing Fee: ₹${processingFeeAmount}`,
-    }, { transaction });
-    
-    console.log(`✅ Processing fee expense created for client "${client.name}" - ₹${processingFeeAmount} (${cardNetworkName})`);
   }
 
 

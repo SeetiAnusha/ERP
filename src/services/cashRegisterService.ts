@@ -40,6 +40,7 @@ interface CashTransactionRequest {
   invoiceIds?: string;
   bankAccountId?: number;
   investmentAgreementId?: number;
+  transferNumber?: string; // ✅ NEW: User-entered transfer number for bank deposits
   // Flag to prevent duplicate credit balance creation when called from Customer Credit Aware Payment Service
   skipCreditBalanceCreation?: boolean;
 }
@@ -143,6 +144,7 @@ class CashRegisterService extends BaseService {
   async getAllCashTransactions(options: {
     page?: number;
     limit?: number;
+    search?: string;
     transactionType?: 'INFLOW' | 'OUTFLOW';
     cashRegisterId?: number;
     dateFrom?: Date;
@@ -155,7 +157,7 @@ class CashRegisterService extends BaseService {
     totalPages: number;
   }> {
     return this.executeWithRetry(async () => {
-      const { page = 1, limit = 50, transactionType, cashRegisterId, dateFrom, dateTo } = options;
+      const { page = 1, limit = 50, search, transactionType, cashRegisterId, dateFrom, dateTo } = options;
       const offset = (page - 1) * limit;
       
       // Validate pagination parameters
@@ -163,6 +165,17 @@ class CashRegisterService extends BaseService {
       this.validateNumeric(limit, 'Limit', { min: 1, max: 100 });
       
       const whereClause: any = {};
+      
+      // ✅ Add search support
+      if (search) {
+        whereClause[Op.or] = [
+          { registrationNumber: { [Op.like]: `%${search}%` } },
+          { description: { [Op.like]: `%${search}%` } },
+          { clientName: { [Op.like]: `%${search}%` } },
+          { clientRnc: { [Op.like]: `%${search}%` } },
+          { ncf: { [Op.like]: `%${search}%` } }
+        ];
+      }
       
       if (transactionType) {
         this.validateEnum(transactionType, 'Transaction type', ['INFLOW', 'OUTFLOW']);
@@ -182,6 +195,20 @@ class CashRegisterService extends BaseService {
       
       const { rows: transactions, count: total } = await CashRegister.findAndCountAll({
         where: whereClause,
+        include: [
+          {
+            model: CashRegisterMaster,
+            as: 'cashRegisterMaster',
+            attributes: ['id', 'code', 'name', 'location'],
+            required: false  // LEFT JOIN (some transactions may not have cashRegisterId)
+          },
+          {
+            model: BankAccount,
+            as: 'bankAccount',
+            attributes: ['id', 'bankName', 'accountNumber', 'accountType'],
+            required: false  // LEFT JOIN (some transactions may not have bankAccountId)
+          }
+        ],
         order: [['registrationDate', 'DESC'], ['createdAt', 'DESC']],
         limit,
         offset
@@ -806,6 +833,10 @@ class CashRegisterService extends BaseService {
       description: `Bank deposit from ${cashRegisterName} - ${data.description}`,
       balance: newBankBalance,
       bankAccountId: data.bankAccountId,
+      bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`, // ✅ ADD: Bank name for display
+      transferNumber: data.transferNumber || cashRegistrationNumber,  // ✅ UPDATED: Use user-entered transfer number or fallback to cash register number
+      originalPaymentType: 'BANK_DEPOSIT',     // ✅ ADD: Clearly identify as bank deposit transaction
+      accountType: bankAccount.accountType,     // ✅ ADD: Store account type (CHECKING/SAVINGS) from bank account
     }, { transaction });
     
     // Update bank account balance

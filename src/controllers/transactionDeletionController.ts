@@ -134,7 +134,8 @@ class TransactionDeletionController {
         entityId,
         reason,
         deletionReasonCode,
-        customMemo
+        customMemo,
+        selectedApproverId // ✅ NEW: User-selected approver
       } = req.body;
 
       if (!entityType || !entityId || !reason || !deletionReasonCode) {
@@ -161,6 +162,7 @@ class TransactionDeletionController {
         reason,
         deletionReasonCode,
         customMemo,
+        selectedApproverId: selectedApproverId ? parseInt(selectedApproverId) : undefined, // ✅ NEW
         ipAddress: req.ip,
         userAgent: req.get('User-Agent')
       });

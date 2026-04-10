@@ -116,7 +116,9 @@ export const createBusinessExpense = async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error('[BusinessExpenseController] Error creating business expense:', error);
+    console.error('[BusinessExpenseController] Error stack:', error.stack);
     
+    // Handle Sequelize validation errors
     if (error instanceof ValidationError) {
       return res.status(400).json({
         success: false,
@@ -127,6 +129,7 @@ export const createBusinessExpense = async (req: Request, res: Response) => {
       });
     }
     
+    // Handle unique constraint errors
     if (error instanceof UniqueConstraintError) {
       return res.status(409).json({
         success: false,
@@ -136,6 +139,7 @@ export const createBusinessExpense = async (req: Request, res: Response) => {
       });
     }
     
+    // Handle foreign key constraint errors
     if (error instanceof ForeignKeyConstraintError) {
       return res.status(400).json({
         success: false,
@@ -144,11 +148,24 @@ export const createBusinessExpense = async (req: Request, res: Response) => {
         timestamp: new Date().toISOString()
       });
     }
+    
+    // Handle custom AppError types from BaseService
+    if (error.name === 'ValidationError' || error.name === 'NotFoundError' || 
+        error.name === 'BusinessLogicError' || error.name === 'InsufficientBalanceError') {
+      return res.status(400).json({
+        success: false,
+        error: error.name,
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
 
+    // Generic error handler
     res.status(500).json({
       success: false,
       error: 'Failed to create business expense',
-      message: error.message,
+      message: error.message || 'An unexpected error occurred',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       timestamp: new Date().toISOString()
     });
   }

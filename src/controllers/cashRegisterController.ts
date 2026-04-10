@@ -25,7 +25,21 @@ export const getAll = async (req: Request, res: Response) => {
       }
       
       const result = await cashRegisterService.getAllCashTransactionsWithPagination(options);
-      return res.json(result);
+      
+      // ✅ Transform to match frontend expected format
+      return res.json({
+        data: result.transactions,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages,
+          from: (result.page - 1) * result.limit + 1,
+          to: Math.min(result.page * result.limit, result.total),
+          hasNext: result.page < result.totalPages,
+          hasPrev: result.page > 1
+        }
+      });
     }
     
     // Backward compatibility - return all records
