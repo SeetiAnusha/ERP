@@ -25,6 +25,11 @@ import {
   NotFoundError 
 } from '../core/AppError';
 
+// ✅ PHASE 2: Import GL Posting Services
+import GLPostingService from './accounting/GLPostingService';
+import AccountingRulesEngine from './accounting/AccountingRulesEngine';
+import { SourceModule } from '../models/accounting/GeneralLedger';
+
 /**
  * Interfaces for type safety and documentation
  */
@@ -410,6 +415,59 @@ class AccountsPayableService extends BaseService {
       } else {
         console.log(' No payment processing path matched');
         throw new ValidationError('Invalid payment method or missing required payment data');
+      }
+      
+      // ✅ CRITICAL FIX: NO GL entry for credit card AP when clicking "Pay"!
+      // 
+      // ACCOUNTING LOGIC:
+      // 1. Purchase with credit card → GL entry: Dr. Inventory, Cr. Credit Card Payable
+      // 2. Click "Pay" button → NO GL entry (just internal tracking)
+      // 3. Restore credit card → GL entry: Dr. Credit Card Payable, Cr. Bank
+      //
+      // The liability (Credit Card Payable) exists from purchase until restoration.
+      // Clicking "Pay" only tracks credit usage, doesn't move money or change liability.
+      //
+      // ✅ APPLIES TO ALL CREDIT CARD AP TYPES:
+      // - CREDIT_CARD_PURCHASE (main purchase)
+      // - CREDIT_CARD_INVOICEASSOCIATE (associated invoice)
+      // - CREDIT_CARD_EXPENSE (business expense)
+      
+      const creditCardAPTypes = [
+        'CREDIT_CARD_PURCHASE',
+        'CREDIT_CARD_INVOICEASSOCIATE',
+        'CREDIT_CARD_EXPENSE'
+      ];
+      
+      if (!creditCardAPTypes.includes(ap.type)) {
+        // ✅ Only post GL entries for NON-credit-card payments (supplier credit, etc.)
+        try {
+          const paymentMethod = paymentData.bankAccountId ? 'BANK' : 'CASH';
+          
+          // For supplier credit, use Accounts Payable (2100)
+          const glEntries = AccountingRulesEngine.getAPPaymentGLEntries(
+            paymentData.amount,
+            paymentMethod
+          );
+          
+          // Post to General Ledger
+          await GLPostingService.postGLEntries({
+            entryDate: paymentData.paidDate || new Date(),
+            sourceModule: SourceModule.ACCOUNTS_PAYABLE,
+            sourceTransactionId: ap.id,
+            sourceTransactionNumber: ap.registrationNumber,
+            entries: glEntries,
+          }, transaction);
+          
+          console.log('✅ GL entries posted successfully for supplier credit AP payment', ap.registrationNumber);
+        } catch (glError: any) {
+          console.error('❌ Failed to post GL entries for AP payment:', glError.message);
+          throw glError; // Will trigger transaction rollback
+        }
+      } else {
+        console.log(`⚠️ Skipping GL entry for credit card AP (type: ${ap.type}) - liability already recorded at purchase time`);
+        console.log('   Current GL state: Dr. Inventory/Expense, Cr. Credit Card Payable (unchanged)');
+        console.log('   Action taken: Credit limit tracking only (no GL impact)');
+        console.log('   GL entry will be created when credit card is restored (paid to credit card company)');
       }
       
       // Step 4: Update AP record

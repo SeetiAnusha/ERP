@@ -62,10 +62,10 @@ export class ARDeletionHandler {
     console.log(`💰 [AR Raw Data] receivedAmount field value: "${ar.receivedAmount}" (type: ${typeof ar.receivedAmount})`);
     
     // ✅ OPTIMIZATION: Fetch ALL related records in parallel (single database round-trip)
-    // ✅ CRITICAL FIX: Query BOTH Expense and BusinessExpense tables for processing fees
-    const Expense = (await import('../../../models/Expense')).default;
+    // ✅ UPDATED: Query CreditCardFee table for processing fees (new structure)
+    const CreditCardFee = (await import('../../../models/CreditCardFee')).default;
     
-    const [bankEntries, cashEntries, businessExpenses, legacyExpenses] = await Promise.all([
+    const [bankEntries, cashEntries, creditCardFees] = await Promise.all([
       BankRegister.findAll({
         where: { 
           relatedDocumentNumber: ar.registrationNumber,
@@ -80,56 +80,21 @@ export class ARDeletionHandler {
         },
         transaction
       }),
-      // Fetch from business_expenses table
-      BusinessExpense.findAll({
+      // ✅ NEW: Fetch from credit_card_fees table
+      CreditCardFee.findAll({
         where: {
-          [Op.or]: [
-            {
-              relatedDocumentType: 'AR_COLLECTION',
-              relatedDocumentNumber: ar.registrationNumber
-            },
-            {
-              description: {
-                [Op.like]: `%${ar.registrationNumber}%`
-              },
-              expenseType: {
-                [Op.or]: ['CREDIT_CARD_FEE', 'CREDIT_CARD_PROCESSING_FEE', 'DEBIT_CARD_FEE']
-              }
-            }
-          ]
-        },
-        transaction
-      }),
-      // ✅ CRITICAL: Also fetch from legacy expenses table
-      Expense.findAll({
-        where: {
-          [Op.or]: [
-            {
-              relatedDocumentType: 'AR_COLLECTION',
-              relatedDocumentNumber: ar.registrationNumber
-            },
-            {
-              description: {
-                [Op.like]: `%${ar.registrationNumber}%`
-              },
-              expenseType: {
-                [Op.or]: ['CREDIT_CARD_FEE', 'CREDIT_CARD_PROCESSING_FEE', 'DEBIT_CARD_FEE']
-              }
-            }
-          ]
+          arRegistrationNumber: ar.registrationNumber,
+          deletion_status: { [Op.ne]: 'EXECUTED' }
         },
         transaction
       })
     ]);
     
-    // Combine expenses from both tables
-    const processingFeeExpenses = [...businessExpenses, ...legacyExpenses];
-    
     const hasPaymentRecords = bankEntries.length > 0 || cashEntries.length > 0;
     const isCardPayment = ar.type === 'CREDIT_CARD_SALE' || ar.type === 'DEBIT_CARD_SALE';
     
     console.log(`🔍 [AR Payment Check] Bank entries: ${bankEntries.length}, Cash entries: ${cashEntries.length}`);
-    console.log(`🔍 [AR Payment Check] Processing fees: ${processingFeeExpenses.length} (BusinessExpense: ${businessExpenses.length}, Legacy Expense: ${legacyExpenses.length})`);
+    console.log(`🔍 [AR Payment Check] Credit card fees: ${creditCardFees.length}`);
     console.log(`🔍 [AR Payment Check] hasPaymentRecords: ${hasPaymentRecords}, receivedAmount: ${receivedAmount}, isCardPayment: ${isCardPayment}`);
     
     // ✅ CRITICAL: If payment records exist but receivedAmount is 0, this is a DATA INCONSISTENCY BUG
@@ -238,77 +203,42 @@ export class ARDeletionHandler {
           console.warn(`⚠️ [AR Card Payment] Cannot reverse expected deposit - expectedBankDeposit: ${ar.expectedBankDeposit}, bankAccountId: ${ar.bankAccountId}`);
         }
         
-        // 3. Delete processing fee expenses (already fetched above)
-        console.log(`💳 [AR Card Payment] Processing ${processingFeeExpenses.length} related expenses`);
+        // 3. Delete credit card processing fees
+        console.log(`💳 [AR Card Payment] Processing ${creditCardFees.length} credit card fees`);
         
-        // ✅ ENHANCED: Log all expenses found for debugging
-        if (processingFeeExpenses.length > 0) {
-          console.log(`💳 [AR Card Payment] All expenses found:`);
-          processingFeeExpenses.forEach((exp, idx) => {
-            const tableName = (exp as any).constructor.tableName || (exp as any).constructor.name;
-            console.log(`   ${idx + 1}. Table: ${tableName}, ID: ${exp.id}, RegNum: ${exp.registrationNumber}, Type: ${exp.expenseType}, Amount: ₹${exp.amount}`);
-            console.log(`      Description: ${exp.description}`);
-            console.log(`      RelatedDocType: ${exp.relatedDocumentType}, RelatedDocNum: ${exp.relatedDocumentNumber}`);
-            console.log(`      Status: ${exp.status || 'N/A'}, DeletionStatus: ${(exp as any).deletion_status || 'NULL'}`);
+        // ✅ Log all fees found for debugging
+        if (creditCardFees.length > 0) {
+          console.log(`💳 [AR Card Payment] All credit card fees found:`);
+          creditCardFees.forEach((fee, idx) => {
+            console.log(`   ${idx + 1}. ID: ${fee.id}, Transaction: ${fee.transactionNumber}, Amount: ${fee.feeAmount}`);
+            console.log(`      Customer: ${fee.customerName}, AR: ${fee.arRegistrationNumber}`);
+            console.log(`      Status: ${fee.status}, DeletionStatus: ${fee.deletion_status || 'NULL'}`);
           });
         }
         
-        // Filter for processing fees - EXPANDED criteria
-        const feeExpenses = processingFeeExpenses.filter(expense => {
-          const isProcessingFee = 
-            expense.expenseType === 'CREDIT_CARD_PROCESSING_FEE' ||
-            expense.expenseType === 'CREDIT_CARD_FEE' ||
-            expense.expenseType === 'DEBIT_CARD_FEE' ||
-            (expense as any).categoryName === 'Processing Fees' ||
-            (expense.description && (
-              expense.description.includes('Processing Fee') ||
-              expense.description.includes('processing fee') ||
-              expense.description.includes('Credit card processing fee')
-            ));
-          
-          // ✅ CRITICAL: Only delete if NOT already deleted (for BusinessExpense table)
-          const notAlreadyDeleted = !(expense as any).deletion_status || (expense as any).deletion_status !== 'EXECUTED';
-          
-          return isProcessingFee && notAlreadyDeleted;
-        });
-        
-        console.log(`💳 [AR Card Payment] Filtered to ${feeExpenses.length} processing fee expenses (from ${processingFeeExpenses.length} total expenses)`);
-        
-        if (feeExpenses.length === 0 && processingFeeExpenses.length > 0) {
-          console.warn(`⚠️ [AR Card Payment] Found ${processingFeeExpenses.length} expenses but NONE matched processing fee criteria!`);
-          console.warn(`⚠️ [AR Card Payment] This might indicate the processing fee was not created or has different criteria`);
-        }
-        
-        for (const feeExpense of feeExpenses) {
-          const tableName = (feeExpense as any).constructor.tableName || 'expenses';
-          const isLegacyExpense = tableName === 'expenses';
-          
-          console.log(`💰 [AR Processing Fee] Soft deleting processing fee from ${tableName}: ${feeExpense.registrationNumber} (₹${feeExpense.amount})`);
-          console.log(`💰 [AR Processing Fee] Expense details - ID: ${feeExpense.id}, Type: ${feeExpense.expenseType}, Description: ${feeExpense.description}`);
+        for (const fee of creditCardFees) {
+          console.log(`💰 [AR Processing Fee] Soft deleting credit card fee: ${fee.transactionNumber} (${fee.feeAmount})`);
+          console.log(`💰 [AR Processing Fee] Fee details - ID: ${fee.id}, Customer: ${fee.customerName}, Card Type: ${fee.cardType}`);
           
           operations.push({
             type: 'DELETE_PROCESSING_FEE',
-            targetTable: isLegacyExpense ? 'expenses' : 'business_expenses',
-            targetId: feeExpense.id,
+            targetTable: 'credit_card_fees',
+            targetId: fee.id,
             data: {
-              originalExpense: feeExpense,
-              isLegacyExpense: isLegacyExpense,
-              deletion_status: 'EXECUTED',
-              deleted_at: new Date(),
+              originalFee: fee,
               deleted_by: executedBy,
               deletion_reason_code: approvalRequest.deletion_reason_code,
-              deletion_memo: `Processing fee deleted due to AR deletion: ${ar.registrationNumber}`,
-              deletion_approval_id: approvalRequest.id
+              deletion_memo: `Processing fee deleted due to AR deletion: ${ar.registrationNumber}`
             },
             priority: 1
           });
         }
         
-        if (feeExpenses.length === 0) {
-          console.warn(`⚠️ [AR Card Payment] No processing fee expenses found for ${ar.registrationNumber}`);
+        if (creditCardFees.length === 0) {
+          console.warn(`⚠️ [AR Card Payment] No credit card fees found for ${ar.registrationNumber}`);
           console.warn(`⚠️ [AR Card Payment] Possible reasons:`);
           console.warn(`   1. Processing fee was never created during collection`);
-          console.warn(`   2. Processing fee has different relatedDocumentType/Number`);
+          console.warn(`   2. Processing fee has different AR registration number`);
           console.warn(`   3. Processing fee was already deleted`);
           console.warn(`   4. AR was never collected (no payment made yet)`);
         }

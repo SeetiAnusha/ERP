@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as cashRegisterService from '../services/cashRegisterService';
 
-export const getAll = async (req: Request, res: Response) => {
+export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ Check if pagination is requested
     if (req.query.page || req.query.limit) {
@@ -45,64 +45,63 @@ export const getAll = async (req: Request, res: Response) => {
     // Backward compatibility - return all records
     const result = await cashRegisterService.getAllCashTransactions();
     res.json(result.transactions);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getById = async (req: Request, res: Response) => {
+export const getById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const transaction = await cashRegisterService.getCashTransactionById(parseInt(req.params.id));
-    if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
     res.json(transaction);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const create = async (req: Request, res: Response) => {
+export const create = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const transaction = await cashRegisterService.createCashTransaction(req.body);
     res.status(201).json(transaction);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getBalance = async (req: Request, res: Response) => {
+export const getBalance = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const balance = await cashRegisterService.getCashBalance();
     res.json(balance);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 // Phase 3: Get balance for specific cash register
-export const getCashRegisterBalance = async (req: Request, res: Response) => {
+export const getCashRegisterBalance = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const balance = await cashRegisterService.getCashRegisterBalance(parseInt(req.params.cashRegisterId));
     res.json(balance);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 // Get pending Credit Sale and Credit Card Sale invoices for customer
-export const getPendingCreditSaleInvoices = async (req: Request, res: Response) => {
+export const getPendingCreditSaleInvoices = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoices = await cashRegisterService.getPendingCreditSaleInvoices(parseInt(req.params.customerId));
     res.json(invoices);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const remove = async (req: Request, res: Response) => {
+export const remove = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await cashRegisterService.deleteCashTransaction(parseInt(req.params.id));
     res.json(result);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };

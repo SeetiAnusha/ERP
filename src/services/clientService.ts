@@ -23,13 +23,17 @@ class ClientService extends BaseService {
   }
 
   async createClient(data: any) {
-    return await Client.create(data);
+    return this.executeWithRetry(async () => {
+      return await Client.create(data);
+    });
   }
 
   async updateClient(id: number, data: any) {
-    const client = await Client.findByPk(id);
-    if (!client) throw new Error('Client not found');
-    return await client.update(data);
+    return this.executeWithRetry(async () => {
+      const client = await Client.findByPk(id);
+      if (!client) throw new Error('Client not found');
+      return await client.update(data);
+    });
   }
 
   async deleteClient(id: number) {

@@ -11,6 +11,11 @@ import { TransactionType } from '../types/TransactionType';
 import { BaseService } from '../core/BaseService';
 import { ValidationError, NotFoundError, BusinessLogicError, InsufficientBalanceError } from '../core/AppError';
 
+// ✅ PHASE 2: Import GL Posting Services
+import GLPostingService from './accounting/GLPostingService';
+import AccountingRulesEngine from './accounting/AccountingRulesEngine';
+import { SourceModule } from '../models/accounting/GeneralLedger';
+
 /**
  * BusinessExpenseService - Class-based implementation following current service pattern
  * Handles all business expense operations with proper validation and error handling
@@ -160,6 +165,30 @@ class BusinessExpenseService extends BaseService {
       // Step 6: Create associated costs if provided
       if (data.associatedCosts && data.associatedCosts.length > 0) {
         await this.processAssociatedCosts(data.associatedCosts, businessExpense.id, transaction);
+      }
+      
+      // ✅ PHASE 2: Post GL Entries for Business Expense
+      try {
+        const paymentMethod = data.paymentType?.toUpperCase() || 'CASH';
+        
+        const glEntries = AccountingRulesEngine.getBusinessExpenseGLEntries(
+          data.amount,
+          data.expenseType || 'OPERATING',
+          paymentMethod
+        );
+        
+        await GLPostingService.postGLEntries({
+          entryDate: data.date || new Date(),
+          sourceModule: SourceModule.BUSINESS_EXPENSE,
+          sourceTransactionId: businessExpense.id,
+          sourceTransactionNumber: businessExpense.registrationNumber,
+          entries: glEntries,
+        }, transaction);
+        
+        console.log('✅ GL entries posted successfully for business expense', businessExpense.registrationNumber);
+      } catch (glError: any) {
+        console.error('❌ Failed to post GL entries for business expense:', glError.message);
+        throw glError;
       }
       
       // Return with associations - ✅ FIXED: Pass transaction to query within transaction context

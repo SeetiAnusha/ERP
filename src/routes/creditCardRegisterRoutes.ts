@@ -19,7 +19,8 @@ import {
   createCreditCardRegister,
   processCreditCardPayment,
   processCreditCardRefund,
-  getCreditCardStatement
+  getCreditCardStatement,
+  restoreCreditCard
 } from '../controllers/creditCardRegisterController';
 
 const router = Router();
@@ -34,5 +35,6 @@ router.get('/statement/:cardId', getCreditCardStatement);
 router.post('/', createCreditCardRegister);
 router.post('/payment', processCreditCardPayment);
 router.post('/refund', processCreditCardRefund);
+router.post('/restore/:cardId', restoreCreditCard);
 
 export default router;

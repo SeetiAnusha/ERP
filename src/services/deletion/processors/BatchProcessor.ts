@@ -523,53 +523,32 @@ export class BatchProcessor extends BaseService {
   // }
 
   /**
-   * ✅ NEW: Execute delete processing fee operations in batch
-   * Deletes processing fee expenses when card payment AR is deleted
-   * Handles BOTH legacy expenses table and business_expenses table
+   * ✅ Execute delete processing fee operations in batch
+   * Deletes credit card processing fees when card payment AR is deleted
+   * Uses the new CreditCardFee model and service
    */
   private async executeDeleteProcessingFeeBatch(
     operations: ReversalOperation[],
     transaction: Transaction
   ): Promise<void> {
-    const BusinessExpense = (await import('../../../models/BusinessExpense')).default;
-    const Expense = (await import('../../../models/Expense')).default;
+    const CreditCardFeeService = (await import('../../CreditCardFeeService')).default;
     
     for (const op of operations) {
-      const { originalExpense, isLegacyExpense, deletion_status, deleted_at, deleted_by, deletion_reason_code, deletion_memo, deletion_approval_id } = op.data;
+      const { originalFee, deleted_by, deletion_reason_code, deletion_memo } = op.data;
       
       try {
-        if (isLegacyExpense) {
-          // ✅ Legacy expenses table - just update status (no deletion_status field)
-          await Expense.update({
-            status: 'DELETED'
-          }, {
-            where: { id: op.targetId },
-            transaction,
-            validate: false  // ✅ Skip validation during deletion
-          });
-          
-          console.log(`💰 [Processing Fee Deleted] Legacy Expense ${originalExpense.registrationNumber} (₹${originalExpense.amount}) - Status: DELETED`);
-        } else {
-          // ✅ Business expenses table - soft delete with deletion_status
-          // ✅ CRITICAL FIX: Use validate: false to bypass supplierId/clientId validation
-          await BusinessExpense.update({
-            deletion_status,
-            deleted_at,
-            deleted_by,
-            deletion_reason_code,
-            deletion_memo,
-            deletion_approval_id
-          }, {
-            where: { id: op.targetId },
-            transaction,
-            validate: false  // ✅ CRITICAL: Skip validation to avoid "Either supplierId or clientId must be provided" error
-          });
-          
-          console.log(`💰 [Processing Fee Deleted] Business Expense ${originalExpense.registrationNumber} (₹${originalExpense.amount}) - Reason: ${deletion_memo}`);
-        }
+        // Use the CreditCardFeeService to soft delete the fee
+        await CreditCardFeeService.deleteFee(
+          op.targetId,
+          deleted_by,
+          deletion_reason_code,
+          deletion_memo
+        );
+        
+        console.log(`� [Processing Fee Deleted] Credit Card Fee ${originalFee.transactionNumber} (${originalFee.feeAmount}) - Reason: ${deletion_memo}`);
         
       } catch (error: any) {
-        console.error(`❌ [Processing Fee Deletion Error] Failed to delete expense ${op.targetId} from ${op.targetTable}:`, error.message);
+        console.error(`❌ [Processing Fee Deletion Error] Failed to delete credit card fee ${op.targetId}:`, error.message);
         throw error;
       }
     }

@@ -41,47 +41,51 @@ class CardService extends BaseService {
   }
 
   async createCard(data: any) {
-    // Generate code (CD0001, CD0002, etc.)
-    const lastCard = await Card.findOne({
-      where: {
-        code: {
-          [Op.like]: 'CD%'
-        }
-      },
-      order: [['id', 'DESC']],
+    return this.executeWithRetry(async () => {
+      // Generate code (CD0001, CD0002, etc.)
+      const lastCard = await Card.findOne({
+        where: {
+          code: {
+            [Op.like]: 'CD%'
+          }
+        },
+        order: [['id', 'DESC']],
+      });
+      
+      let nextNumber = 1;
+      if (lastCard) {
+        const lastNumber = parseInt(lastCard.code.substring(2));
+        nextNumber = lastNumber + 1;
+      }
+      
+      const code = `CD${String(nextNumber).padStart(4, '0')}`;
+      
+      // Clean up data - convert empty strings to null for integer fields
+      const cleanData = {
+        ...data,
+        code,
+        bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
+        creditLimit: data.creditLimit || 0,
+      };
+      
+      return await Card.create(cleanData);
     });
-    
-    let nextNumber = 1;
-    if (lastCard) {
-      const lastNumber = parseInt(lastCard.code.substring(2));
-      nextNumber = lastNumber + 1;
-    }
-    
-    const code = `CD${String(nextNumber).padStart(4, '0')}`;
-    
-    // Clean up data - convert empty strings to null for integer fields
-    const cleanData = {
-      ...data,
-      code,
-      bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
-      creditLimit: data.creditLimit || 0,
-    };
-    
-    return await Card.create(cleanData);
   }
 
   async updateCard(id: number, data: any) {
-    const card = await Card.findByPk(id);
-    if (!card) throw new Error('Card not found');
-    
-    // Clean up data - convert empty strings to null for integer fields
-    const cleanData = {
-      ...data,
-      bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
-      creditLimit: data.creditLimit || 0,
-    };
-    
-    return await card.update(cleanData);
+    return this.executeWithRetry(async () => {
+      const card = await Card.findByPk(id);
+      if (!card) throw new Error('Card not found');
+      
+      // Clean up data - convert empty strings to null for integer fields
+      const cleanData = {
+        ...data,
+        bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
+        creditLimit: data.creditLimit || 0,
+      };
+      
+      return await card.update(cleanData);
+    });
   }
 
   async deleteCard(id: number) {

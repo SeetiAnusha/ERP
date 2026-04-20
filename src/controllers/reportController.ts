@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as reportService from '../services/reportService';
 
-export const getPPETrackingReport = async (req: Request, res: Response) => {
+export const getPPETrackingReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = {
       startDate: req.query.startDate as string,
@@ -10,22 +10,22 @@ export const getPPETrackingReport = async (req: Request, res: Response) => {
     };
     const report = await reportService.getPPETrackingReport(filters);
     res.json(report);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const getDepreciationSchedule = async (req: Request, res: Response) => {
+export const getDepreciationSchedule = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const assetId = parseInt(req.params.id);
     const schedule = await reportService.getDepreciationSchedule(assetId);
     res.json(schedule);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const getInvestmentTrackingReport = async (req: Request, res: Response) => {
+export const getInvestmentTrackingReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = {
       startDate: req.query.startDate as string,
@@ -34,12 +34,12 @@ export const getInvestmentTrackingReport = async (req: Request, res: Response) =
     };
     const report = await reportService.getInvestmentTrackingReport(filters);
     res.json(report);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const getPrepaidExpensesReport = async (req: Request, res: Response) => {
+export const getPrepaidExpensesReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = {
       startDate: req.query.startDate as string,
@@ -48,12 +48,12 @@ export const getPrepaidExpensesReport = async (req: Request, res: Response) => {
     };
     const report = await reportService.getPrepaidExpensesReport(filters);
     res.json(report);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const getInventoryMovementReport = async (req: Request, res: Response) => {
+export const getInventoryMovementReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = {
       startDate: req.query.startDate as string,
@@ -62,7 +62,7 @@ export const getInventoryMovementReport = async (req: Request, res: Response) =>
     };
     const report = await reportService.getInventoryMovementReport(filters);
     res.json(report);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };

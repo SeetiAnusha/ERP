@@ -90,6 +90,13 @@ export abstract class BaseService {
           throw error;
         }
         
+        // Don't retry database constraint errors (they will always fail)
+        if (error.name === 'SequelizeUniqueConstraintError' ||
+            error.name === 'SequelizeForeignKeyConstraintError' ||
+            error.name === 'SequelizeValidationError') {
+          throw this.handleError(error, 'Database constraint violation');
+        }
+        
         // Don't retry on last attempt
         if (attempt === maxAttempts) {
           break;
@@ -110,34 +117,57 @@ export abstract class BaseService {
   
   /**
    * Centralized error handling with context and sanitization
+   * ✅ FIXED: Now preserves specific error types and lets them pass through
    */
   protected handleError(error: Error, context: string): never {
     // Log error for debugging
     console.error(`❌ ${context}:`, error.message);
+    console.error('Error name:', error.name);
+    console.error('Error type:', error.constructor.name);
+    
+    // 🔍 DEBUG: Log Sequelize error details
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      const err = error as any;
+      console.log('🔍 BaseService caught Sequelize Unique Constraint Error:');
+      console.log('  - errors array:', err.errors);
+      console.log('  - errors[0]:', err.errors?.[0]);
+      console.log('  - field (path):', err.errors?.[0]?.path);
+      console.log('  - value:', err.errors?.[0]?.value);
+      console.log('  - Passing through to middleware...');
+    }
+    
     console.error('Stack trace:', error.stack);
     
-    // Convert to appropriate AppError type
+    // ✅ PASS THROUGH custom AppError types WITHOUT wrapping
     if (error instanceof ValidationError || 
         error instanceof InsufficientBalanceError || 
         error instanceof BusinessLogicError || 
         error instanceof NotFoundError) {
-      throw error;
+      throw error; // ✅ Preserve original error
     }
     
-    // Handle database constraint errors
+    // ✅ Convert database errors to specific types (let middleware handle them)
     if (error.name === 'SequelizeUniqueConstraintError') {
-      throw new ValidationError('Duplicate entry detected. Please check your data.');
+      // Let the error middleware handle this - it has better logic
+      throw error; // ✅ Pass original Sequelize error
     }
     
     if (error.name === 'SequelizeForeignKeyConstraintError') {
-      throw new ValidationError('Invalid reference data. Please check your selections.');
+      // Let the error middleware handle this
+      throw error; // ✅ Pass original Sequelize error
+    }
+    
+    if (error.name === 'SequelizeValidationError') {
+      // Let the error middleware handle this
+      throw error; // ✅ Pass original Sequelize error
     }
     
     if (error.name === 'SequelizeDatabaseError') {
-      throw new BusinessLogicError(`Database operation failed: ${this.sanitizeErrorMessage(error.message)}`);
+      // Let the error middleware handle this
+      throw error; // ✅ Pass original Sequelize error
     }
     
-    // Generic error fallback
+    // ✅ Only wrap truly unknown errors
     throw new BusinessLogicError(`${context}: ${this.sanitizeErrorMessage(error.message)}`);
   }
   

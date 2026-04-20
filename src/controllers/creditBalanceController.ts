@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as creditBalanceService from '../services/creditBalanceService';
 
-export const getAllCreditBalances = async (req: Request, res: Response) => {
+export const getAllCreditBalances = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ Check if pagination is requested
     if (req.query.page || req.query.limit) {
@@ -23,37 +23,32 @@ export const getAllCreditBalances = async (req: Request, res: Response) => {
     // Backward compatibility - return all records
     const creditBalances = await creditBalanceService.getAllCreditBalances({});
     res.json(creditBalances);
-  } catch (error: any) {
-    console.error('❌ Error fetching credit balances:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getAllActiveCreditBalances = async (req: Request, res: Response) => {
+export const getAllActiveCreditBalances = async (req: Request, res: Response, next: NextFunction) => {
   try {
     console.log(' Fetching all active credit balances...');
     const creditBalances = await creditBalanceService.getAllActiveCreditBalances();
     console.log(`✅ Found ${creditBalances.length} active credit balances`);
     res.json(creditBalances);
-  } catch (error: any) {
-    console.error(' Error fetching credit balances:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getCreditBalanceById = async (req: Request, res: Response) => {
+export const getCreditBalanceById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const creditBalance = await creditBalanceService.getCreditBalanceById(parseInt(req.params.id));
-    if (!creditBalance) {
-      return res.status(404).json({ error: 'Credit Balance not found' });
-    }
     res.json(creditBalance);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getCreditBalancesByEntity = async (req: Request, res: Response) => {
+export const getCreditBalancesByEntity = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { entityType, entityId } = req.params;
     
@@ -67,12 +62,12 @@ export const getCreditBalancesByEntity = async (req: Request, res: Response) => 
     );
     
     res.json(creditBalances);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getAvailableCreditBalance = async (req: Request, res: Response) => {
+export const getAvailableCreditBalance = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { entityType, entityId } = req.params;
     
@@ -90,12 +85,12 @@ export const getAvailableCreditBalance = async (req: Request, res: Response) => 
       entityId: parseInt(entityId),
       availableCreditBalance: availableCredit 
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const validatePaymentAmount = async (req: Request, res: Response) => {
+export const validatePaymentAmount = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { outstandingBalance, paymentAmount, entityType, entityName } = req.body;
     
@@ -111,7 +106,7 @@ export const validatePaymentAmount = async (req: Request, res: Response) => {
     );
     
     res.json(validation);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };

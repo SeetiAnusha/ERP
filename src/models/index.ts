@@ -62,6 +62,9 @@ import ChartOfAccounts from './accounting/ChartOfAccounts';
 import GeneralLedger from './accounting/GeneralLedger';
 import AccountBalance from './accounting/AccountBalance';
 import FiscalPeriod from './accounting/FiscalPeriod';
+import AccountClassification from './accounting/AccountClassification';
+import AuditLog from './accounting/AuditLog';
+import ReportExportLog from './accounting/ReportExportLog';
 
 /**
  * COMPLETE MODEL REGISTRY
@@ -123,6 +126,9 @@ export const ALL_MODELS = {
   GeneralLedger,
   AccountBalance,
   FiscalPeriod,
+  AccountClassification,
+  AuditLog,
+  ReportExportLog,
 };
 
 /**
@@ -266,6 +272,9 @@ export {
   GeneralLedger,
   AccountBalance,
   FiscalPeriod,
+  AccountClassification,
+  AuditLog,
+  ReportExportLog,
 };
 
 export default ALL_MODELS;

@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as productService from '../services/productService';
 
-export const getAll = async (req: Request, res: Response) => {
+export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ Check if pagination is requested
     if (req.query.page || req.query.limit) {
@@ -34,48 +34,44 @@ export const getAll = async (req: Request, res: Response) => {
     }
     
     res.json(products);
-  } catch (error: any) {
+  } catch (error) {
     console.error('❌ Error in getAll products:', error);
-    res.status(500).json({ 
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    next(error);
   }
 };
 
-export const getById = async (req: Request, res: Response) => {
+export const getById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const product = await productService.getProductById(parseInt(req.params.id));
-    if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json(product);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const create = async (req: Request, res: Response) => {
+export const create = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const product = await productService.createProduct(req.body);
     res.status(201).json(product);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const update = async (req: Request, res: Response) => {
+export const update = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const product = await productService.updateProduct(parseInt(req.params.id), req.body);
     res.json(product);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const remove = async (req: Request, res: Response) => {
+export const remove = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await productService.deleteProduct(parseInt(req.params.id));
     res.json(result);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };

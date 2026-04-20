@@ -1,11 +1,11 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as creditAwarePaymentService from '../services/creditAwarePaymentService';
 import { creditBalanceService } from '../services/creditBalanceService';
 
 /**
  * Check credit balance for a supplier (for Bank Register modal)
  */
-export const checkCreditBalance = async (req: Request, res: Response) => {
+export const checkCreditBalance = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { supplierId } = req.params;
     const { paymentAmount } = req.query;
@@ -49,16 +49,15 @@ export const checkCreditBalance = async (req: Request, res: Response) => {
     
     console.log('💡 Credit balance check result:', result);
     res.json(result);
-  } catch (error: any) {
-    console.error(' Error checking credit balance:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Get payment preview - shows how credit balances will be applied
  */
-export const getPaymentPreview = async (req: Request, res: Response) => {
+export const getPaymentPreview = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { supplierId, invoiceIds, requestedAmount, bankAccountId } = req.body;
     
@@ -72,16 +71,15 @@ export const getPaymentPreview = async (req: Request, res: Response) => {
     );
     
     res.json(preview);
-  } catch (error: any) {
-    console.error(' Error getting payment preview:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Process credit-aware payment
  */
-export const processPayment = async (req: Request, res: Response) => {
+export const processPayment = async (req: Request, res: Response, next: NextFunction) => {
   try {
     console.log(' Processing credit-aware payment...');
     console.log(' Request body:', JSON.stringify(req.body, null, 2));
@@ -93,8 +91,7 @@ export const processPayment = async (req: Request, res: Response) => {
     } else {
       res.status(400).json(result);
     }
-  } catch (error: any) {
-    console.error(' Error processing credit-aware payment:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };

@@ -17,13 +17,19 @@ export interface TransactionMapping {
 class AccountingRulesEngine {
   
   /**
-   * Get GL entries for Purchase transaction (CASH/BANK payment)
+   * Get GL entries for Purchase transaction (CASH/BANK payment ONLY)
+   * ✅ FIXED: Now throws error for unsupported payment types
+   * 
+   * NOTE: For credit card purchases, use getPurchaseWithCreditCardGLEntries()
+   *       For credit purchases, use getPurchaseOnCreditGLEntries()
    */
   getPurchaseGLEntries(amount: number, paymentType: string): GLEntry[] {
-    if (paymentType === 'CASH') {
+    const type = paymentType.toUpperCase();
+    
+    if (type === 'CASH') {
       return [
         {
-          accountCode: '5000', // Inventory/Purchases
+          accountCode: '1100', // ✅ Inventory Asset
           entryType: EntryType.DEBIT,
           amount,
           description: 'Purchase of inventory',
@@ -35,10 +41,10 @@ class AccountingRulesEngine {
           description: 'Cash payment for purchase',
         },
       ];
-    } else if (paymentType === 'BANK' || paymentType === 'BANK_TRANSFER') {
+    } else if (type === 'BANK' || type === 'BANK_TRANSFER' || type === 'CHEQUE' || type === 'CHECK') {
       return [
         {
-          accountCode: '5000', // Inventory/Purchases
+          accountCode: '1100', // ✅ Inventory Asset
           entryType: EntryType.DEBIT,
           amount,
           description: 'Purchase of inventory',
@@ -51,18 +57,24 @@ class AccountingRulesEngine {
         },
       ];
     } else {
-      // Default to bank
-      return this.getPurchaseGLEntries(amount, 'BANK');
+      // ✅ FIX: Throw error instead of defaulting to bank
+      // This prevents incorrect GL entries for unsupported payment types
+      throw new Error(
+        `Invalid payment type "${paymentType}" for getPurchaseGLEntries(). ` +
+        `Use getPurchaseWithCreditCardGLEntries() for credit card or ` +
+        `getPurchaseOnCreditGLEntries() for credit purchases.`
+      );
     }
   }
   
   /**
-   * Get GL entries for Purchase on Credit
+   * Get GL entries for Purchase on Credit (Supplier Invoice)
+   * ✅ FIXED: Now uses Inventory (1100) instead of COGS (5000)
    */
   getPurchaseOnCreditGLEntries(amount: number): GLEntry[] {
     return [
       {
-        accountCode: '5000', // Inventory/Purchases
+        accountCode: '1100', // ✅ Inventory Asset
         entryType: EntryType.DEBIT,
         amount,
         description: 'Purchase of inventory on credit',
@@ -76,9 +88,55 @@ class AccountingRulesEngine {
     ];
   }
 
+  /**
+   * ✅ NEW: Get GL entries for Purchase with Credit Card
+   * Credit card purchases create a liability until settlement
+   */
+  getPurchaseWithCreditCardGLEntries(amount: number): GLEntry[] {
+    return [
+      {
+        accountCode: '1100', // Inventory Asset
+        entryType: EntryType.DEBIT,
+        amount,
+        description: 'Purchase of inventory with credit card',
+      },
+      {
+        accountCode: '2200', // Credit Card Payable
+        entryType: EntryType.CREDIT,
+        amount,
+        description: 'Credit card payable for purchase',
+      },
+    ];
+  }
+
+  /**
+   * ✅ NEW: Get GL entries for Credit Card Payment Settlement
+   * When credit card company debits your bank account
+   */
+  getCreditCardSettlementGLEntries(amount: number, paymentMethod: string = 'BANK'): GLEntry[] {
+    const creditAccount = paymentMethod === 'CASH' ? '1010' : '1020';
+    const description = paymentMethod === 'CASH' ? 'Cash payment for credit card' : 'Bank payment for credit card settlement';
+    
+    return [
+      {
+        accountCode: '2200', // Credit Card Payable
+        entryType: EntryType.DEBIT,
+        amount,
+        description: 'Payment of credit card liability',
+      },
+      {
+        accountCode: creditAccount, // Cash or Bank
+        entryType: EntryType.CREDIT,
+        amount,
+        description,
+      },
+    ];
+  }
+
   
   /**
    * Get GL entries for Sale transaction (CASH payment)
+   * ✅ NOTE: This only records Revenue. COGS must be posted separately using getSaleCOGSEntries()
    */
   getSaleCashGLEntries(amount: number): GLEntry[] {
     return [
@@ -99,6 +157,7 @@ class AccountingRulesEngine {
   
   /**
    * Get GL entries for Sale on Credit
+   * ✅ NOTE: This only records Revenue. COGS must be posted separately using getSaleCOGSEntries()
    */
   getSaleOnCreditGLEntries(amount: number): GLEntry[] {
     return [
@@ -113,6 +172,30 @@ class AccountingRulesEngine {
         entryType: EntryType.CREDIT,
         amount,
         description: 'Revenue from credit sale',
+      },
+    ];
+  }
+  
+  /**
+   * ✅ NEW: Get GL entries for COGS (Cost of Goods Sold)
+   * This transfers cost from Inventory to COGS when items are sold
+   * 
+   * @param costAmount - The cost of inventory sold (not the selling price)
+   * @returns GL entries to record COGS
+   */
+  getSaleCOGSEntries(costAmount: number): GLEntry[] {
+    return [
+      {
+        accountCode: '5000', // Cost of Goods Sold (Expense)
+        entryType: EntryType.DEBIT,
+        amount: costAmount,
+        description: 'Cost of goods sold',
+      },
+      {
+        accountCode: '1100', // Inventory (Asset)
+        entryType: EntryType.CREDIT,
+        amount: costAmount,
+        description: 'Inventory reduction from sale',
       },
     ];
   }

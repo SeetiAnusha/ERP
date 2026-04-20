@@ -29,7 +29,7 @@ router.post('/', async (req: Request, res: Response) => {
     const financer = await financerService.createFinancer(req.body);
     res.status(201).json(financer);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -38,7 +38,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const financer = await financerService.updateFinancer(parseInt(req.params.id), req.body);
     res.json(financer);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -47,7 +47,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
     const result = await financerService.deleteFinancer(parseInt(req.params.id));
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message });
   }
 });
 

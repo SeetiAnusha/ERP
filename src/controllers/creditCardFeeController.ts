@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import CreditCardFeeService from '../services/CreditCardFeeService';
 
 /**
@@ -11,7 +11,7 @@ import CreditCardFeeService from '../services/CreditCardFeeService';
 /**
  * Get all credit card fees with optional filters and pagination
  */
-export const getAllFees = async (req: Request, res: Response) => {
+export const getAllFees = async (req: Request, res: Response, next: NextFunction) => {
   try {
     console.log('🔍 Credit Card Fee Controller - Request received:', {
       query: req.query,
@@ -56,47 +56,42 @@ export const getAllFees = async (req: Request, res: Response) => {
     const fees = await CreditCardFeeService.getAllFees(filters);
     console.log('✅ CreditCardFee Controller: Returning fees:', Array.isArray(fees) ? fees.length : 'not array');
     res.json(fees);
-  } catch (error: any) {
-    console.error('❌ Error fetching credit card fees:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Get fee by ID
  */
-export const getFeeById = async (req: Request, res: Response) => {
+export const getFeeById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const fee = await CreditCardFeeService.getFeeById(parseInt(req.params.id));
     res.json(fee);
-  } catch (error: any) {
-    console.error('Error fetching credit card fee:', error);
-    const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Record a new credit card fee
  */
-export const recordFee = async (req: Request, res: Response) => {
+export const recordFee = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const fee = await CreditCardFeeService.recordFee({
       ...req.body,
       createdBy: (req as any).user?.id, // From auth middleware
     });
     res.status(201).json(fee);
-  } catch (error: any) {
-    console.error('Error recording credit card fee:', error);
-    const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Get fee statistics for dashboard
  */
-export const getFeeStatistics = async (req: Request, res: Response) => {
+export const getFeeStatistics = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = {
       startDate: req.query.startDate as string,
@@ -105,16 +100,15 @@ export const getFeeStatistics = async (req: Request, res: Response) => {
     
     const statistics = await CreditCardFeeService.getFeeStatistics(filters);
     res.json(statistics);
-  } catch (error: any) {
-    console.error('Error fetching fee statistics:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Update fee status
  */
-export const updateFeeStatus = async (req: Request, res: Response) => {
+export const updateFeeStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status, notes } = req.body;
     const fee = await CreditCardFeeService.updateFeeStatus(
@@ -123,23 +117,19 @@ export const updateFeeStatus = async (req: Request, res: Response) => {
       notes
     );
     res.json(fee);
-  } catch (error: any) {
-    console.error('Error updating fee status:', error);
-    const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 /**
  * Delete fee record
  */
-export const deleteFee = async (req: Request, res: Response) => {
+export const deleteFee = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await CreditCardFeeService.deleteFee(parseInt(req.params.id));
     res.json(result);
-  } catch (error: any) {
-    console.error('Error deleting credit card fee:', error);
-    const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };

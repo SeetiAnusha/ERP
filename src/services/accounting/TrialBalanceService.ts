@@ -85,15 +85,21 @@ class TrialBalanceService extends BaseService {
       return { debitBalance: 0, creditBalance: 0 };
     }
     
+    // Set asOfDate to end of day to include all entries on that date
+    const endOfDay = new Date(asOfDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
     // Sum all GL entries up to date
     const entries = await GeneralLedger.findAll({
       where: {
         accountId,
-        entryDate: { [Op.lte]: asOfDate },
+        entryDate: { [Op.lte]: endOfDay },
         isPosted: true,
         isReversed: false,
       },
     });
+    
+    console.log(`📊 Account ${account.accountCode} (${account.accountName}): Found ${entries.length} entries up to ${endOfDay.toISOString()}`);
     
     let debitTotal = 0;
     let creditTotal = 0;
@@ -106,19 +112,25 @@ class TrialBalanceService extends BaseService {
       }
     }
     
+    console.log(`   Debit Total: ${debitTotal}, Credit Total: ${creditTotal}`);
+    
     // Calculate balance based on normal balance
     if (account.normalBalance === 'DEBIT') {
       const balance = debitTotal - creditTotal;
-      return {
+      const result = {
         debitBalance: balance > 0 ? balance : 0,
         creditBalance: balance < 0 ? Math.abs(balance) : 0,
       };
+      console.log(`   Normal Balance: DEBIT, Result:`, result);
+      return result;
     } else {
       const balance = creditTotal - debitTotal;
-      return {
+      const result = {
         debitBalance: balance < 0 ? Math.abs(balance) : 0,
         creditBalance: balance > 0 ? balance : 0,
       };
+      console.log(`   Normal Balance: CREDIT, Result:`, result);
+      return result;
     }
   }
 }

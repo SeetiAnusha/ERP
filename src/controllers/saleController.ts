@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as saleService from '../services/saleService';
 
-export const getAll = async (req: Request, res: Response) => {
+export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ Check if pagination is requested
     if (req.query.page || req.query.limit) {
@@ -26,53 +26,52 @@ export const getAll = async (req: Request, res: Response) => {
     // Backward compatibility - return all records
     const sales = await saleService.getAllSales();
     res.json(sales);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const getById = async (req: Request, res: Response) => {
+export const getById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const sale = await saleService.getSaleById(parseInt(req.params.id));
-    if (!sale) return res.status(404).json({ error: 'Sale not found' });
     res.json(sale);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const create = async (req: Request, res: Response) => {
+export const create = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const sale = await saleService.createSale(req.body);
     res.status(201).json(sale);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const update = async (req: Request, res: Response) => {
+export const update = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const sale = await saleService.updateSale(parseInt(req.params.id), req.body);
     res.json(sale);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const remove = async (req: Request, res: Response) => {
+export const remove = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await saleService.deleteSale(parseInt(req.params.id));
     res.json(result);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
-export const collectPayment = async (req: Request, res: Response) => {
+export const collectPayment = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const sale = await saleService.collectPayment(parseInt(req.params.id), req.body);
     res.json(sale);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error);
   }
 };

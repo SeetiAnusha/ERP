@@ -18,9 +18,9 @@ import { ValidationFramework, ValidationSchemas } from '../core/ValidationFramew
 import { serviceConfig, PaymentTypeHelper } from '../config/ServiceConfig';
 
 // ✅ PHASE 2: Import GL Posting Services
-// import GLPostingService from './accounting/GLPostingService';
-// import AccountingRulesEngine from './accounting/AccountingRulesEngine';
-// import { SourceModule } from '../models/accounting/GeneralLedger';
+import GLPostingService from './accounting/GLPostingService';
+import AccountingRulesEngine from './accounting/AccountingRulesEngine';
+import { SourceModule } from '../models/accounting/GeneralLedger';
 
 // Import associations to ensure they're loaded
 import '../models/associations';
@@ -205,7 +205,7 @@ class PurchaseService extends BaseService {
       }
       
       // ✅ PHASE 2: Step 9 - Post GL Entries
-      // await this.postPurchaseGLEntries(data, purchase, mainPurchaseAmount, transaction);
+      await this.postPurchaseGLEntries(data, purchase, mainPurchaseAmount, transaction);
       
       // Return complete purchase
       return purchase;
@@ -1079,6 +1079,7 @@ class PurchaseService extends BaseService {
       return; // Skip invalid invoices
     }
     
+    // Process payment (Bank Register, AP, etc.)
     switch (invoicePaymentType) {
       case 'DEBIT_CARD':
         await this.processInvoiceDebitCard(invoice, invoiceAmount, registrationNumber, transaction);
@@ -1099,6 +1100,10 @@ class PurchaseService extends BaseService {
         await this.processInvoiceBankPayment(invoice, invoiceAmount, registrationNumber, transaction);
         break;
     }
+    
+    // ✅ NEW: Post GL entries for associated invoice
+    // Associated invoices are supplier charges (freight, customs, etc.) that should be added to inventory cost
+    await this.postAssociatedInvoiceGLEntries(invoice, invoiceAmount, purchaseId, registrationNumber, transaction);
   }
   
   private async processInvoiceDebitCard(invoice: any, amount: number, registrationNumber: string, transaction: any): Promise<void> {
@@ -1612,44 +1617,96 @@ class PurchaseService extends BaseService {
    * Post GL entries for purchase transaction
    * Creates balanced debit/credit entries in General Ledger
    */
-  // private async postPurchaseGLEntries(
-  //   data: CreatePurchaseRequest,
-  //   purchase: Purchase,
-  //   amount: number,
-  //   transaction: any
-  // ): Promise<void> {
-  //   try {
-  //     console.log('📊 PHASE 2: Posting GL entries for purchase', purchase.registrationNumber);
+  private async postPurchaseGLEntries(
+    data: CreatePurchaseRequest,
+    purchase: Purchase,
+    amount: number,
+    transaction: any
+  ): Promise<void> {
+    try {
+      console.log('📊 PHASE 2: Posting GL entries for purchase', purchase.registrationNumber);
       
-  //     // Determine GL entries based on payment type
-  //     const paymentType = data.paymentType.toUpperCase();
-  //     let glEntries;
+      // Determine GL entries based on payment type
+      const paymentType = data.paymentType.toUpperCase();
+      let glEntries;
       
-  //     if (paymentType === 'CREDIT' || paymentType === 'CREDIT_CARD') {
-  //       // Purchase on credit: Debit Inventory, Credit AP
-  //       glEntries = AccountingRulesEngine.getPurchaseOnCreditGLEntries(amount);
-  //     } else {
-  //       // Purchase with payment: Debit Inventory, Credit Cash/Bank
-  //       glEntries = AccountingRulesEngine.getPurchaseGLEntries(amount, paymentType);
-  //     }
+      if (paymentType === 'CREDIT_CARD') {
+        // Purchase with credit card: Debit Inventory, Credit Credit Card Payable
+        glEntries = AccountingRulesEngine.getPurchaseWithCreditCardGLEntries(amount);
+      } else if (paymentType === 'CREDIT') {
+        // Purchase on credit (supplier invoice): Debit Inventory, Credit AP
+        glEntries = AccountingRulesEngine.getPurchaseOnCreditGLEntries(amount);
+      } else {
+        // Purchase with immediate payment: Debit Inventory, Credit Cash/Bank
+        glEntries = AccountingRulesEngine.getPurchaseGLEntries(amount, paymentType);
+      }
       
-  //     // Post to General Ledger
-  //     await GLPostingService.postGLEntries({
-  //       entryDate: purchase.date,
-  //       sourceModule: SourceModule.PURCHASE,
-  //       sourceTransactionId: purchase.id,
-  //       sourceTransactionNumber: purchase.registrationNumber,
-  //       entries: glEntries,
-  //       createdBy: undefined, // TODO: Add user ID from request context
-  //     }, transaction);
+      // Post to General Ledger
+      await GLPostingService.postGLEntries({
+        entryDate: purchase.date,
+        sourceModule: SourceModule.PURCHASE,
+        sourceTransactionId: purchase.id,
+        sourceTransactionNumber: purchase.registrationNumber,
+        entries: glEntries,
+        createdBy: undefined, // TODO: Add user ID from request context
+      }, transaction);
       
-  //     console.log('✅ GL entries posted successfully for purchase', purchase.registrationNumber);
-  //   } catch (error: any) {
-  //     console.error('❌ Failed to post GL entries for purchase:', error.message);
-  //     // Re-throw to rollback entire transaction
-  //     throw new BusinessLogicError(`GL posting failed: ${error.message}`);
-  //   }
-  // }
+      console.log('✅ GL entries posted successfully for purchase', purchase.registrationNumber);
+    } catch (error: any) {
+      console.error('❌ Failed to post GL entries for purchase:', error.message);
+      // Re-throw to rollback entire transaction
+      throw new BusinessLogicError(`GL posting failed: ${error.message}`);
+    }
+  }
+  
+  /**
+   * ✅ NEW: Post GL entries for associated invoice
+   * Associated invoices are supplier charges (freight, customs, handling) that add to inventory cost
+   * Uses the SAME AccountingRulesEngine methods as main purchase (NO DUPLICATION)
+   */
+  private async postAssociatedInvoiceGLEntries(
+    invoice: any,
+    amount: number,
+    purchaseId: number,
+    registrationNumber: string,
+    transaction: any
+  ): Promise<void> {
+    try {
+      console.log(`📊 Posting GL entries for associated invoice: ${invoice.concept} (${invoice.paymentType})`);
+      
+      const paymentType = invoice.paymentType?.toUpperCase();
+      let glEntries;
+      
+      // ✅ REUSE SAME LOGIC: Associated invoices use identical GL treatment as main purchases
+      // They add to inventory cost (freight, customs, etc. are part of inventory cost per GAAP)
+      if (paymentType === 'CREDIT_CARD') {
+        // Same as main purchase: Debit Inventory, Credit Credit Card Payable
+        glEntries = AccountingRulesEngine.getPurchaseWithCreditCardGLEntries(amount);
+      } else if (paymentType === 'CREDIT') {
+        // Same as main purchase: Debit Inventory, Credit AP
+        glEntries = AccountingRulesEngine.getPurchaseOnCreditGLEntries(amount);
+      } else {
+        // Same as main purchase: Debit Inventory, Credit Cash/Bank
+        glEntries = AccountingRulesEngine.getPurchaseGLEntries(amount, paymentType);
+      }
+      
+      // Post to General Ledger with associated invoice reference
+      await GLPostingService.postGLEntries({
+        entryDate: invoice.date || new Date(),
+        sourceModule: SourceModule.PURCHASE,
+        sourceTransactionId: purchaseId,
+        sourceTransactionNumber: `${registrationNumber}-AI`,
+        entries: glEntries,
+        createdBy: undefined,
+      }, transaction);
+      
+      console.log(`✅ GL entries posted for associated invoice: ${invoice.concept}`);
+    } catch (error: any) {
+      console.error(`❌ Failed to post GL entries for associated invoice ${invoice.concept}:`, error.message);
+      // Re-throw to rollback entire transaction
+      throw new BusinessLogicError(`Associated invoice GL posting failed: ${error.message}`);
+    }
+  }
 }
 
 // Create singleton instance

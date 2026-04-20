@@ -1,10 +1,12 @@
 import './config/sequelize-fix'; // Must be first!
 import './models/associations'; // Import associations early to set up model relationships
+import './models/accounting/associations'; // Import accounting associations
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import sequelize from './config/database';
 import { setupSwagger } from './middleware/swaggerMiddleware';
+import { errorHandler, notFoundHandler } from './middleware/errorMiddleware';
 import clientRoutes from './routes/clientRoutes';
 import supplierRoutes from './routes/supplierRoutes';
 import saleRoutes from './routes/saleRoutes';
@@ -47,6 +49,7 @@ import generalLedgerRoutes from './routes/accounting/generalLedgerRoutes';
 import trialBalanceRoutes from './routes/accounting/trialBalanceRoutes';
 import accountBalanceRoutes from './routes/accounting/accountBalanceRoutes';
 import fiscalPeriodRoutes from './routes/accounting/fiscalPeriodRoutes';
+import openingBalanceRoutes from './routes/accounting/openingBalanceRoutes';
 import creditCardFeeRoutes from './routes/creditCardFeeRoutes';
 import * as productPriceService from './services/productPriceService';
 
@@ -97,6 +100,7 @@ app.use('/api/accounting/general-ledger', generalLedgerRoutes);
 app.use('/api/accounting/trial-balance', trialBalanceRoutes);
 app.use('/api/accounting/account-balances', accountBalanceRoutes);
 app.use('/api/accounting/fiscal-periods', fiscalPeriodRoutes);
+app.use('/api/accounting/opening-balances', openingBalanceRoutes);
 app.use('/api/credit-card-fees', creditCardFeeRoutes);
 app.use('/api/customer-credit-aware-payment', customerCreditAwarePaymentRoutes);
 app.use('/api/auth', authRoutes);
@@ -125,6 +129,12 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'ERP API is running' });
 });
 
+// ==================== ERROR HANDLING MIDDLEWARE ====================
+// MUST be registered AFTER all routes
+// This catches all errors thrown by controllers/services and converts them to HTTP responses
+app.use(notFoundHandler); // Handle 404 for undefined routes
+app.use(errorHandler);    // Handle all other errors
+
 const startServer = async () => {
   try {
     // Start the server FIRST to bind to port immediately
@@ -144,46 +154,39 @@ const startServer = async () => {
     console.log('📦 Ensuring all models are imported...');
     try {
       // Use the comprehensive model registry
-      const { syncAllModels, getModelCount } = await import('./models/index');
+      const { setupAssociations, getModelCount } = await import('./models/index');
       console.log(`✅ Loaded ${getModelCount()} models from registry`);
       
-      // Sync all models with safe settings
-      await syncAllModels({ force: false, alter: false });
-      console.log('✅ All models synced successfully');
+      // Setup all associations
+      setupAssociations();
+      console.log('✅ All associations configured');
     } catch (importError: any) {
       console.warn('⚠️ Model import warning:', importError.message);
     }
 
-    // SAFE DATABASE SYNC - Preserve existing data
-    console.log('🏗️ Syncing database tables (preserving data)...');
+    // ============================================
+    // PROFESSIONAL APPROACH: Use Migrations
+    // ============================================
+    // Tables are created/updated via migrations, not sequelize.sync()
+    // Run: npm run migrate (development)
+    // Run: npm run migrate:production (production)
     
+    console.log('🏗️ Database tables managed by migrations');
+    console.log('💡 To create/update tables, run: npm run migrate');
+    console.log('💡 To check migration status, run: npm run migrate:status');
+    
+    // Verify database connection only (don't sync)
+    await sequelize.authenticate();
+    console.log('✅ Database connection verified');
+    
+    // Optional: Verify critical tables exist
     try {
-      // Use safe sync that preserves data
-      await sequelize.sync({ force: false, alter: false });
-      console.log('✅ Database tables synced successfully (data preserved)');
-    } catch (syncError: any) {
-      console.error('❌ Safe sync failed:', syncError.message);
-      
-      // Only use force sync if explicitly requested via environment variable
-      if (process.env.FORCE_DB_RESET === 'true') {
-        console.log('🔧 FORCE_DB_RESET=true detected, recreating tables...');
-        const { syncAllModels } = await import('./models/index');
-        await syncAllModels({ force: true });
-        console.log('✅ Database tables recreated (data lost)');
-      } else {
-        console.log('🔧 Attempting comprehensive model sync (safe mode)...');
-        
-        try {
-          // Use the comprehensive model registry for safe sync
-          const { syncAllModels } = await import('./models/index');
-          await syncAllModels({ force: false, alter: false });
-          console.log('✅ Comprehensive model sync completed');
-        } catch (manualError: any) {
-          console.error('❌ Comprehensive sync failed:', manualError.message);
-          console.log('💡 To force recreate tables (WILL LOSE DATA): set FORCE_DB_RESET=true');
-          throw manualError;
-        }
-      }
+      await sequelize.query('SELECT 1 FROM chart_of_accounts LIMIT 1');
+      await sequelize.query('SELECT 1 FROM general_ledger LIMIT 1');
+      await sequelize.query('SELECT 1 FROM account_balances LIMIT 1');
+      console.log('✅ Critical accounting tables verified');
+    } catch (tableError: any) {
+      console.warn('⚠️ Some tables may be missing. Run: npm run migrate');
     }
     
     // Update price active status based on current date

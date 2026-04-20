@@ -6,6 +6,11 @@ import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { TransactionType } from '../types/TransactionType';
 
+// ✅ PHASE 2: Import GL Posting Services
+import GLPostingService from './accounting/GLPostingService';
+import AccountingRulesEngine from './accounting/AccountingRulesEngine';
+import { SourceModule } from '../models/accounting/GeneralLedger';
+
 interface CollectionData {
   amountReceived: number;
   transferReference?: string;
@@ -158,6 +163,50 @@ export const collectPaymentWithFees = async (arId: number, collectionData: Colle
     // 7. Update bank account balance (actual amount received)
     const newBankAccountBalance = parseFloat(bankAccount.balance.toString()) + receivedAmount;
     await bankAccount.update({ balance: newBankAccountBalance }, { transaction });
+
+    // ✅ PHASE 2: Post GL Entries for AR Collection
+    try {
+      const collectionMethod = bankAccountId ? 'BANK' : 'CASH';
+      
+      // Get GL entries for AR collection (actual amount received)
+      const glEntries = AccountingRulesEngine.getARCollectionGLEntries(
+        receivedAmount,
+        collectionMethod
+      );
+      
+      // Post to General Ledger
+      await GLPostingService.postGLEntries({
+        entryDate: new Date(),
+        sourceModule: SourceModule.ACCOUNTS_RECEIVABLE,
+        sourceTransactionId: arRecord.id,
+        sourceTransactionNumber: arRecord.registrationNumber,
+        entries: glEntries,
+      }, transaction);
+      
+      console.log('✅ GL entries posted successfully for AR collection', arRecord.registrationNumber);
+      
+      // If there's a processing fee, post it as an expense
+      if (processingFee > 0.01) {
+        const feeEntries = AccountingRulesEngine.getBusinessExpenseGLEntries(
+          processingFee,
+          'CREDIT_CARD_FEE',
+          'BANK'
+        );
+        
+        await GLPostingService.postGLEntries({
+          entryDate: new Date(),
+          sourceModule: SourceModule.ACCOUNTS_RECEIVABLE,
+          sourceTransactionId: arRecord.id,
+          sourceTransactionNumber: `${arRecord.registrationNumber}-FEE`,
+          entries: feeEntries,
+        }, transaction);
+        
+        console.log('✅ GL entries posted for processing fee', processingFee);
+      }
+    } catch (glError: any) {
+      console.error('❌ Failed to post GL entries for AR collection:', glError.message);
+      throw glError; // Will trigger transaction rollback
+    }
 
     await transaction.commit();
     

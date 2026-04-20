@@ -29,7 +29,7 @@ router.post('/', async (req: Request, res: Response) => {
     const account = await bankAccountService.createBankAccount(req.body);
     res.status(201).json(account);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -38,7 +38,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const account = await bankAccountService.updateBankAccount(parseInt(req.params.id), req.body);
     res.json(account);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -47,7 +47,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
     const result = await bankAccountService.deleteBankAccount(parseInt(req.params.id));
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.status(400).json({ error: error.message });
   }
 });
 

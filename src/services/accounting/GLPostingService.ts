@@ -230,19 +230,28 @@ class GLPostingService {
       transaction,
     });
     
+    // ✅ Convert DECIMAL values to numbers to prevent string concatenation
+    const openingBalance = parseFloat(String(balance.openingBalance)) || 0;
+    const debitTotal = parseFloat(String(balance.debitTotal)) || 0;
+    const creditTotal = parseFloat(String(balance.creditTotal)) || 0;
+    
     if (entryType === EntryType.DEBIT) {
-      balance.debitTotal += amount;
+      balance.debitTotal = debitTotal + amount;
     } else {
-      balance.creditTotal += amount;
+      balance.creditTotal = creditTotal + amount;
     }
     
     // Calculate closing balance based on account normal balance
     const account = await ChartOfAccounts.findByPk(accountId, { transaction });
     if (account) {
+      // ✅ Use the converted numeric values for calculation
+      const newDebitTotal = parseFloat(String(balance.debitTotal)) || 0;
+      const newCreditTotal = parseFloat(String(balance.creditTotal)) || 0;
+      
       if (account.normalBalance === 'DEBIT') {
-        balance.closingBalance = balance.openingBalance + balance.debitTotal - balance.creditTotal;
+        balance.closingBalance = openingBalance + newDebitTotal - newCreditTotal;
       } else {
-        balance.closingBalance = balance.openingBalance + balance.creditTotal - balance.debitTotal;
+        balance.closingBalance = openingBalance + newCreditTotal - newDebitTotal;
       }
     }
     

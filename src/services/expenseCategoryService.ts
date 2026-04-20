@@ -1,17 +1,23 @@
 import ExpenseCategory from '../models/ExpenseCategory';
 import ExpenseType from '../models/ExpenseType';
+import { BaseService } from '../core/BaseService';
+import { ValidationFramework, CommonValidators } from '../core/ValidationFramework';
+import { ValidationError, NotFoundError, BusinessLogicError } from '../core/AppError';
 
 /**
- * Expense Category Service
+ * Expense Category Service - Enhanced with BaseService & ValidationFramework
  * 
- * Provides business logic for expense category management
+ * Provides business logic for expense category management with:
+ * - Centralized error handling via BaseService
+ * - Input validation via ValidationFramework
+ * - Consistent error responses
  */
 
-class ExpenseCategoryService {
+class ExpenseCategoryService extends BaseService {
   /**
    * Get all categories with pagination and filtering
    */
-  public static async getAllCategories(options: {
+  async getAllCategories(options: {
     includeInactive?: boolean;
     page?: number;
     limit?: number;
@@ -40,10 +46,13 @@ class ExpenseCategoryService {
   /**
    * Get category by ID with optional related data
    */
-  public static async getCategoryById(id: number, options: {
+  async getCategoryById(id: number, options: {
     includeTypes?: boolean;
     includeSubcategories?: boolean;
   } = {}) {
+    // Validate ID
+    this.validateNumeric(id, 'Category ID', { min: 1, required: true });
+
     const { includeTypes = false, includeSubcategories = false } = options;
 
     const include: any[] = [];
@@ -66,38 +75,103 @@ class ExpenseCategoryService {
       });
     }
 
-    return ExpenseCategory.findByPk(id, {
+    const category = await ExpenseCategory.findByPk(id, {
       include: include.length > 0 ? include : undefined
     });
-  }
 
-  /**
-   * Create new expense category
-   */
-  public static async createCategory(data: any) {
-    return ExpenseCategory.create(data);
-  }
-
-  /**
-   * Update expense category
-   */
-  public static async updateCategory(id: number, data: any) {
-    const category = await ExpenseCategory.findByPk(id);
     if (!category) {
-      return null;
+      throw new NotFoundError(`Expense category with ID ${id} not found`);
     }
 
-    await category.update(data);
     return category;
   }
 
   /**
-   * Delete expense category (soft delete)
+   * Create new expense category with validation
    */
-  public static async deleteCategory(id: number) {
+  async createCategory(data: any) {
+    // Validate required fields
+    this.validateRequired(data, ['name', 'code'], 'expense category');
+
+    // Validate individual fields
+    ValidationFramework.validate(data, {
+      rules: [
+        { 
+          field: 'name', 
+          validator: CommonValidators.minLength(2).validator, 
+          message: 'Category name must be at least 2 characters',
+          required: true 
+        },
+        { 
+          field: 'code', 
+          validator: CommonValidators.minLength(2).validator, 
+          message: 'Category code must be at least 2 characters',
+          required: true 
+        },
+        { 
+          field: 'sortOrder', 
+          validator: CommonValidators.isNonNegative().validator, 
+          message: 'Sort order must be zero or positive',
+          required: false 
+        }
+      ]
+    });
+
+    try {
+      return await ExpenseCategory.create(data);
+    } catch (error: any) {
+      throw this.handleError(error, 'Failed to create expense category');
+    }
+  }
+
+  /**
+   * Update expense category with validation
+   */
+  async updateCategory(id: number, data: any) {
+    // Validate ID
+    this.validateNumeric(id, 'Category ID', { min: 1, required: true });
+
     const category = await ExpenseCategory.findByPk(id);
     if (!category) {
-      return { success: false, message: 'Category not found' };
+      throw new NotFoundError(`Expense category with ID ${id} not found`);
+    }
+
+    // Validate fields if provided
+    if (data.name !== undefined) {
+      ValidationFramework.validate(data, {
+        rules: [
+          { 
+            field: 'name', 
+            validator: CommonValidators.minLength(2).validator, 
+            message: 'Category name must be at least 2 characters',
+            required: true 
+          }
+        ]
+      });
+    }
+
+    if (data.sortOrder !== undefined) {
+      this.validateNumeric(data.sortOrder, 'Sort order', { min: 0 });
+    }
+
+    try {
+      await category.update(data);
+      return category;
+    } catch (error: any) {
+      throw this.handleError(error, 'Failed to update expense category');
+    }
+  }
+
+  /**
+   * Delete expense category (soft delete) with validation
+   */
+  async deleteCategory(id: number) {
+    // Validate ID
+    this.validateNumeric(id, 'Category ID', { min: 1, required: true });
+
+    const category = await ExpenseCategory.findByPk(id);
+    if (!category) {
+      throw new NotFoundError(`Expense category with ID ${id} not found`);
     }
 
     // Check if category has active expense types
@@ -106,20 +180,23 @@ class ExpenseCategoryService {
     });
 
     if (activeTypes > 0) {
-      return { 
-        success: false, 
-        message: 'Cannot delete category with active expense types' 
-      };
+      throw new BusinessLogicError(
+        `Cannot delete category '${category.name}' because it has ${activeTypes} active expense type(s). Please deactivate or reassign the expense types first.`
+      );
     }
 
-    await category.update({ isActive: false });
-    return { success: true, message: 'Category deleted successfully' };
+    try {
+      await category.update({ isActive: false });
+      return { success: true, message: 'Category deleted successfully' };
+    } catch (error: any) {
+      throw this.handleError(error, 'Failed to delete expense category');
+    }
   }
 
   /**
    * Health check
    */
-  public static async healthCheck() {
+  async healthCheck() {
     const totalCategories = await ExpenseCategory.count();
     const activeCategories = await ExpenseCategory.count({ where: { isActive: true } });
 
@@ -131,4 +208,15 @@ class ExpenseCategoryService {
   }
 }
 
-export default ExpenseCategoryService;
+// Create singleton instance
+const expenseCategoryService = new ExpenseCategoryService();
+
+// Export static methods for backward compatibility
+export default {
+  getAllCategories: (options: any) => expenseCategoryService.getAllCategories(options),
+  getCategoryById: (id: number, options?: any) => expenseCategoryService.getCategoryById(id, options),
+  createCategory: (data: any) => expenseCategoryService.createCategory(data),
+  updateCategory: (id: number, data: any) => expenseCategoryService.updateCategory(id, data),
+  deleteCategory: (id: number) => expenseCategoryService.deleteCategory(id),
+  healthCheck: () => expenseCategoryService.healthCheck()
+};

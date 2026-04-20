@@ -197,3 +197,40 @@ export const getCreditCardStatement = async (req: Request, res: Response): Promi
     });
   }
 };
+
+/**
+ * Restore credit card by repaying from bank/cash
+ */
+export const restoreCreditCard = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { cardId } = req.params;
+    
+    console.log('💳 [Controller] Restore credit card request received:');
+    console.log('   Card ID:', cardId);
+    console.log('   Request body:', JSON.stringify(req.body, null, 2));
+    
+    const result = await creditCardRegisterService.restoreCreditCard({
+      cardId: parseInt(cardId),
+      ...req.body
+    });
+    
+    console.log('✅ [Controller] Credit card restored successfully');
+    
+    res.status(200).json({
+      success: true,
+      message: 'Credit card restored successfully',
+      data: result
+    });
+  } catch (error: any) {
+    console.error('❌ [Controller] Error restoring credit card:', error.message);
+    console.error('   Error name:', error.name);
+    console.error('   Error statusCode:', error.statusCode);
+    console.error('   Error stack:', error.stack);
+    
+    res.status(error.statusCode || 500).json({
+      success: false,
+      message: 'Failed to restore credit card',
+      error: error.message
+    });
+  }
+};

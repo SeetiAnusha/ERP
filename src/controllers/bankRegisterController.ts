@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as bankRegisterService from '../services/bankRegisterService';
 
-export const getAll = async (req: Request, res: Response) => {
+export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ Check if pagination is requested
     if (req.query.page || req.query.limit) {
@@ -26,25 +26,21 @@ export const getAll = async (req: Request, res: Response) => {
     // Backward compatibility - return all records
     const registers = await bankRegisterService.getAllBankRegisters();
     res.json(registers);
-  } catch (error: any) {
-    console.error('❌ Error in bank register getAll:', error);
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const getById = async (req: Request, res: Response) => {
+export const getById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const register = await bankRegisterService.getBankRegisterById(parseInt(req.params.id));
-    if (!register) {
-      return res.status(404).json({ error: 'Bank register entry not found' });
-    }
     res.json(register);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const create = async (req: Request, res: Response) => {
+export const create = async (req: Request, res: Response, next: NextFunction) => {
   console.log(" BANK REGISTER CONTROLLER - Create request received!");
   console.log(" Request body:", JSON.stringify(req.body, null, 2));
   
@@ -52,28 +48,26 @@ export const create = async (req: Request, res: Response) => {
     const register = await bankRegisterService.createBankRegister(req.body);
     console.log("✅ BANK REGISTER CONTROLLER - Transaction created successfully:", register.id);
     res.status(201).json(register);
-  } catch (error: any) {
-    console.error(" BANK REGISTER CONTROLLER - Error:", error.message);
-    console.error(" Full error:", error);
-    res.status(400).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
-export const remove = async (req: Request, res: Response) => {
+export const remove = async (req: Request, res: Response, next: NextFunction) => {
   try {
     await bankRegisterService.deleteBankRegister(parseInt(req.params.id));
     res.json({ message: 'Bank register entry deleted successfully' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };
 
 // Phase 4: Get pending AP invoices for supplier
-export const getPendingInvoices = async (req: Request, res: Response) => {
+export const getPendingInvoices = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoices = await bankRegisterService.getPendingAPInvoices(parseInt(req.params.supplierId));
     res.json(invoices);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
   }
 };

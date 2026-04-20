@@ -6,6 +6,11 @@ import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { BaseService } from '../core/BaseService';
 
+// ✅ PHASE 2: Import GL Posting Services
+import GLPostingService from './accounting/GLPostingService';
+import AccountingRulesEngine from './accounting/AccountingRulesEngine';
+import { SourceModule } from '../models/accounting/GeneralLedger';
+
 // Helper function for currency formatting
 const formatCurrency = (amount: number): string => {
   return new Intl.NumberFormat('en-US', {
@@ -384,6 +389,53 @@ export const createSale = async (data: any) => {
           subtotal: newSubtotal
         }, { transaction });
       }
+    }
+    
+    // ✅ PHASE 2: Post GL Entries for Sale
+    try {
+      const paymentType = data.paymentType?.toUpperCase() || '';
+      
+      // Step 1: Post Revenue entries
+      const revenueEntries = (paymentType === 'CASH' || paymentType === 'CHEQUE')
+        ? AccountingRulesEngine.getSaleCashGLEntries(total)
+        : AccountingRulesEngine.getSaleOnCreditGLEntries(total);
+      
+      await GLPostingService.postGLEntries({
+        entryDate: sale.date || new Date(),
+        sourceModule: SourceModule.SALE,
+        sourceTransactionId: sale.id,
+        sourceTransactionNumber: sale.registrationNumber,
+        entries: revenueEntries,
+      }, transaction);
+      
+      console.log('✅ GL revenue entries posted successfully for sale', sale.registrationNumber);
+      
+      // Step 2: Post COGS entries (transfer cost from Inventory to COGS)
+      // Calculate total cost of goods sold from all sale items
+      const saleItems = await SaleItem.findAll({
+        where: { saleId: sale.id },
+        transaction
+      });
+      
+      const totalCOGS = saleItems.reduce((sum, item) => sum + Number(item.costOfGoodsSold || 0), 0);
+      
+      if (totalCOGS > 0) {
+        const cogsEntries = AccountingRulesEngine.getSaleCOGSEntries(totalCOGS);
+        
+        await GLPostingService.postGLEntries({
+          entryDate: sale.date || new Date(),
+          sourceModule: SourceModule.SALE,
+          sourceTransactionId: sale.id,
+          sourceTransactionNumber: `${sale.registrationNumber}-COGS`,
+          entries: cogsEntries,
+        }, transaction);
+        
+        console.log(`✅ GL COGS entries posted successfully for sale ${sale.registrationNumber} (Cost: ${totalCOGS})`);
+      }
+      
+    } catch (glError: any) {
+      console.error('❌ Failed to post GL entries for sale:', glError.message);
+      throw glError; // Will trigger transaction rollback
     }
     
     await transaction.commit();
