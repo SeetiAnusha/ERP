@@ -5,6 +5,7 @@ import CashRegisterMaster from '../models/CashRegisterMaster';
 import BankAccount from '../models/BankAccount';
 import InvestmentAgreement from '../models/InvestmentAgreement';
 import { fixInvestmentStatus } from '../scripts/fixInvestmentStatus';
+import { BusinessLogicError } from '../core/AppError';
 
 // Get all investors with their investment details (CONTRIBUTION from both Cash and Bank Register)
 export const getAllInvestors = async () => {
@@ -242,7 +243,7 @@ export const getAllInvestors = async () => {
 
     return financerData.sort((a, b) => b.totalProvided - a.totalProvided);
   } catch (error: any) {
-    throw new Error(`Error getting investors: ${error.message}`);
+    throw new BusinessLogicError(`Error getting investors: ${error.message}`);
   }
 };
 
@@ -296,7 +297,7 @@ export const getInvestorById = async (investorId: number) => {
       investments: transactions // Renamed from transactions to investments for clarity
     };
   } catch (error: any) {
-    throw new Error(`Error getting investor details: ${error.message}`);
+    throw new BusinessLogicError(`Error getting investor details: ${error.message}`);
   }
 };
 
@@ -316,7 +317,7 @@ export const updateInvestmentPaymentStatus = async (investmentId: number, paidAm
     
     return cashTransaction;
   } catch (error: any) {
-    throw new Error(`Error updating payment status: ${error.message}`);
+    throw new BusinessLogicError(`Error updating payment status: ${error.message}`);
   }
 };
 
@@ -336,7 +337,7 @@ export const markInvestmentAsPaid = async (investmentId: number) => {
     
     return cashTransaction;
   } catch (error: any) {
-    throw new Error(`Error marking investment as paid: ${error.message}`);
+    throw new BusinessLogicError(`Error marking investment as paid: ${error.message}`);
   }
 };
 
@@ -383,7 +384,7 @@ export const getInvestorSummary = async () => {
       otherAmount: 0 // No others in investor service
     };
   } catch (error: any) {
-    throw new Error(`Error getting investor summary: ${error.message}`);
+    throw new BusinessLogicError(`Error getting investor summary: ${error.message}`);
   }
 };
 
@@ -392,6 +393,6 @@ export const fixExistingInvestmentStatus = async () => {
   try {
     return await fixInvestmentStatus();
   } catch (error: any) {
-    throw new Error(`Error fixing investment status: ${error.message}`);
+    throw new BusinessLogicError(`Error fixing investment status: ${error.message}`);
   }
 };

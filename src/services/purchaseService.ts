@@ -204,6 +204,9 @@ class PurchaseService extends BaseService {
         await this.processAssociatedInvoicesBatch(data.associatedInvoices, registrationNumber, purchase.id, transaction);
       }
       
+      // ✅ Step 8.5: Recalculate payment status based on ALL payment types (main + associated)
+      await this.recalculatePurchasePaymentStatus(purchase.id, data.paymentType, data.associatedInvoices, transaction);
+      
       // ✅ PHASE 2: Step 9 - Post GL Entries
       await this.postPurchaseGLEntries(data, purchase, mainPurchaseAmount, transaction);
       
@@ -513,7 +516,7 @@ class PurchaseService extends BaseService {
   
   private validateCardType(card: any, expectedType: string, context: string = ''): void {
     if (!card) {
-      throw new ValidationError(`Card not found${context ? ` for ${context}` : ''}`);
+      throw new NotFoundError(`Card not found${context ? ` for ${context}` : ''}`);
     }
     
     if (card.cardType !== expectedType) {
@@ -600,6 +603,67 @@ class PurchaseService extends BaseService {
     return associatedInvoices.reduce((sum: number, inv: any) => sum + Number(inv.tax || 0), 0);
   }
   
+  /**
+   * Recalculate purchase payment status based on ALL payment types
+   * 
+   * LOGIC:
+   * 1. PAID: All payments (main + associated) are BANK_TRANSFER, CHECK, DEPOSIT, or DEBIT_CARD
+   * 2. PARTIALLY PAID: Mix of paid methods AND credit methods (CREDIT_CARD or CREDIT)
+   * 3. UNPAID: All payments are CREDIT_CARD or CREDIT only
+   */
+  private async recalculatePurchasePaymentStatus(
+    purchaseId: number, 
+    mainPaymentType: string, 
+    associatedInvoices: any[] | undefined, 
+    transaction: any
+  ): Promise<void> {
+    // Collect all payment types
+    const allPaymentTypes: string[] = [mainPaymentType.toUpperCase()];
+    
+    if (associatedInvoices && associatedInvoices.length > 0) {
+      associatedInvoices.forEach(inv => {
+        if (inv.paymentType) {
+          allPaymentTypes.push(inv.paymentType.toUpperCase());
+        }
+      });
+    }
+    
+    // Categorize payment types
+    const paidMethods = ['BANK_TRANSFER', 'CHECK', 'CHEQUE', 'DEPOSIT', 'DEBIT_CARD', 'CASH'];
+    const creditMethods = ['CREDIT_CARD', 'CREDIT'];
+    
+    const hasPaidMethod = allPaymentTypes.some(type => paidMethods.includes(type));
+    const hasCreditMethod = allPaymentTypes.some(type => creditMethods.includes(type));
+    
+    // Determine status based on payment type mix
+    let finalStatus: 'Paid' | 'Partial' | 'Unpaid';
+    
+    if (hasPaidMethod && hasCreditMethod) {
+      // Mix of paid and credit methods = Partially Paid
+      finalStatus = 'Partial';
+    } else if (hasPaidMethod && !hasCreditMethod) {
+      // Only paid methods = Paid
+      finalStatus = 'Paid';
+    } else {
+      // Only credit methods = Unpaid
+      finalStatus = 'Unpaid';
+    }
+    
+    // Update purchase with correct status
+    const purchase = await Purchase.findByPk(purchaseId, { transaction });
+    if (purchase) {
+      await purchase.update({
+        paymentStatus: finalStatus
+      }, { transaction });
+      
+      console.log(`✅ Recalculated payment status for purchase ${purchase.registrationNumber}:`);
+      console.log(`   Payment types: ${allPaymentTypes.join(', ')}`);
+      console.log(`   Has paid methods: ${hasPaidMethod}`);
+      console.log(`   Has credit methods: ${hasCreditMethod}`);
+      console.log(`   Final status: ${finalStatus}`);
+    }
+  }
+  
   private async getLastBankBalance(bankAccountId?: number, transaction?: any): Promise<number> {
     const BankRegister = (await import('../models/BankRegister')).default;
     
@@ -619,7 +683,7 @@ class PurchaseService extends BaseService {
     
     const bankAccount = await BankAccount.findByPk(bankAccountId, { transaction });
     if (!bankAccount) {
-      throw new ValidationError('Bank account not found');
+      throw new NotFoundError('Bank account not found');
     }
     
     const currentBalance = Number(bankAccount.balance);
@@ -666,7 +730,7 @@ class PurchaseService extends BaseService {
     // Get and validate bank account
     const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
     if (!bankAccount) {
-      throw new ValidationError(`Bank account with ID ${data.bankAccountId} not found`);
+      throw new NotFoundError(`Bank account with ID ${data.bankAccountId} not found`);
     }
     
     console.log('🏦 Bank account found:', {
@@ -686,7 +750,7 @@ class PurchaseService extends BaseService {
     
     if (currentBalance < amount) {
       const shortfall = amount - currentBalance;
-      throw new ValidationError(
+      throw new InsufficientBalanceError(
         `Insufficient balance in ${bankAccount.bankName} (${bankAccount.accountNumber}). ` +
         `Available: $${currentBalance.toFixed(2)}, Required: $${amount.toFixed(2)}. ` +
         `You need $${shortfall.toFixed(2)} more.`
@@ -733,7 +797,7 @@ class PurchaseService extends BaseService {
     // Get and validate card
     const card = await Card.findByPk(data.cardId, { transaction });
     if (!card) {
-      throw new ValidationError('Card not found');
+      throw new NotFoundError('Card not found');
     }
     
     const expectedCardType = data.paymentType === 'DEBIT_CARD' ? 'DEBIT' : 'CREDIT';
@@ -756,7 +820,7 @@ class PurchaseService extends BaseService {
     const BankAccount = (await import('../models/BankAccount')).default;
     const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
     if (!bankAccount) {
-      throw new ValidationError('Bank account not found for this DEBIT card');
+      throw new NotFoundError('Bank account not found for this DEBIT card');
     }
     
     // Validate balance
@@ -1114,7 +1178,7 @@ class PurchaseService extends BaseService {
     const Card = (await import('../models/Card')).default;
     const card = await Card.findByPk(invoice.cardId, { transaction });
     if (!card) {
-      throw new ValidationError(`Card not found for invoice: ${invoice.concept}`);
+      throw new NotFoundError(`Card not found for invoice: ${invoice.concept}`);
     }
     
     this.validateCardType(card, 'DEBIT', `invoice "${invoice.concept}"`);
@@ -1126,7 +1190,7 @@ class PurchaseService extends BaseService {
     const BankAccount = (await import('../models/BankAccount')).default;
     const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
     if (!bankAccount) {
-      throw new ValidationError(`Bank account not found for DEBIT card ****${card.cardNumberLast4}`);
+      throw new NotFoundError(`Bank account not found for DEBIT card ****${card.cardNumberLast4}`);
     }
     
     const currentBalance = Number(bankAccount.balance);
@@ -1162,7 +1226,7 @@ class PurchaseService extends BaseService {
     const Card = (await import('../models/Card')).default;
     const card = await Card.findByPk(invoice.cardId, { transaction });
     if (!card) {
-      throw new ValidationError(`Card not found for invoice: ${invoice.concept}`);
+      throw new NotFoundError(`Card not found for invoice: ${invoice.concept}`);
     }
     
     this.validateCardType(card, 'CREDIT', `invoice "${invoice.concept}"`);
@@ -1257,7 +1321,7 @@ class PurchaseService extends BaseService {
       const BankAccount = (await import('../models/BankAccount')).default;
       const bankAccount = await BankAccount.findByPk(invoice.bankAccountId, { transaction });
       if (!bankAccount) {
-        throw new ValidationError(`Bank account not found for invoice: ${invoice.concept}`);
+        throw new NotFoundError(`Bank account not found for invoice: ${invoice.concept}`);
       }
       
       const currentBalance = Number(bankAccount.balance);
@@ -1392,7 +1456,7 @@ class PurchaseService extends BaseService {
 
       const product = await Product.findByPk(item.productId, { transaction });
       if (!product) {
-        throw new ValidationError(`Product ${item.productId} not found`);
+        throw new NotFoundError(`Product ${item.productId} not found`);
       }
       
       // Calculate proportional associated cost for this item

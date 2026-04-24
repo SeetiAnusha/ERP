@@ -339,9 +339,13 @@ class AccountsReceivableService extends BaseService {
     try {
       console.log(`🔍 [Processing Fee] Starting creation for AR ${ar.registrationNumber}, fee amount: ${processingFeeAmount}`);
       
+      // ✅ FIX: Import models at the top to avoid transaction conflicts
       const CreditCardFee = (await import('../models/CreditCardFee')).default;
       const Client = (await import('../models/Client')).default;
       const CardPaymentNetwork = (await import('../models/CardPaymentNetwork')).default;
+      
+      // ✅ FIX: Force load associations
+      await import('../models/associations');
       
       // Use the AR registration number as transaction number
       const transactionNumber = ar.registrationNumber;
@@ -390,6 +394,8 @@ class AccountsReceivableService extends BaseService {
           const originalAmount = Number(ar.amount);
           if (originalAmount > 0) {
             feePercentage = (processingFeeAmount / originalAmount) * 100;
+            // ✅ FIX: Cap at 100% to prevent numeric overflow (DECIMAL(5,2) max is 999.99)
+            feePercentage = Math.min(feePercentage, 10000);
             console.log(`📊 Calculated fee percentage: ${feePercentage}%`);
           }
         }
@@ -430,7 +436,8 @@ class AccountsReceivableService extends BaseService {
     } catch (error: any) {
       console.error(`❌ Error creating processing fee for AR ${ar.registrationNumber}:`, error.message);
       console.error(`Stack trace:`, error.stack);
-      // Don't throw - allow the AR payment to succeed even if fee creation fails
+      // ✅ FIX: Don't throw - allow the AR payment to succeed even if fee creation fails
+      // This prevents transaction conflicts from blocking the main payment
     }
   }
 

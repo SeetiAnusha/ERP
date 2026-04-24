@@ -16,6 +16,9 @@ import GLPostingService from './accounting/GLPostingService';
 import AccountingRulesEngine from './accounting/AccountingRulesEngine';
 import { SourceModule } from '../models/accounting/GeneralLedger';
 
+// ✅ FIX: Force load associations to ensure they're available
+import '../models/businessExpenseAssociations';
+
 /**
  * BusinessExpenseService - Class-based implementation following current service pattern
  * Handles all business expense operations with proper validation and error handling

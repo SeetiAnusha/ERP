@@ -32,6 +32,9 @@ interface CreditCardRegisterAttributes {
   availableCredit: number;
   usedCredit: number;
   
+  // Legacy status column (not used)
+  status?: string;
+  
   // Soft delete columns
   deletion_status?: string;
   deleted_at?: Date;
@@ -79,6 +82,9 @@ class CreditCardRegister extends Model<CreditCardRegisterAttributes, CreditCardR
   public balance!: number;
   public availableCredit!: number;
   public usedCredit!: number;
+  
+  // Legacy status column (not used)
+  public status?: string;
   
   // Soft delete columns
   public deletion_status?: string;
@@ -241,6 +247,13 @@ CreditCardRegister.init(
       allowNull: false,
       defaultValue: 0,
       field: 'used_credit',
+    },
+    
+    // Legacy status column (not used, kept for backward compatibility)
+    status: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'status',
     },
     
     // Soft delete columns

@@ -45,6 +45,18 @@ class Adjustment extends Model<AdjustmentAttributes, AdjustmentCreationAttribute
   public notes?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
+  
+  // ✅ Association for items
+  public readonly items?: any[];
+  
+  // ✅ Association method
+  public static associate(models: any) {
+    Adjustment.hasMany(models.AdjustmentItem, {
+      foreignKey: 'adjustmentId',
+      as: 'items',
+      onDelete: 'CASCADE',
+    });
+  }
 }
 
 Adjustment.init(

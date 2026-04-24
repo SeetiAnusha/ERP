@@ -6,6 +6,9 @@ import AccountsReceivable from '../models/AccountsReceivable';
 import { BaseService } from '../core/BaseService';
 import { ValidationError, NotFoundError } from '../core/AppError';
 
+// ✅ FIX: Force load associations to ensure they're available
+import '../models/associations';
+
 /**
  * Credit Card Fee Service
  * 

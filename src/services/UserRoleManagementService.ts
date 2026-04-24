@@ -2,7 +2,7 @@ import { Op } from 'sequelize';
 import User from '../models/User';
 import UserRole from '../models/UserRole';
 import sequelize from '../config/database';
-import { BusinessLogicError, ValidationError } from '../core/AppError';
+import { BusinessLogicError, ValidationError, NotFoundError, InsufficientPermissionError } from '../core/AppError';
 
 interface AssignRoleRequest {
   userEmail: string;
@@ -60,7 +60,7 @@ class UserRoleManagementService {
     // Check permission
     const hasPermission = await this.canManageUsers(requestingUserId);
     if (!hasPermission) {
-      throw new ValidationError('Unauthorized: You cannot view user roles');
+      throw new InsufficientPermissionError('manager', 'user', 'view user roles');
     }
 
     const query = `
@@ -91,7 +91,7 @@ class UserRoleManagementService {
   async searchUsers(searchTerm: string, requestingUserId: number) {
     const hasPermission = await this.canManageUsers(requestingUserId);
     if (!hasPermission) {
-      throw new ValidationError('Unauthorized');
+      throw new InsufficientPermissionError('manager', 'user', 'search users');
     }
 
     const users = await User.findAll({
@@ -121,7 +121,7 @@ class UserRoleManagementService {
     // Verify assigner has permission
     const canAssign = await this.canManageUsers(request.assignedBy);
     if (!canAssign) {
-      throw new ValidationError('You do not have permission to assign roles');
+      throw new InsufficientPermissionError('manager', 'user', 'assign roles');
     }
 
     // Get user by email
@@ -130,7 +130,7 @@ class UserRoleManagementService {
     });
 
     if (!user) {
-      throw new ValidationError('User not found with that email');
+      throw new NotFoundError('User not found with that email');
     }
 
     // Check if user already has this role
@@ -178,7 +178,7 @@ class UserRoleManagementService {
     // Check permission
     const canModify = await this.canModifyLimits(request.changedBy);
     if (!canModify) {
-      throw new ValidationError('You do not have permission to modify approval limits');
+      throw new InsufficientPermissionError('admin', 'user', 'modify approval limits');
     }
 
     // Get current role
@@ -191,7 +191,7 @@ class UserRoleManagementService {
     });
 
     if (!currentRole) {
-      throw new ValidationError('User role not found');
+      throw new NotFoundError('User role not found');
     }
 
     const oldLimit = currentRole.approval_limit;
@@ -386,7 +386,7 @@ class UserRoleManagementService {
   async removeRole(userId: number, roleId: number, removedBy: number, reason: string) {
     const canRemove = await this.canManageUsers(removedBy);
     if (!canRemove) {
-      throw new ValidationError('Unauthorized');
+      throw new InsufficientPermissionError('manager', 'user', 'remove roles');
     }
 
     const userRole = await UserRole.findOne({
@@ -394,7 +394,7 @@ class UserRoleManagementService {
     });
 
     if (!userRole) {
-      throw new ValidationError('Role not found');
+      throw new NotFoundError('Role not found');
     }
 
     userRole.is_active = false;
