@@ -1,16 +1,11 @@
 import { Request, Response } from 'express';
 import ExcelImportService from '../services/ExcelImportService';
 
-// Extend Express Request to include multer file
-interface MulterRequest extends Request {
-  file?: Express.Multer.File;
-}
-
 /**
  * Import Products from Excel file
  * POST /api/import/products
  */
-export const importProducts = async (req: MulterRequest, res: Response) => {
+export const importProducts = async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -48,7 +43,7 @@ export const importProducts = async (req: MulterRequest, res: Response) => {
  * Import Suppliers from Excel file
  * POST /api/import/suppliers
  */
-export const importSuppliers = async (req: MulterRequest, res: Response) => {
+export const importSuppliers = async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -85,7 +80,7 @@ export const importSuppliers = async (req: MulterRequest, res: Response) => {
  * Import Clients from Excel file
  * POST /api/import/clients
  */
-export const importClients = async (req: MulterRequest, res: Response) => {
+export const importClients = async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
