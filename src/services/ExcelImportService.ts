@@ -1,3 +1,4 @@
+// @ts-ignore - xlsx types may not be available in production
 import * as XLSX from 'xlsx';
 import Product from '../models/Product';
 import Supplier from '../models/Supplier';

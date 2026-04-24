@@ -1,4 +1,5 @@
 import { Router } from 'express';
+// @ts-ignore - Custom type declarations in src/types/multer.d.ts
 import multer from 'multer';
 import { importProducts, importSuppliers, importClients } from '../controllers/importController';
 
