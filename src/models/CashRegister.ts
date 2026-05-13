@@ -23,6 +23,16 @@ interface CashRegisterAttributes {
   customerId?: number;           // For AR collections (Credit Sales only)
   invoiceIds?: string;           // JSON array of invoice IDs being paid (Credit Sales only)
   investmentAgreementId?: number; // For CONTRIBUTION/LOAN transactions
+  // Deposit tracking fields (for sales date vs deposit date clarity)
+  sales_date?: Date;             // When money was earned
+  deposit_date?: Date;           // When deposit physically happened
+  deposit_reference_date?: Date; // Which day's sales this deposit is for
+  is_previous_day_deposit?: boolean; // True if deposit is for previous day sales
+  deposit_time?: string;         // Time of deposit
+  deposited_by?: string;         // Who made the deposit
+  deposit_reference_number?: string; // Bank reference number
+  store_code?: string;           // Store/branch code
+  store_name?: string;           // Store/branch name
   // Soft delete attributes
   deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
   deleted_at?: Date;
@@ -61,6 +71,16 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public customerId?: number;
   public invoiceIds?: string;
   public investmentAgreementId?: number;
+  // Deposit tracking fields
+  public sales_date?: Date;
+  public deposit_date?: Date;
+  public deposit_reference_date?: Date;
+  public is_previous_day_deposit?: boolean;
+  public deposit_time?: string;
+  public deposited_by?: string;
+  public deposit_reference_number?: string;
+  public store_code?: string;
+  public store_name?: string;
   // Soft delete attributes
   public deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
   public deleted_at?: Date;
@@ -175,6 +195,43 @@ CashRegister.init(
         model: 'investment_agreements',
         key: 'id',
       },
+    },
+    // Deposit tracking fields
+    sales_date: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    deposit_date: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    deposit_reference_date: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    is_previous_day_deposit: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    deposit_time: {
+      type: DataTypes.TIME,
+      allowNull: true,
+    },
+    deposited_by: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    deposit_reference_number: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    store_code: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    store_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
     // Soft delete attributes
     deletion_status: {

@@ -72,48 +72,49 @@ class GLPostingService {
         sourceTransactionIdType: typeof sourceTransactionId
       });
       
-      // Create GL entries
-      const glEntries: GeneralLedger[] = [];
+      // Create GL entries - OPTIMIZED: Bulk insert
+      console.time('    ├─ Fetch accounts');
+      const accountPromises = request.entries.map(entry => this.getAccountByCode(entry.accountCode, t));
+      const accounts = await Promise.all(accountPromises);
+      console.timeEnd('    ├─ Fetch accounts');
       
-      for (const entry of request.entries) {
-        const account = await this.getAccountByCode(entry.accountCode, t);
-        
-        // ✅ Ensure accountId is a number, not an object
+      console.time('    ├─ Prepare GL entries');
+      const glEntriesToCreate = request.entries.map((entry, index) => {
+        const account = accounts[index];
         const accountId = typeof account.id === 'number' ? account.id : parseInt(String(account.id));
         
-        console.log('🔍 Creating GL entry:', {
-          accountCode: entry.accountCode,
-          accountId: accountId,
-          accountIdType: typeof accountId,
-          entryType: entry.entryType,
-          amount: entry.amount,
-          entryDate: entryDate,
-          entryDateType: typeof entryDate,
-          sourceTransactionId,
-          sourceTransactionIdType: typeof sourceTransactionId
-        });
-        
-        const glEntry = await GeneralLedger.create({
+        return {
           entryNumber,
           entryDate: entryDate,
-          accountId: accountId, // ✅ Use validated accountId
+          accountId: accountId,
           entryType: entry.entryType,
           amount: entry.amount,
           sourceModule: request.sourceModule,
-          sourceTransactionId: sourceTransactionId, // ✅ Use validated sourceTransactionId
+          sourceTransactionId: sourceTransactionId,
           sourceTransactionNumber: request.sourceTransactionNumber,
           description: entry.description,
           isPosted: true,
           isReversed: false,
           postedAt: new Date(),
           createdBy: request.createdBy,
-        }, { transaction: t });
-        
-        glEntries.push(glEntry);
-        
-        // Update account balance
-        await this.updateAccountBalance(accountId, entry.entryType, entry.amount, t);
-      }
+        };
+      });
+      console.timeEnd('    ├─ Prepare GL entries');
+      
+      // ✅ OPTIMIZATION: Bulk insert all GL entries at once
+      console.time('    ├─ Bulk insert GL entries');
+      const glEntries = await GeneralLedger.bulkCreate(glEntriesToCreate, { transaction: t });
+      console.timeEnd('    ├─ Bulk insert GL entries');
+      
+      // Update account balances
+      console.time('    └─ Update account balances');
+      const balancePromises = request.entries.map((entry, index) => {
+        const account = accounts[index];
+        const accountId = typeof account.id === 'number' ? account.id : parseInt(String(account.id));
+        return this.updateAccountBalance(accountId, entry.entryType, entry.amount, t);
+      });
+      await Promise.all(balancePromises);
+      console.timeEnd('    └─ Update account balances');
 
       
       if (!transaction) {

@@ -270,19 +270,21 @@ export abstract class BaseService {
     model: any, 
     transaction?: Transaction
   ): Promise<string> {
-    const lastRecord = await model.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: `${prefix}%`
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
+    // ✅ FIX: Use SELECT FOR UPDATE SKIP LOCKED to prevent race conditions
+    // Prevents concurrent transactions from generating the same registration number
+    const tableName = model.getTableName();
+    const [results] = await sequelize.query(
+      `SELECT registration_number FROM ${tableName} 
+       WHERE registration_number LIKE '${prefix}%' 
+       ORDER BY id DESC 
+       LIMIT 1 
+       FOR UPDATE SKIP LOCKED`,
+      { transaction }
+    );
     
     let nextNumber = 1;
-    if (lastRecord) {
-      const lastNumber = parseInt(lastRecord.registrationNumber.substring(prefix.length));
+    if (results && (results as any[]).length > 0) {
+      const lastNumber = parseInt((results as any[])[0].registration_number.substring(prefix.length));
       nextNumber = lastNumber + 1;
     }
     

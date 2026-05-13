@@ -4,6 +4,7 @@ import BankAccount from '../models/BankAccount';
 import Financer from '../models/Financer';
 import CashRegisterMaster from '../models/CashRegisterMaster';
 import { Op } from 'sequelize';
+import { CashRegisterSourceType } from '../types/CashRegisterSourceType';
 
 // Get all banks with their loan details
 export const getAllBanks = async () => {
@@ -11,7 +12,7 @@ export const getAllBanks = async () => {
     // Get all LOAN transactions from Cash Register
     const loanTransactionsCash = await CashRegister.findAll({
       where: {
-        relatedDocumentType: 'LOAN'
+        relatedDocumentType: CashRegisterSourceType.LOAN
       },
       order: [['registrationDate', 'DESC']]
     });
@@ -19,7 +20,7 @@ export const getAllBanks = async () => {
     // ✅ NEW: Get all LOAN transactions from Bank Register
     const loanTransactionsBank = await BankRegister.findAll({
       where: {
-        relatedDocumentType: 'LOAN'
+        relatedDocumentType: CashRegisterSourceType.LOAN
       },
       order: [['registrationDate', 'DESC']]
     });
@@ -325,7 +326,7 @@ export const getBankById = async (bankId: number) => {
       const cashTransactions = await CashRegister.findAll({
         where: { 
           investmentAgreementId: agreement.id,
-          relatedDocumentType: 'LOAN'
+          relatedDocumentType: CashRegisterSourceType.LOAN
         }
       });
 
@@ -343,7 +344,7 @@ export const getBankById = async (bankId: number) => {
       const bankTransactions = await BankRegister.findAll({
         where: { 
           investmentAgreementId: agreement.id,
-          relatedDocumentType: 'LOAN'
+          relatedDocumentType: CashRegisterSourceType.LOAN
         }
       });
 

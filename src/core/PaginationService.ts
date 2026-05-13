@@ -85,12 +85,15 @@ export class PaginationService {
       subQuery: false // Better performance for complex queries
     });
     
-    // 6. Calculate pagination metadata
+    // 6. Convert Sequelize instances to plain objects
+    const plainData = data.map((item: any) => item.toJSON ? item.toJSON() : item);
+    
+    // 7. Calculate pagination metadata
     const pagination = this.calculatePaginationMetadata(total, page, limit);
     
-    // 7. Return paginated response
+    // 8. Return paginated response
     return {
-      data,
+      data: plainData,
       pagination
     };
   }

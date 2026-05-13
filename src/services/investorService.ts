@@ -6,6 +6,7 @@ import BankAccount from '../models/BankAccount';
 import InvestmentAgreement from '../models/InvestmentAgreement';
 import { fixInvestmentStatus } from '../scripts/fixInvestmentStatus';
 import { BusinessLogicError } from '../core/AppError';
+import { CashRegisterSourceType } from '../types/CashRegisterSourceType';
 
 // Get all investors with their investment details (CONTRIBUTION from both Cash and Bank Register)
 export const getAllInvestors = async () => {
@@ -13,7 +14,7 @@ export const getAllInvestors = async () => {
     // Get all CONTRIBUTION transactions from Cash Register
     const contributionTransactionsCash = await CashRegister.findAll({
       where: {
-        relatedDocumentType: 'CONTRIBUTION'
+        relatedDocumentType: CashRegisterSourceType.CONTRIBUTION
       },
       order: [['registrationDate', 'DESC']]
     });
@@ -21,7 +22,7 @@ export const getAllInvestors = async () => {
     // ✅ NEW: Get all CONTRIBUTION transactions from Bank Register
     const contributionTransactionsBank = await BankRegister.findAll({
       where: {
-        relatedDocumentType: 'CONTRIBUTION'
+        relatedDocumentType: CashRegisterSourceType.CONTRIBUTION
       },
       order: [['registrationDate', 'DESC']]
     });
@@ -270,7 +271,7 @@ export const getInvestorById = async (investorId: number) => {
       const cashTransactions = await CashRegister.findAll({
         where: { 
           investmentAgreementId: agreement.id,
-          relatedDocumentType: 'CONTRIBUTION'
+          relatedDocumentType: CashRegisterSourceType.CONTRIBUTION
         }
       });
 

@@ -15,6 +15,23 @@ interface InvestmentAttributes {
   status: string;
   maturityDate?: Date;
   interestRate?: number;
+  // Payment fields
+  registrationNumber?: string;
+  paymentType?: string;
+  bankAccountId?: number;
+  cardId?: number;
+  chequeNumber?: string;
+  chequeDate?: Date;
+  transferNumber?: string;
+  transferDate?: Date;
+  paymentReference?: string;
+  voucherDate?: Date;
+  supplierId?: number;
+  supplierRnc?: string;
+  ncf?: string;
+  // Additional fields
+  riskLevel?: string;
+  broker?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -35,6 +52,23 @@ class Investment extends Model<InvestmentAttributes, InvestmentCreationAttribute
   public status!: string;
   public maturityDate?: Date;
   public interestRate?: number;
+  // Payment fields
+  public registrationNumber?: string;
+  public paymentType?: string;
+  public bankAccountId?: number;
+  public cardId?: number;
+  public chequeNumber?: string;
+  public chequeDate?: Date;
+  public transferNumber?: string;
+  public transferDate?: Date;
+  public paymentReference?: string;
+  public voucherDate?: Date;
+  public supplierId?: number;
+  public supplierRnc?: string;
+  public ncf?: string;
+  // Additional fields
+  public riskLevel?: string;
+  public broker?: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -94,6 +128,70 @@ Investment.init(
     },
     interestRate: {
       type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+    },
+    // Payment fields
+    registrationNumber: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      unique: true,
+    },
+    paymentType: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    bankAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    cardId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    chequeNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    chequeDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    transferNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    transferDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    paymentReference: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    voucherDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    supplierId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    supplierRnc: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    ncf: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    // Additional fields
+    riskLevel: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      defaultValue: 'MEDIUM',
+    },
+    broker: {
+      type: DataTypes.STRING(255),
       allowNull: true,
     },
   },

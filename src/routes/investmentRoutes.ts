@@ -3,6 +3,7 @@ import * as investmentController from '../controllers/investmentController';
 
 const router = Router();
 
+router.get('/summary', investmentController.getPortfolioSummary);
 router.get('/', investmentController.getAll);
 router.get('/:id', investmentController.getById);
 router.post('/', investmentController.create);

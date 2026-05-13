@@ -62,7 +62,6 @@ export const getPPETrackingReport = async (filters?: { startDate?: string; endDa
       depreciationPercent,
       status: asset.status,
       location: asset.location,
-      serialNumber: asset.serialNumber,
     };
   });
   

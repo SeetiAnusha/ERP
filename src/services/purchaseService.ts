@@ -139,76 +139,91 @@ class PurchaseService extends BaseService {
    * Space Complexity: O(n + m) for processing data
    */
   async createPurchase(data: CreatePurchaseRequest): Promise<Purchase> {
-    console.log("data:", data);
+    console.log("📋 Creating purchase...");
+    console.time('⏱️ TOTAL Purchase Creation');
+    
     return this.executeWithTransaction(async (transaction) => {
       
-      // Step 1: Comprehensive validation (O(1) complexity)
-      // ValidationFramework.validate(data, ValidationSchemas.PURCHASE_CREATE);
-      
-      // Use simple validation for now to avoid framework issues
+      // Step 1: Comprehensive validation
+      console.time('  ├─ Validation');
       if (!data.supplierId) throw new ValidationError('Supplier is required');
       if (!data.total || data.total <= 0) throw new ValidationError('Total amount must be greater than 0');
       if (!data.paymentType) throw new ValidationError('Payment type is required');
+      console.timeEnd('  ├─ Validation');
       
-      // Step 2: Generate registration number (O(1) complexity)
+      // Step 2: Generate registration number
+      console.time('  ├─ Registration Number');
       const registrationNumber = await this.generatePurchaseRegistrationNumber(transaction);
+      console.timeEnd('  ├─ Registration Number');
       
-      // Step 3: Calculate payment status and amounts (O(1) complexity)
+      // Step 3: Calculate payment status and amounts
       const paymentStatus = this.calculatePaymentStatus(data.paymentType, data.total);
       
-      // Step 4: Calculate associated expenses (O(n) where n = number of invoices)
+      // Step 4: Calculate associated expenses
       const associatedExpenses = this.calculateAssociatedExpenses(data.associatedInvoices);
       const mainPurchaseAmount = data.productTotal || (data.total - associatedExpenses) || data.total;
       
-      // Step 5: Create main purchase record (O(1) complexity)
+      // Step 5: Create main purchase record
+      console.time('  ├─ Create Purchase Record');
       const purchaseCreateData = {
         supplierId: data.supplierId,
         supplierRnc: data.supplierRnc,
         ncf: data.ncf,
         purchaseType: data.purchaseType,
         paymentType: data.paymentType,
-        date: new Date(data.date), // ✅ Convert to Date object
+        date: new Date(data.date),
         registrationNumber,
         registrationDate: new Date(),
         productTotal: data.productTotal || data.total,
         additionalExpenses: associatedExpenses,
-        total: data.total, // Ensure total is explicitly set
+        total: data.total,
         totalWithAssociated: mainPurchaseAmount + associatedExpenses,
-        // Payment method specific fields
         bankAccountId: data.bankAccountId,
         cardId: data.cardId,
         chequeNumber: data.chequeNumber,
-        chequeDate: data.chequeDate ? new Date(data.chequeDate) : undefined, // ✅ Convert to Date
+        chequeDate: data.chequeDate ? new Date(data.chequeDate) : undefined,
         transferNumber: data.transferNumber,
-        transferDate: data.transferDate ? new Date(data.transferDate) : undefined, // ✅ Convert to Date
+        transferDate: data.transferDate ? new Date(data.transferDate) : undefined,
         paymentReference: data.paymentReference,
-        voucherDate: data.voucherDate ? new Date(data.voucherDate) : undefined, // ✅ Convert to Date
-        // Payment status - spread first, then override status to ensure it's not null
+        voucherDate: data.voucherDate ? new Date(data.voucherDate) : undefined,
         ...paymentStatus,
-        status: 'COMPLETED', // Ensure status is never null - must be last to override any conflicts
+        status: 'COMPLETED',
       };
       
-      
       const purchase = await Purchase.create(purchaseCreateData, { transaction });
+      console.timeEnd('  ├─ Create Purchase Record');
       
-      // Step 6: Process payment based on type (O(1) complexity per payment type)
+      // Step 6: Process payment based on type
+      console.time('  ├─ Payment Processing');
       await this.processMainPayment(data, purchase, mainPurchaseAmount, transaction);
+      console.timeEnd('  ├─ Payment Processing');
       
-      // Step 7: Update inventory first (O(m) where m = number of items)
+      // Step 7: Update inventory
       if (data.items && data.items.length > 0) {
+        console.time(`  ├─ Inventory Update (${data.items.length} items)`);
         await this.updateInventoryBatch(data.items, purchase.id, associatedExpenses, transaction);
+        console.timeEnd(`  ├─ Inventory Update (${data.items.length} items)`);
       }
       
-      // Step 8: Process associated invoices after inventory (O(n) complexity)
+      // Step 8: Process associated invoices
       if (data.associatedInvoices && data.associatedInvoices.length > 0) {
+        console.time(`  ├─ Associated Invoices (${data.associatedInvoices.length} invoices)`);
         await this.processAssociatedInvoicesBatch(data.associatedInvoices, registrationNumber, purchase.id, transaction);
+        console.timeEnd(`  ├─ Associated Invoices (${data.associatedInvoices.length} invoices)`);
       }
       
-      // ✅ Step 8.5: Recalculate payment status based on ALL payment types (main + associated)
+      // Step 8.5: Recalculate payment status
+      console.time('  ├─ Recalculate Payment Status');
       await this.recalculatePurchasePaymentStatus(purchase.id, data.paymentType, data.associatedInvoices, transaction);
+      console.timeEnd('  ├─ Recalculate Payment Status');
       
-      // ✅ PHASE 2: Step 9 - Post GL Entries
+      // Step 9: Post GL Entries
+      console.time('  └─ GL Entries');
       await this.postPurchaseGLEntries(data, purchase, mainPurchaseAmount, transaction);
+      console.timeEnd('  └─ GL Entries');
+      
+      console.timeEnd('⏱️ TOTAL Purchase Creation');
+      console.log(`✅ Purchase ${purchase.registrationNumber} created successfully`);
       
       // Return complete purchase
       return purchase;
@@ -547,19 +562,20 @@ class PurchaseService extends BaseService {
   // ==================== UTILITY METHODS ====================
   
   protected async generateRegistrationNumber(transaction: any): Promise<string> {
-    const lastPurchase = await Purchase.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: 'CP%'
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
+    // ✅ FIX: Use SELECT FOR UPDATE SKIP LOCKED to prevent race conditions
+    // This locks the row so concurrent transactions can't read the same last number
+    const [results] = await Purchase.sequelize!.query(
+      `SELECT registration_number FROM purchases 
+       WHERE registration_number LIKE 'CP%' 
+       ORDER BY id DESC 
+       LIMIT 1 
+       FOR UPDATE SKIP LOCKED`,
+      { transaction }
+    );
     
     let nextNumber = 1;
-    if (lastPurchase) {
-      const lastNumber = parseInt(lastPurchase.registrationNumber.substring(2));
+    if (results && (results as any[]).length > 0) {
+      const lastNumber = parseInt((results as any[])[0].registration_number.substring(2));
       nextNumber = lastNumber + 1;
     }
     
@@ -727,8 +743,11 @@ class PurchaseService extends BaseService {
       paymentType: data.paymentType
     });
     
-    // Get and validate bank account
-    const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
+    // ✅ OPTIMIZATION: Fetch bank account and supplier in parallel
+    const [bankAccount, supplier] = await Promise.all([
+      BankAccount.findByPk(data.bankAccountId, { transaction }),
+      Supplier.findByPk(data.supplierId, { transaction })
+    ]);
     if (!bankAccount) {
       throw new NotFoundError(`Bank account with ID ${data.bankAccountId} not found`);
     }
@@ -760,8 +779,7 @@ class PurchaseService extends BaseService {
     // Update bank account balance
     await this.updateBankAccountBalance(data.bankAccountId, amount, true, transaction);
     
-    // Create bank register entry using factory (eliminates duplication)
-    const supplier = await Supplier.findByPk(data.supplierId, { transaction });
+    // Create bank register entry using factory
     const paymentMethodLabel = data.paymentType === 'CHEQUE' ? 'Cheque' : 'Bank Transfer';
     const referenceNumber = data.paymentType === 'CHEQUE' ? data.chequeNumber : data.transferNumber;
     

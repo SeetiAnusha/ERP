@@ -11,6 +11,17 @@ import GLPostingService from './accounting/GLPostingService';
 import AccountingRulesEngine from './accounting/AccountingRulesEngine';
 import { SourceModule } from '../models/accounting/GeneralLedger';
 
+// ✅ PROFESSIONAL: Import Cash Register Source Type enum
+import { CashRegisterSourceType } from '../types/CashRegisterSourceType';
+
+// ✅ FIX: Import models at top level instead of dynamic imports
+import CashRegister from '../models/CashRegister';
+import CashRegisterMaster from '../models/CashRegisterMaster';
+import BankRegister from '../models/BankRegister';
+import BankAccount from '../models/BankAccount';
+import AccountsReceivable from '../models/AccountsReceivable';
+import CardPaymentNetwork from '../models/CardPaymentNetwork';
+
 // Helper function for currency formatting
 const formatCurrency = (amount: number): string => {
   return new Intl.NumberFormat('en-US', {
@@ -161,9 +172,6 @@ export const createSale = async (data: any) => {
     
     // Create Cash Register entry for CASH and CHEQUE collections (INFLOW)
     if (paymentType === 'CASH' || paymentType === 'CHEQUE') {
-      const CashRegister = (await import('../models/CashRegister')).default;
-      const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
-      
       // Validate cash register exists
       const cashRegister = await CashRegisterMaster.findByPk(data.cashRegisterId, { transaction });
       if (!cashRegister) {
@@ -198,7 +206,7 @@ export const createSale = async (data: any) => {
         transactionType: 'INFLOW',
         amount: total,
         paymentMethod: paymentMethodLabel,
-        relatedDocumentType: 'Sale',
+        relatedDocumentType: CashRegisterSourceType.SALE,
         relatedDocumentNumber: registrationNumber,
         clientRnc: data.clientRnc || '',
         clientName: client?.name || '',
@@ -211,9 +219,6 @@ export const createSale = async (data: any) => {
     
     // Create Bank Register entry for BANK_TRANSFER and DEPOSIT collections (INFLOW)
     if (paymentType === 'BANK_TRANSFER' || paymentType === 'DEPOSIT') {
-      const BankRegister = (await import('../models/BankRegister')).default;
-      const BankAccount = (await import('../models/BankAccount')).default;
-      
       // ✅ VALIDATION: Require bank account selection
       if (!data.bankAccountId) {
         throw new Error(
@@ -257,7 +262,7 @@ export const createSale = async (data: any) => {
         sourceTransactionType: 'SALE', // ✅ FIX: Add source transaction type
         amount: total,
         paymentMethod: paymentMethodLabel,
-        relatedDocumentType: 'Sale',
+        relatedDocumentType: CashRegisterSourceType.SALE,
         relatedDocumentNumber: registrationNumber,
         clientRnc: data.clientRnc || '',
         clientName: client?.name || '',
@@ -272,9 +277,6 @@ export const createSale = async (data: any) => {
     
     // Create Accounts Receivable for debit/credit card and credit sales
     if (paymentType === 'DEBIT_CARD' || paymentType === 'CREDIT_CARD' || paymentType === 'CREDIT') {
-      const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
-      const CardPaymentNetwork = (await import('../models/CardPaymentNetwork')).default;
-      
       // Get client info
       const client = await Client.findByPk(data.clientId, { transaction });
       
@@ -305,7 +307,7 @@ export const createSale = async (data: any) => {
           registrationNumber: registrationNumber,
           registrationDate: new Date(),
           type: paymentType === 'DEBIT_CARD' ? 'DEBIT_CARD_SALE' : 'CREDIT_CARD_SALE',
-          relatedDocumentType: 'Sale',
+          relatedDocumentType: CashRegisterSourceType.SALE,
           relatedDocumentId: sale.id,
           relatedDocumentNumber: registrationNumber,
           clientId: data.clientId, // ✅ Store customer ID for credit card sales
@@ -329,7 +331,7 @@ export const createSale = async (data: any) => {
           registrationNumber: registrationNumber,
           registrationDate: new Date(),
           type: 'CLIENT_CREDIT',
-          relatedDocumentType: 'Sale',
+          relatedDocumentType: CashRegisterSourceType.SALE,
           relatedDocumentId: sale.id,
           relatedDocumentNumber: registrationNumber,
           clientId: data.clientId,
@@ -494,8 +496,6 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
       
       if (paymentData.paymentMethod.toUpperCase() === 'CASH' || paymentData.paymentMethod.toUpperCase() === 'CHEQUE') {
         // ✅ CASH/CHEQUE Payment Collection
-        const CashRegister = (await import('../models/CashRegister')).default;
-        const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
         
         // Validate cash register selection
         if (!paymentData.cashRegisterId) {
@@ -551,7 +551,7 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
           transactionType: 'INFLOW',
           amount: paymentData.amount,
           paymentMethod: paymentData.paymentMethod === 'CASH' ? 'Cash' : 'Cheque',
-          relatedDocumentType: 'Sale',
+          relatedDocumentType: CashRegisterSourceType.SALE,
           relatedDocumentNumber: sale.registrationNumber,
           clientRnc: sale.clientRnc,
           clientName: client?.name || '',
@@ -562,8 +562,6 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
         
       } else if (paymentData.paymentMethod.toUpperCase() === 'BANK_TRANSFER' || paymentData.paymentMethod.toUpperCase() === 'DEPOSIT') {
         // ✅ BANK Payment Collection
-        const BankRegister = (await import('../models/BankRegister')).default;
-        const BankAccount = (await import('../models/BankAccount')).default;
         
         // Validate bank account selection
         if (!paymentData.bankAccountId) {
@@ -620,7 +618,7 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
           sourceTransactionType: 'SALE_COLLECTION',
           amount: paymentData.amount,
           paymentMethod: paymentData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Deposit',
-          relatedDocumentType: 'Sale',
+          relatedDocumentType: CashRegisterSourceType.SALE,
           relatedDocumentNumber: sale.registrationNumber,
           clientRnc: sale.clientRnc,
           clientName: client?.name || '',
@@ -633,7 +631,6 @@ export const collectPayment = async (id: number, paymentData: { amount: number; 
       }
       
       // Update related Accounts Receivable records
-      const AccountsReceivable = (await import('../models/AccountsReceivable')).default;
       await AccountsReceivable.update({
         receivedAmount: sequelize.literal(`receivedAmount + ${paymentData.amount}`),
         balanceAmount: sequelize.literal(`balanceAmount - ${paymentData.amount}`),

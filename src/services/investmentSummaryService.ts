@@ -3,6 +3,7 @@ import AccountsPayable from '../models/AccountsPayable';
 import Financer from '../models/Financer';
 import CashRegisterMaster from '../models/CashRegisterMaster';
 import { Op } from 'sequelize';
+import { CashRegisterSourceType } from '../types/CashRegisterSourceType';
 
 // Get comprehensive investment and loan summary
 export const getInvestmentSummary = async () => {
@@ -11,7 +12,7 @@ export const getInvestmentSummary = async () => {
     const investmentTransactions = await CashRegister.findAll({
       where: {
         relatedDocumentType: {
-          [Op.in]: ['CONTRIBUTION', 'LOAN']
+          [Op.in]: [CashRegisterSourceType.CONTRIBUTION, CashRegisterSourceType.LOAN]
         }
       },
       order: [['registrationDate', 'DESC']]
@@ -58,7 +59,7 @@ const processInvestors = async (transactions: any[], apEntries: any[], financers
   const investorMap = new Map();
 
   // Filter for CONTRIBUTION only
-  const contributionTransactions = transactions.filter(t => t.relatedDocumentType === 'CONTRIBUTION');
+  const contributionTransactions = transactions.filter(t => t.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION);
   const contributionAP = apEntries.filter(ap => ap.type === 'CONTRIBUTION');
 
   // Process each AP entry
@@ -150,7 +151,7 @@ const processBanks = async (transactions: any[], apEntries: any[], financers: an
   const bankMap = new Map();
 
   // Filter for LOAN only
-  const loanTransactions = transactions.filter(t => t.relatedDocumentType === 'LOAN');
+  const loanTransactions = transactions.filter(t => t.relatedDocumentType === CashRegisterSourceType.LOAN);
   const loanAP = apEntries.filter(ap => ap.type === 'LOAN');
 
   // Process each AP entry
@@ -256,7 +257,7 @@ const processStores = async (transactions: any[], apEntries: any[], financers: a
 
       const amount = parseFloat(transaction.amount.toString());
 
-      if (transaction.relatedDocumentType === 'CONTRIBUTION') {
+      if (transaction.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION) {
         totalInvestments += amount;
         investments.push({
           financerId: financer.id,
@@ -264,7 +265,7 @@ const processStores = async (transactions: any[], apEntries: any[], financers: a
           amount: amount,
           transactionCount: 1
         });
-      } else if (transaction.relatedDocumentType === 'LOAN') {
+      } else if (transaction.relatedDocumentType === CashRegisterSourceType.LOAN) {
         totalLoans += amount;
         loans.push({
           financerId: financer.id,

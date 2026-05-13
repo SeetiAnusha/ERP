@@ -22,6 +22,11 @@ import {
   InsufficientBalanceError 
 } from '../core/AppError';
 import * as creditBalanceService from './creditBalanceService';
+import { 
+  CashRegisterSourceType, 
+  normalizeCashRegisterSourceType,
+  CashRegisterSourceTypeLabels 
+} from '../types/CashRegisterSourceType';
 
 /**
  * Cash Transaction Request Interface
@@ -43,6 +48,14 @@ interface CashTransactionRequest {
   transferNumber?: string; // ✅ NEW: User-entered transfer number for bank deposits
   // Flag to prevent duplicate credit balance creation when called from Customer Credit Aware Payment Service
   skipCreditBalanceCreation?: boolean;
+  
+  // ✅ PROFESSIONAL: Deposit tracking fields (for sales date vs deposit date clarity)
+  sales_date?: Date | string;             // When money was earned
+  deposit_date?: Date | string;           // When deposit physically happened
+  deposit_reference_date?: Date | string; // Which day's sales this deposit is for
+  deposit_time?: string;                  // Time of deposit (HH:MM:SS)
+  deposited_by?: string;                  // Who made the deposit
+  deposit_reference_number?: string;      // Bank reference number
 }
 
 /**
@@ -100,7 +113,7 @@ const CASH_TRANSACTION_SCHEMA: ValidationSchema<CashTransactionRequest> = {
       }
       
       // AR Collection specific validation
-      if (data.relatedDocumentType === 'AR_COLLECTION') {
+      if (data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION) {
         if (!data.customerId) {
           throw new ValidationError('Customer ID is required for AR Collection');
         }
@@ -117,7 +130,7 @@ const CASH_TRANSACTION_SCHEMA: ValidationSchema<CashTransactionRequest> = {
       }
       
       // Investment specific validation
-      if (data.relatedDocumentType === 'CONTRIBUTION' || data.relatedDocumentType === 'LOAN') {
+      if (data.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION || data.relatedDocumentType === CashRegisterSourceType.LOAN) {
         if (!data.investmentAgreementId) {
           throw new ValidationError('Investment Agreement ID is required for contributions/loans');
         }
@@ -214,8 +227,25 @@ class CashRegisterService extends BaseService {
         offset
       });
       
+      // ✅ PROFESSIONAL: Transform and enrich data with normalized source types
+      const enrichedTransactions = transactions.map(transaction => {
+        const plainTransaction = transaction.get({ plain: true });
+        
+        return {
+          ...plainTransaction,
+          // Normalize source type to ensure consistency
+          relatedDocumentType: normalizeCashRegisterSourceType(plainTransaction.relatedDocumentType),
+          // Ensure document number is never undefined
+          relatedDocumentNumber: plainTransaction.relatedDocumentNumber || null,
+          // Add human-readable source label
+          sourceLabel: CashRegisterSourceTypeLabels[
+            normalizeCashRegisterSourceType(plainTransaction.relatedDocumentType)
+          ]
+        };
+      });
+      
       return {
-        transactions,
+        transactions: enrichedTransactions as any,
         total,
         page,
         limit,
@@ -251,32 +281,38 @@ class CashRegisterService extends BaseService {
   ): Promise<CashRegister> {
     return this.executeWithTransaction(async (transaction) => {
       
+      // ✅ PROFESSIONAL: Normalize source type before validation
+      const normalizedData = {
+        ...data,
+        relatedDocumentType: normalizeCashRegisterSourceType(data.relatedDocumentType)
+      };
+      
       // Step 1: Comprehensive validation using ValidationFramework
-      this.validateCashTransactionRequest(data);
+      this.validateCashTransactionRequest(normalizedData);
       
       // Step 2: Determine if cash register is required
-      const needsCashRegister = this.determineIfCashRegisterRequired(data);
+      const needsCashRegister = this.determineIfCashRegisterRequired(normalizedData);
       
       // Step 3: Validate and get cash register (if needed)
       let cashRegisterMaster = null;
       let lastBalance = 0;
       
       if (needsCashRegister) {
-        if (!data.cashRegisterId) {
+        if (!normalizedData.cashRegisterId) {
           throw new ValidationError('Cash Register selection is required for this transaction type');
         }
         
-        cashRegisterMaster = await this.validateAndGetCashRegister(data.cashRegisterId, transaction);
-        lastBalance = await this.getLastCashRegisterBalance(data.cashRegisterId, cashRegisterMaster, transaction);
+        cashRegisterMaster = await this.validateAndGetCashRegister(normalizedData.cashRegisterId, transaction);
+        lastBalance = await this.getLastCashRegisterBalance(normalizedData.cashRegisterId, cashRegisterMaster, transaction);
       }
       
       // Step 4: Generate registration number
       const registrationNumber = await this.generateCashRegistrationNumber(transaction);
       
       // Step 5: Process transaction based on type
-      if (data.transactionType === 'INFLOW') {
+      if (normalizedData.transactionType === 'INFLOW') {
         return await this.processInflowTransaction(
-          data,
+          normalizedData,
           registrationNumber,
           lastBalance,
           cashRegisterMaster,
@@ -285,7 +321,7 @@ class CashRegisterService extends BaseService {
         );
       } else {
         return await this.processOutflowTransaction(
-          data,
+          normalizedData,
           registrationNumber,
           lastBalance,
           cashRegisterMaster,
@@ -313,9 +349,9 @@ class CashRegisterService extends BaseService {
    */
   private determineIfCashRegisterRequired(data: CashTransactionRequest): boolean {
     return (
-      (data.relatedDocumentType === 'CONTRIBUTION' && data.paymentMethod === 'CASH') || 
-      (data.relatedDocumentType === 'LOAN' && data.paymentMethod === 'CASH') ||
-      (data.relatedDocumentType === 'AR_COLLECTION' && data.paymentMethod === 'CASH') ||
+      (data.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION && data.paymentMethod === 'CASH') || 
+      (data.relatedDocumentType === CashRegisterSourceType.LOAN && data.paymentMethod === 'CASH') ||
+      (data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION && data.paymentMethod === 'CASH') ||
       data.transactionType === 'OUTFLOW' // All outflows require cash register
     );
   }
@@ -390,9 +426,9 @@ class CashRegisterService extends BaseService {
     transaction: any
   ): Promise<CashRegister> {
     
-    if (data.relatedDocumentType === 'AR_COLLECTION') {
+    if (data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION) {
       await this.processARCollection(data, transaction);
-    } else if (data.relatedDocumentType === 'CONTRIBUTION' || data.relatedDocumentType === 'LOAN') {
+    } else if (data.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION || data.relatedDocumentType === CashRegisterSourceType.LOAN) {
       await this.processInvestmentTransaction(data, transaction);
       
       // ✅ NEW: For non-cash CONTRIBUTION/LOAN, create Bank Register entry instead
@@ -415,11 +451,20 @@ class CashRegisterService extends BaseService {
       newBalance = lastBalance + parseFloat(data.amount.toString());
     }
     
+    // ✅ PROFESSIONAL: Add sales date and store info for INFLOW transactions
+    const salesDate = data.sales_date || new Date(data.registrationDate);
+    const storeCode = cashRegisterMaster?.code || null;
+    const storeName = cashRegisterMaster?.name || null;
+    
     // Create cash register transaction
     const cashTransactionData: any = {
       ...data,
       registrationNumber,
-      balance: newBalance
+      balance: newBalance,
+      // Add sales date and store info
+      sales_date: salesDate,
+      store_code: storeCode,
+      store_name: storeName
     };
     
     if (needsCashRegister) {
@@ -726,12 +771,34 @@ class CashRegisterService extends BaseService {
     // Calculate new cash register balance
     const newCashBalance = lastBalance - outflowAmount;
     
-    // Create cash register OUTFLOW transaction
+    // ✅ PROFESSIONAL: Add deposit tracking fields
+    // Determine if this is a previous day deposit
+    const depositDate = new Date(data.registrationDate);
+    const salesDate = data.sales_date ? new Date(data.sales_date) : depositDate;
+    const depositReferenceDate = data.deposit_reference_date ? new Date(data.deposit_reference_date) : salesDate;
+    const daysDifference = Math.floor((depositDate.getTime() - salesDate.getTime()) / (1000 * 60 * 60 * 24));
+    const isPreviousDayDeposit = daysDifference > 0;
+    
+    // Get store info from cash register master
+    const storeCode = cashRegisterMaster.code;
+    const storeName = cashRegisterMaster.name;
+    
+    // Create cash register OUTFLOW transaction with deposit tracking
     const cashTransaction = await CashRegister.create({
       ...data,
       registrationNumber,
       balance: newCashBalance,
-      cashRegisterId: data.cashRegisterId
+      cashRegisterId: data.cashRegisterId,
+      // Deposit tracking fields (all properly typed as Date)
+      sales_date: salesDate,
+      deposit_date: depositDate,
+      deposit_reference_date: depositReferenceDate,
+      is_previous_day_deposit: isPreviousDayDeposit,
+      deposit_time: data.deposit_time || new Date().toTimeString().split(' ')[0],
+      deposited_by: data.deposited_by || 'System',
+      deposit_reference_number: data.deposit_reference_number || data.transferNumber || registrationNumber,
+      store_code: storeCode,
+      store_name: storeName
     }, { transaction });
     
     // Update cash register master balance
@@ -774,8 +841,14 @@ class CashRegisterService extends BaseService {
     }
     
     const cashTransaction = await CashRegister.create({
-      ...data,
       registrationNumber,
+      registrationDate: data.registrationDate,
+      transactionType: data.transactionType,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      relatedDocumentType: data.relatedDocumentType,
+      relatedDocumentNumber: data.relatedDocumentNumber,
+      description: data.description,
       balance: newBalance,
       cashRegisterId: data.cashRegisterId
     }, { transaction });

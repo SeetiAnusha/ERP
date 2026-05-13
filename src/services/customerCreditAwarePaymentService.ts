@@ -18,6 +18,7 @@ import {
   BusinessLogicError, 
   InsufficientBalanceError 
 } from '../core/AppError';
+import { CashRegisterSourceType } from '../types/CashRegisterSourceType';
 
 export interface CustomerCreditAwarePaymentRequest {
   customerId: number;
@@ -644,7 +645,7 @@ class CustomerCreditAwarePaymentService extends BaseService {
       transactionType: 'INFLOW' as const,
       amount: amount, // FULL INVOICE AMOUNT (includes credit usage)
       paymentMethod: request.paymentMethod!,  // Use non-null assertion since we validate it exists
-      relatedDocumentType: 'AR_COLLECTION' as const,
+      relatedDocumentType: CashRegisterSourceType.AR_COLLECTION,
       relatedDocumentNumber: request.invoiceIds.length === 1 ? 
         `INV-${request.invoiceIds[0]}` : 'MULTI',
       description: `${request.description} - Total Settlement: ₹${amount} (includes credit usage)`,
@@ -678,7 +679,7 @@ class CustomerCreditAwarePaymentService extends BaseService {
       sourceTransactionType: 'AR_COLLECTION' as const,
       amount: amount, // FULL INVOICE AMOUNT (includes credit usage)
       paymentMethod: request.paymentMethod,
-      relatedDocumentType: 'AR_COLLECTION' as const,
+      relatedDocumentType: CashRegisterSourceType.AR_COLLECTION,
       relatedDocumentNumber: request.invoiceIds.length === 1 ? 
         `INV-${request.invoiceIds[0]}` : 'MULTI',
       description: `${request.description} - Total Settlement: ₹${amount} (includes credit usage)`,

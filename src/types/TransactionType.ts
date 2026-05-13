@@ -22,7 +22,10 @@ export enum TransactionType {
   ADJUSTMENT = 'ADJUSTMENT',
   TRANSFER = 'TRANSFER',
   AR_COLLECTION = 'AR_COLLECTION',
-  CREDIT_USAGE = 'CREDIT_USAGE'
+  CREDIT_USAGE = 'CREDIT_USAGE',
+  FIXED_ASSET_PURCHASE = 'FIXED_ASSET_PURCHASE',
+  INVESTMENT_PURCHASE = 'INVESTMENT_PURCHASE',
+  PREPAID_EXPENSE = 'PREPAID_EXPENSE'
 }
 
 /**
@@ -41,7 +44,10 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   [TransactionType.ADJUSTMENT]: 'Adjustment',
   [TransactionType.TRANSFER]: 'Transfer',
   [TransactionType.AR_COLLECTION]: 'AR Collection',
-  [TransactionType.CREDIT_USAGE]: 'Credit Usage'
+  [TransactionType.CREDIT_USAGE]: 'Credit Usage',
+  [TransactionType.FIXED_ASSET_PURCHASE]: 'Fixed Asset Purchase',
+  [TransactionType.INVESTMENT_PURCHASE]: 'Investment Purchase',
+  [TransactionType.PREPAID_EXPENSE]: 'Prepaid Expense'
 };
 
 /**

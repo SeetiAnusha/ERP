@@ -82,4 +82,26 @@ export interface CashTransactionRequest {
   referenceNumber?: string;
   transactionDate?: Date;
   notes?: string;
+  
+  // Deposit tracking fields (for sales date vs deposit date clarity)
+  sales_date?: Date | string;             // When money was earned
+  deposit_date?: Date | string;           // When deposit physically happened
+  deposit_reference_date?: Date | string; // Which day's sales this deposit is for
+  deposit_time?: string;                  // Time of deposit (HH:MM:SS)
+  deposited_by?: string;                  // Who made the deposit
+  deposit_reference_number?: string;      // Bank reference number
+  
+  // Additional fields from cash register service
+  registrationDate?: Date | string;
+  relatedDocumentType?: string;
+  relatedDocumentNumber?: string;
+  clientRnc?: string;
+  clientName?: string;
+  ncf?: string;
+  cashRegisterId?: number;
+  bankAccountId?: number;
+  chequeNumber?: string;
+  invoiceIds?: string;
+  investmentAgreementId?: number;
+  transferNumber?: string;
 }

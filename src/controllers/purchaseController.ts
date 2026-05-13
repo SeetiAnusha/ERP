@@ -44,11 +44,16 @@ export const getById = async (req: Request, res: Response, next: NextFunction) =
 
 export const create = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    console.time('⏱️ Total Purchase Creation');
+    
     const purchase = await purchaseService.createPurchase(req.body);
-    console.log("purchase:", purchase);
+    
+    console.timeEnd('⏱️ Total Purchase Creation');
+    console.log("✅ Purchase created:", purchase.id);
+    
     res.status(201).json(purchase);
   } catch (error) {
-    console.error('Purchase creation error:', error);
+    console.error('❌ Purchase creation error:', error);
     next(error);
   }
 };
