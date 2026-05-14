@@ -30,6 +30,27 @@ const formatCurrency = (amount: number): string => {
   }).format(amount);
 };
 
+/**
+ * Business registration date from the client (Sales form "Registration date" / `date`).
+ * Never silently drop user-chosen dates — cash register and sale header must match.
+ */
+const parseSaleBusinessDate = (data: { date?: unknown; registrationDate?: unknown }): Date => {
+  const raw = data.registrationDate ?? data.date;
+  if (raw == null || raw === '') return new Date();
+  if (raw instanceof Date && !isNaN(raw.getTime())) return raw;
+  const s = String(raw).trim();
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (ymd) {
+    const y = parseInt(ymd[1], 10);
+    const m = parseInt(ymd[2], 10) - 1;
+    const d = parseInt(ymd[3], 10);
+    const local = new Date(y, m, d, 12, 0, 0, 0);
+    if (!isNaN(local.getTime())) return local;
+  }
+  const parsed = new Date(s);
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
 // ✅ NEW: Class-based service for pagination support
 class SaleService extends BaseService {
   async getAllSalesWithPagination(options: any = {}): Promise<any> {
@@ -160,11 +181,14 @@ export const createSale = async (data: any) => {
       balanceAmount = total;
       collectionStatus = 'Not Collected';
     }
+
+    const businessRegistrationDate = parseSaleBusinessDate(data);
     
     const sale = await Sale.create({
       ...data,
       registrationNumber,
-      registrationDate: new Date(),
+      registrationDate: businessRegistrationDate,
+      date: businessRegistrationDate,
       collectionStatus,  // Changed from paymentStatus
       collectedAmount,   // Changed from paidAmount
       balanceAmount,
@@ -202,7 +226,7 @@ export const createSale = async (data: any) => {
       // Use the sale registration number (RV####)
       await CashRegister.create({
         registrationNumber: registrationNumber,
-        registrationDate: new Date(),
+        registrationDate: businessRegistrationDate,
         transactionType: 'INFLOW',
         amount: total,
         paymentMethod: paymentMethodLabel,
@@ -257,7 +281,7 @@ export const createSale = async (data: any) => {
       // Use the sale registration number (RV####)
       await BankRegister.create({
         registrationNumber: registrationNumber,
-        registrationDate: new Date(),
+        registrationDate: businessRegistrationDate,
         transactionType: 'INFLOW',
         sourceTransactionType: 'SALE', // ✅ FIX: Add source transaction type
         amount: total,
@@ -305,7 +329,7 @@ export const createSale = async (data: any) => {
         const networkName = `${network.name} ${network.type}`;
         await AccountsReceivable.create({
           registrationNumber: registrationNumber,
-          registrationDate: new Date(),
+          registrationDate: businessRegistrationDate,
           type: paymentType === 'DEBIT_CARD' ? 'DEBIT_CARD_SALE' : 'CREDIT_CARD_SALE',
           relatedDocumentType: CashRegisterSourceType.SALE,
           relatedDocumentId: sale.id,
@@ -329,7 +353,7 @@ export const createSale = async (data: any) => {
         // CREDIT Sale: Client owes YOU money
         await AccountsReceivable.create({
           registrationNumber: registrationNumber,
-          registrationDate: new Date(),
+          registrationDate: businessRegistrationDate,
           type: 'CLIENT_CREDIT',
           relatedDocumentType: CashRegisterSourceType.SALE,
           relatedDocumentId: sale.id,
