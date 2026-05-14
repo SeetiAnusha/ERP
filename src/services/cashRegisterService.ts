@@ -772,13 +772,42 @@ class CashRegisterService extends BaseService {
     // Calculate new cash register balance
     const newCashBalance = lastBalance - outflowAmount;
     
-    // ✅ PROFESSIONAL: Add deposit tracking fields
-    // Determine if this is a previous day deposit
-    const depositDate = new Date(data.registrationDate);
-    const salesDate = data.sales_date ? new Date(data.sales_date) : depositDate;
-    const depositReferenceDate = data.deposit_reference_date ? new Date(data.deposit_reference_date) : salesDate;
-    const daysDifference = Math.floor((depositDate.getTime() - salesDate.getTime()) / (1000 * 60 * 60 * 24));
-    const isPreviousDayDeposit = daysDifference > 0;
+    // ✅ Deposit tracking: classify by calendar YYYY-MM-DD (not clock time) so "yesterday's takings deposited today" is reliable
+    const extractYmd = (v: unknown): string => {
+      if (v == null || v === '') return '';
+      if (typeof v === 'string') return v.slice(0, 10);
+      try {
+        return new Date(v as Date).toISOString().slice(0, 10);
+      } catch {
+        return '';
+      }
+    };
+    const depYmd = extractYmd((data as any).deposit_date ?? data.registrationDate);
+    const salesYmd = extractYmd(data.sales_date ?? data.registrationDate);
+    const isPreviousDayDeposit =
+      salesYmd.length >= 10 && depYmd.length >= 10 && salesYmd < depYmd;
+    const tSales = Date.UTC(
+      parseInt(salesYmd.slice(0, 4), 10),
+      parseInt(salesYmd.slice(5, 7), 10) - 1,
+      parseInt(salesYmd.slice(8, 10), 10)
+    );
+    const tDep = Date.UTC(
+      parseInt(depYmd.slice(0, 4), 10),
+      parseInt(depYmd.slice(5, 7), 10) - 1,
+      parseInt(depYmd.slice(8, 10), 10)
+    );
+    const daysDifference =
+      salesYmd.length >= 10 && depYmd.length >= 10
+        ? Math.floor((tDep - tSales) / (1000 * 60 * 60 * 24))
+        : 0;
+
+    const salesDate = data.sales_date ? new Date(data.sales_date as any) : new Date(data.registrationDate);
+    const depositDate = (data as any).deposit_date
+      ? new Date((data as any).deposit_date)
+      : new Date(data.registrationDate);
+    const depositReferenceDate = data.deposit_reference_date
+      ? new Date(data.deposit_reference_date)
+      : salesDate;
     
     // Get store info from cash register master
     const storeCode = cashRegisterMaster.code;
