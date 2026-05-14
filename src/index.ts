@@ -147,12 +147,33 @@ const startServer = async () => {
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
 
-    // Then connect to database in background
+    // Then connect to database in background with retry logic
     console.log('Attempting database connection...');
     console.log('Database URL:', process.env.DATABASE_URL ? 'Set (hidden for security)' : 'NOT SET!');
     
-    await sequelize.authenticate();
-    console.log('✓ Database connected successfully');
+    // Retry logic for database connection
+    let connected = false;
+    let retries = 3;
+    let lastError;
+    
+    while (!connected && retries > 0) {
+      try {
+        await sequelize.authenticate();
+        connected = true;
+        console.log('✓ Database connected successfully');
+      } catch (error: any) {
+        lastError = error;
+        retries--;
+        if (retries > 0) {
+          console.log(`⚠️ Connection attempt failed, retrying... (${retries} attempts left)`);
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+        }
+      }
+    }
+    
+    if (!connected) {
+      throw lastError; // Throw the last error if all retries failed
+    }
 
     // Import all models to ensure they're registered
     console.log('📦 Ensuring all models are imported...');
@@ -179,8 +200,7 @@ const startServer = async () => {
     console.log('💡 To create/update tables, run: npm run migrate');
     console.log('💡 To check migration status, run: npm run migrate:status');
     
-    // Verify database connection only (don't sync)
-    await sequelize.authenticate();
+    // Database already authenticated above, no need to do it again
     console.log('✅ Database connection verified');
     
     // Optional: Verify critical tables exist

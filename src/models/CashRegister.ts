@@ -31,8 +31,13 @@ interface CashRegisterAttributes {
   deposit_time?: string;         // Time of deposit
   deposited_by?: string;         // Who made the deposit
   deposit_reference_number?: string; // Bank reference number
+  // Opening and closing balance for end-of-day report
+  opening_balance?: number;      // Opening cash balance at start of day
+  closing_balance?: number;      // Closing cash balance at end of day
+  // Store information (denormalized for reporting)
   store_code?: string;           // Store/branch code
   store_name?: string;           // Store/branch name
+  store_location?: string;       // Store/branch location
   // Soft delete attributes
   deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
   deleted_at?: Date;
@@ -79,8 +84,13 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public deposit_time?: string;
   public deposited_by?: string;
   public deposit_reference_number?: string;
+  // Opening and closing balance for end-of-day report
+  public opening_balance?: number;
+  public closing_balance?: number;
+  // Store information (denormalized for reporting)
   public store_code?: string;
   public store_name?: string;
+  public store_location?: string;
   // Soft delete attributes
   public deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
   public deleted_at?: Date;
@@ -225,11 +235,25 @@ CashRegister.init(
       type: DataTypes.STRING(100),
       allowNull: true,
     },
+    // Opening and closing balance for end-of-day report
+    opening_balance: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+    },
+    closing_balance: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+    },
+    // Store information (denormalized for reporting)
     store_code: {
       type: DataTypes.STRING(50),
       allowNull: true,
     },
     store_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    store_location: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
