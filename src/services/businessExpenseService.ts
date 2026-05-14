@@ -7,6 +7,8 @@ import ExpenseCategory from '../models/ExpenseCategory';
 import ExpenseType from '../models/ExpenseType';
 import BankAccount from '../models/BankAccount';
 import Card from '../models/Card';
+import BankRegister from '../models/BankRegister';
+import AccountsPayable from '../models/AccountsPayable';
 import { TransactionType } from '../types/TransactionType';
 import { BaseService } from '../core/BaseService';
 import { ValidationError, NotFoundError, BusinessLogicError, InsufficientBalanceError } from '../core/AppError';
