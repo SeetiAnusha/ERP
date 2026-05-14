@@ -1,6 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
 import * as cashRegisterService from '../services/cashRegisterService';
 
+export const getEodReport = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const date = req.query.date as string;
+    if (!date || typeof date !== 'string') {
+      return res.status(400).json({ message: 'Query parameter "date" is required (YYYY-MM-DD)' });
+    }
+    const data = await cashRegisterService.getEndOfDayReportData(date);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // ✅ Check if pagination is requested

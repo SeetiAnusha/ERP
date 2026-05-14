@@ -965,6 +965,91 @@ export const getCashRegisterBalance = async (cashRegisterId: number) => {
   };
 };
 
+const EOD_REPORT_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * End-of-day report source of truth: full history (no pagination), opening = last running balance before report day.
+ */
+export const getEndOfDayReportData = async (reportDateStr: string) => {
+  if (!EOD_REPORT_DATE_REGEX.test(reportDateStr)) {
+    throw new ValidationError('Invalid date: expected YYYY-MM-DD');
+  }
+
+  // UTC calendar day [start, nextStart) — matches frontend filter on ISO date prefix (YYYY-MM-DD)
+  const [y, mo, d] = reportDateStr.split('-').map((n) => parseInt(n, 10));
+  const dayStartUtc = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0));
+  const nextDayStartUtc = new Date(Date.UTC(y, mo - 1, d + 1, 0, 0, 0, 0));
+
+  const masters = await CashRegisterMaster.findAll({
+    where: { status: 'ACTIVE' },
+    order: [['id', 'ASC']]
+  });
+
+  const include = [
+    {
+      model: CashRegisterMaster,
+      as: 'cashRegisterMaster',
+      attributes: ['id', 'code', 'name', 'location'],
+      required: false
+    },
+    {
+      model: BankAccount,
+      as: 'bankAccount',
+      attributes: ['id', 'bankName', 'accountNumber', 'accountType'],
+      required: false
+    }
+  ];
+
+  const stores: any[] = [];
+
+  for (const master of masters) {
+    const cid = master.id;
+
+    const lastBefore = await CashRegister.findOne({
+      where: {
+        cashRegisterId: cid,
+        registrationDate: { [Op.lt]: dayStartUtc }
+      },
+      order: [['registrationDate', 'DESC'], ['id', 'DESC']]
+    });
+
+    const openingBalance = lastBefore ? parseFloat(String(lastBefore.get('balance'))) : 0;
+
+    const dayRows = await CashRegister.findAll({
+      where: {
+        cashRegisterId: cid,
+        registrationDate: { [Op.gte]: dayStartUtc, [Op.lt]: nextDayStartUtc }
+      },
+      include: include as any,
+      order: [['registrationDate', 'ASC'], ['id', 'ASC']]
+    });
+
+    const transactions = dayRows.map((row) => {
+      const plain = row.get({ plain: true }) as any;
+      return {
+        ...plain,
+        relatedDocumentType: normalizeCashRegisterSourceType(plain.relatedDocumentType),
+        relatedDocumentNumber: plain.relatedDocumentNumber || null,
+        sourceLabel:
+          CashRegisterSourceTypeLabels[
+            normalizeCashRegisterSourceType(plain.relatedDocumentType)
+          ]
+      };
+    });
+
+    stores.push({
+      id: master.id,
+      name: master.name,
+      code: master.code,
+      location: master.location,
+      openingBalance,
+      transactions
+    });
+  }
+
+  return { reportDate: reportDateStr, stores };
+};
+
 // Get pending AR invoices for a customer - ONLY Credit Sales
 // Get pending Credit Sale and Credit Card Sale invoices for customer
 export const getPendingCreditSaleInvoices = async (customerId: number) => {
