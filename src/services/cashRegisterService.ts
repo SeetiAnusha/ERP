@@ -1010,7 +1010,12 @@ export const getEndOfDayReportData = async (reportDateStr: string) => {
         cashRegisterId: cid,
         registrationDate: { [Op.lt]: dayStartUtc }
       },
-      order: [['registrationDate', 'DESC'], ['id', 'DESC']]
+      // registrationDate alone is wrong when e.g. deposit is date-only midnight UTC
+      // but sale is same calendar day at noon — DESC by date picks sale (6000) not final cash (3000).
+      order: [
+        ['createdAt', 'DESC'],
+        ['id', 'DESC']
+      ]
     });
 
     const openingBalance = lastBefore ? parseFloat(String(lastBefore.get('balance'))) : 0;
