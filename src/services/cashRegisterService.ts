@@ -22,6 +22,7 @@ import {
   InsufficientBalanceError 
 } from '../core/AppError';
 import * as creditBalanceService from './creditBalanceService';
+import bankRegisterService from './bankRegisterService';
 import { 
   CashRegisterSourceType, 
   normalizeCashRegisterSourceType,
@@ -724,7 +725,7 @@ class CashRegisterService extends BaseService {
     const investorName = agreement?.investorName || 'Unknown Investor';
     
     // Create Bank Register entry
-    const bankRegisterService = (await import('./bankRegisterService')).default;
+    // bankRegisterService already imported at top
     const bankRegisterData = {
       registrationDate: data.registrationDate || new Date(),
       transactionType: 'INFLOW' as const,

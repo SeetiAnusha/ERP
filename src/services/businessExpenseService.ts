@@ -403,9 +403,9 @@ class BusinessExpenseService extends BaseService {
     businessExpense: BusinessExpense,
     transaction: Transaction
   ): Promise<void> {
-    const BankAccount = (await import('../models/BankAccount')).default;
-    const BankRegister = (await import('../models/BankRegister')).default;
-    const Supplier = (await import('../models/Supplier')).default;
+    // BankAccount already imported at top
+    // BankRegister already imported at top
+    // Supplier already imported at top
     
     // Get bank account and supplier info
     const bankAccount = await BankAccount.findByPk(data.bankAccountId!, { transaction });
@@ -464,8 +464,8 @@ class BusinessExpenseService extends BaseService {
     businessExpense: BusinessExpense,
     transaction: Transaction
   ): Promise<void> {
-    const Card = (await import('../models/Card')).default;
-    const AccountsPayable = (await import('../models/AccountsPayable')).default;
+    // Card already imported at top
+    // AccountsPayable already imported at top
     
     // Get card info for validation only
     const card = await Card.findByPk(data.cardId!, { transaction });
@@ -521,8 +521,8 @@ class BusinessExpenseService extends BaseService {
     businessExpense: BusinessExpense,
     transaction: Transaction
   ): Promise<void> {
-    const AccountsPayable = (await import('../models/AccountsPayable')).default;
-    const Supplier = (await import('../models/Supplier')).default;
+    // AccountsPayable already imported at top
+    // Supplier already imported at top
     
     // Get supplier info
     const supplier = await Supplier.findByPk(data.supplierId, { transaction });
@@ -607,8 +607,8 @@ class BusinessExpenseService extends BaseService {
   private async processAssociatedCostBankPayment(cost: any, transaction: Transaction): Promise<void> {
     if (!cost.bankAccountId) return;
     
-    const BankAccount = (await import('../models/BankAccount')).default;
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankAccount already imported at top
+    // BankRegister already imported at top
     
     const bankAccount = await BankAccount.findByPk(cost.bankAccountId, { transaction });
     if (!bankAccount) return;
@@ -653,7 +653,7 @@ class BusinessExpenseService extends BaseService {
   private async processAssociatedCostCreditCardPayment(cost: any, transaction: Transaction): Promise<void> {
     if (!cost.cardId) return;
     
-    const Card = (await import('../models/Card')).default;
+    // Card already imported at top
     const card = await Card.findByPk(cost.cardId, { transaction });
     if (!card) return;
     
@@ -919,8 +919,8 @@ class BusinessExpenseService extends BaseService {
       throw new Error('Bank account is required for bank payments');
     }
 
-    const BankAccount = (await import('../models/BankAccount')).default;
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankAccount already imported at top
+    // BankRegister already imported at top
 
     // Validate bank account
     const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
@@ -980,7 +980,7 @@ class BusinessExpenseService extends BaseService {
       throw new Error('Credit card is required for credit card payments');
     }
 
-    const Card = (await import('../models/Card')).default;
+    // Card already imported at top
     const card = await Card.findByPk(paymentData.cardId, { transaction });
     if (!card) {
       throw new Error('Credit card not found');
@@ -1014,7 +1014,7 @@ class BusinessExpenseService extends BaseService {
    */
   private async updateRelatedAccountsPayable(expense: any, paymentAmount: number, transaction: any): Promise<void> {
     try {
-      const AccountsPayable = (await import('../models/AccountsPayable')).default;
+      // AccountsPayable already imported at top
       
       // Find related AP entry
       const apEntry = await AccountsPayable.findOne({

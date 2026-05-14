@@ -13,6 +13,7 @@ import PrepaidExpense from '../models/PrepaidExpense';
 import BankRegister from '../models/BankRegister';
 import AccountsPayable from '../models/AccountsPayable';
 import BankAccount from '../models/BankAccount';
+import sequelize from '../config/database';
 import { Op } from 'sequelize';
 import { BaseService } from '../core/BaseService';
 import { NotFoundError } from '../core/AppError';
@@ -123,8 +124,8 @@ export const determineStatus = (
  * Space Complexity: O(1)
  */
 export const createPrepaidExpense = async (data: any) => {
-  const { Sequelize } = await import('sequelize');
-  const sequelize = (await import('../config/database')).default;
+  // Sequelize already imported
+  // sequelize already imported at top
 
   // ✅ Duplicate prevention — check if code already exists (outside transaction for speed)
   if (data.code) {

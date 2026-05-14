@@ -310,7 +310,7 @@ class InvestmentService extends BaseService {
    * Create bank register entry
    */
   private async createBankRegisterEntry(data: any, transaction: any): Promise<void> {
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankRegister already imported at top
     await BankRegister.create(data, { transaction });
     console.log(`✅ Bank register entry created: ${data.registrationNumber}`);
   }
@@ -319,7 +319,7 @@ class InvestmentService extends BaseService {
    * Create accounts payable entry
    */
   private async createAccountsPayableEntry(data: any, transaction: any): Promise<void> {
-    const AccountsPayable = (await import('../models/AccountsPayable')).default;
+    // AccountsPayable already imported at top
     await AccountsPayable.create(data, { transaction });
     console.log(`✅ Accounts payable entry created: ${data.registrationNumber}`);
   }
@@ -333,7 +333,7 @@ class InvestmentService extends BaseService {
     isDebit: boolean,
     transaction: any
   ): Promise<void> {
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     const bankAccount = await BankAccount.findByPk(bankAccountId, { transaction });
     if (!bankAccount) {
       throw new NotFoundError(`Bank account with ID ${bankAccountId} not found`);

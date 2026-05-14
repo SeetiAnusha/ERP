@@ -12,6 +12,9 @@
 import { Op, Transaction } from 'sequelize';
 import sequelize from '../config/database';
 import CreditCardRegister from '../models/CreditCardRegister';
+import Card from '../models/Card';
+import BankAccount from '../models/BankAccount';
+import bankRegisterService from './bankRegisterService';
 import { TransactionType } from '../types/TransactionType';
 import { BaseService } from '../core/BaseService';
 import { 
@@ -183,7 +186,7 @@ class CreditCardRegisterService extends BaseService {
       this.validateCreditCardRegisterData(data);
       
       // Step 2: Get card information
-      const Card = (await import('../models/Card')).default;
+      // Card already imported at top
       const card = await Card.findByPk(data.cardId, { transaction });
       if (!card) {
         throw new NotFoundError(`Card with ID ${data.cardId} not found`);
@@ -251,7 +254,7 @@ class CreditCardRegisterService extends BaseService {
     return this.executeWithTransaction(async (transaction) => {
       
       // Step 1: Get and validate card
-      const Card = (await import('../models/Card')).default;
+      // Card already imported at top
       const card = await Card.findByPk(paymentData.cardId, { transaction });
       if (!card) {
         throw new NotFoundError(`Card with ID ${paymentData.cardId} not found`);
@@ -366,7 +369,7 @@ class CreditCardRegisterService extends BaseService {
       this.validateNumeric(cardId, 'Card ID', { min: 1 });
       
       // Get card information
-      const Card = (await import('../models/Card')).default;
+      // Card already imported at top
       const card = await Card.findByPk(cardId);
       if (!card) {
         throw new NotFoundError(`Card with ID ${cardId} not found`);
@@ -524,7 +527,7 @@ class CreditCardRegisterService extends BaseService {
       console.log('💳 [Service] Restore credit card called with data:', JSON.stringify(data, null, 2));
       
       // Step 1: Get and validate card
-      const Card = (await import('../models/Card')).default;
+      // Card already imported at top
       const card = await Card.findByPk(data.cardId, { transaction });
       if (!card) {
         console.error('❌ Card not found:', data.cardId);
@@ -575,7 +578,7 @@ class CreditCardRegisterService extends BaseService {
         }
         
         // Validate bank account exists and has sufficient balance
-        const BankAccount = (await import('../models/BankAccount')).default;
+        // BankAccount already imported at top
         const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
         if (!bankAccount) {
           throw new NotFoundError('Bank account not found');
@@ -589,7 +592,7 @@ class CreditCardRegisterService extends BaseService {
         }
         
         // Create bank register entry
-        const bankRegisterService = (await import('./bankRegisterService')).default;
+        // bankRegisterService already imported at top
         const cardInfo = `${card.cardBrand || 'Card'} ****${card.cardNumberLast4}`;
         
         bankRegister = await bankRegisterService.createBankRegister({

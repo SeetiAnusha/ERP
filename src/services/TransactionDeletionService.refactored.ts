@@ -8,6 +8,8 @@
 import { Transaction, Op } from 'sequelize';
 import ApprovalRequest from '../models/ApprovalRequest';
 import TransactionAuditTrail from '../models/TransactionAuditTrail';
+import BankRegister from '../models/BankRegister';
+import CashRegister from '../models/CashRegister';
 import { BaseService } from '../core/BaseService';
 import { NotFoundError, BusinessLogicError } from '../core/AppError';
 import crypto from 'crypto';
@@ -404,7 +406,7 @@ export class TransactionDeletionService extends BaseService {
    */
   async getAvailableBankRegistersForDeletion(): Promise<any[]> {
     return this.executeWithTransaction(async (transaction) => {
-      const BankRegister = (await import('../models/BankRegister')).default;
+      // BankRegister already imported at top
       
       const registers = await BankRegister.findAll({
         where: {
@@ -433,7 +435,7 @@ export class TransactionDeletionService extends BaseService {
    */
   async getAvailableCashRegistersForDeletion(): Promise<any[]> {
     return this.executeWithTransaction(async (transaction) => {
-      const CashRegister = (await import('../models/CashRegister')).default;
+      // CashRegister already imported at top
       
       const registers = await CashRegister.findAll({
         where: {

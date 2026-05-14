@@ -1,4 +1,7 @@
 import CreditBalance from '../models/CreditBalance';
+import BusinessExpense from '../models/BusinessExpense';
+import CashRegisterMaster from '../models/CashRegisterMaster';
+import BankAccount from '../models/BankAccount';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { BaseService } from '../core/BaseService';
@@ -616,13 +619,11 @@ class CreditBalanceService extends BaseService {
     transaction: any
   ): Promise<void> {
     try {
-      // Import Cash Register service
-      const { cashRegisterService } = await import('./cashRegisterService');
+      // Dynamic import to avoid circular dependency: cashRegisterService → creditBalanceService → cashRegisterService
+      const cashRegisterService = (await import('./cashRegisterService')).default;
       
-      // Get default cash register (you may need to modify this based on your business logic)
-      const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
       const defaultCashRegister = await CashRegisterMaster.findOne({
-        order: [['id', 'ASC']], // Get first cash register as default
+        order: [['id', 'ASC']],
         transaction
       });
       
@@ -664,13 +665,11 @@ class CreditBalanceService extends BaseService {
     creditAmount: number,
     transaction: any
   ): Promise<void> {
-    // Import Bank Register service
+    // Dynamic import to avoid potential circular dependency
     const bankRegisterService = (await import('./bankRegisterService')).default;
     
-    // Get default bank account (you may need to modify this based on your business logic)
-    const BankAccount = (await import('../models/BankAccount')).default;
     const defaultBankAccount = await BankAccount.findOne({
-      order: [['id', 'ASC']], // Get first bank account as default
+      order: [['id', 'ASC']],
       transaction
     });
     
@@ -713,7 +712,7 @@ class CreditBalanceService extends BaseService {
         console.log(`🔄 [CreditBalance] Updating related business expense ${ap.relatedDocumentId} for credit payment`);
         
         // Import BusinessExpense model
-        const BusinessExpense = (await import('../models/BusinessExpense')).default;
+        // BusinessExpense already imported at top
         
         // Get the business expense
         const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId, { transaction });

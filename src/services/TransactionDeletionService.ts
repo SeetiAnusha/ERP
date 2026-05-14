@@ -211,7 +211,7 @@
         
 //       case 'business_expense':
 //       case 'businessexpense':
-//         const BusinessExpense = (await import('../models/BusinessExpense')).default;
+//         // BusinessExpense already imported at top
 //         entity = await BusinessExpense.findByPk(id, { transaction });
 //         if (entity) {
 //           amount = parseFloat(entity.amount.toString());
@@ -679,7 +679,7 @@
 //     const operations: ReversalOperation[] = [];
     
 //     // Get full business expense data
-//     const BusinessExpense = (await import('../models/BusinessExpense')).default;
+//     // BusinessExpense already imported at top
 //     const expense = await BusinessExpense.findByPk(node.id, { transaction });
 //     if (!expense) return operations;
     
@@ -1298,7 +1298,7 @@
 //     const operations: ReversalOperation[] = [];
 
 //     // 1. Find related bank register entry (more flexible search)
-//     const BankRegister = (await import('../models/BankRegister')).default;
+//     // BankRegister already imported at top
 //     const bankEntry = await BankRegister.findOne({
 //       where: {
 //         relatedDocumentNumber: ap.registrationNumber,
@@ -1720,7 +1720,7 @@
 //     operations: ReversalOperation[],
 //     transaction: Transaction
 //   ): Promise<void> {
-//     const creditCardRegisterService = (await import('./creditCardRegisterService')).default;
+//     // creditCardRegisterService already imported at top
     
 //     for (const op of operations) {
 //       const { originalEntry, reversalType, amount, description, deletion_approval_id } = op.data;
@@ -1752,7 +1752,7 @@
 //     operations: ReversalOperation[],
 //     transaction: Transaction
 //   ): Promise<void> {
-//     const CashRegisterMaster = (await import('../models/CashRegisterMaster')).default;
+//     // CashRegisterMaster already imported at top
     
 //     for (const op of operations) {
 //       const { originalEntry, reversalType, amount, description, deletion_approval_id } = op.data;
@@ -1887,7 +1887,7 @@
 //     operations: ReversalOperation[],
 //     transaction: Transaction
 //   ): Promise<void> {
-//     const Card = (await import('../models/Card')).default;
+//     // Card already imported at top
     
 //     for (const op of operations) {
 //       const { restoreAmount, description } = op.data;

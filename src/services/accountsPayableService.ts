@@ -1,4 +1,4 @@
-﻿﻿/**
+/**
  * Enterprise-Grade Accounts Payable Service
  * 
  * Unified service combining basic operations with enhanced features:
@@ -14,6 +14,10 @@
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import AccountsPayable from '../models/AccountsPayable';
+import BankAccount from '../models/BankAccount';
+import Card from '../models/Card';
+import BankRegister from '../models/BankRegister';
+import BusinessExpense from '../models/BusinessExpense';
 import { TransactionType } from '../types/TransactionType';
 import { BaseService } from '../core/BaseService';
 import { TransactionFactory } from './shared/TransactionFactory';
@@ -24,8 +28,10 @@ import {
   BusinessLogicError, 
   NotFoundError 
 } from '../core/AppError';
+import bankRegisterService from './bankRegisterService';
+import creditCardRegisterService from './creditCardRegisterService';
 
-// ✅ PHASE 2: Import GL Posting Services
+// ? PHASE 2: Import GL Posting Services
 import GLPostingService from './accounting/GLPostingService';
 import AccountingRulesEngine from './accounting/AccountingRulesEngine';
 import { SourceModule } from '../models/accounting/GeneralLedger';
@@ -114,7 +120,7 @@ class AccountsPayableService extends BaseService {
     dateTo?: Date;
   } = {}): Promise<any> {
     return this.executeWithRetry(async () => {
-      console.log('🔍 Service: getAllAccountsPayable called with options:', options);
+      console.log('?? Service: getAllAccountsPayable called with options:', options);
       
       // Check if pagination is requested
       if (options.page || options.limit) {
@@ -128,7 +134,7 @@ class AccountsPayableService extends BaseService {
           }
         );
         
-        console.log(`✅ Retrieved ${result.data.length} of ${result.pagination.total} AP records (Page ${result.pagination.page}/${result.pagination.totalPages})`);
+        console.log(`? Retrieved ${result.data.length} of ${result.pagination.total} AP records (Page ${result.pagination.page}/${result.pagination.totalPages})`);
         return result;
       }
       
@@ -198,7 +204,7 @@ class AccountsPayableService extends BaseService {
           status: {
             [Op.in]: ['Pending', 'Partial']
           },
-          // 🔥 CRITICAL: Exclude deleted transactions from payment selection
+          // ?? CRITICAL: Exclude deleted transactions from payment selection
           deletion_status: {
             [Op.notIn]: ['EXECUTED'] // Don't show executed deletions
           }
@@ -417,17 +423,17 @@ class AccountsPayableService extends BaseService {
         throw new ValidationError('Invalid payment method or missing required payment data');
       }
       
-      // ✅ CRITICAL FIX: NO GL entry for credit card AP when clicking "Pay"!
+      // ? CRITICAL FIX: NO GL entry for credit card AP when clicking "Pay"!
       // 
       // ACCOUNTING LOGIC:
-      // 1. Purchase with credit card → GL entry: Dr. Inventory, Cr. Credit Card Payable
-      // 2. Click "Pay" button → NO GL entry (just internal tracking)
-      // 3. Restore credit card → GL entry: Dr. Credit Card Payable, Cr. Bank
+      // 1. Purchase with credit card ? GL entry: Dr. Inventory, Cr. Credit Card Payable
+      // 2. Click "Pay" button ? NO GL entry (just internal tracking)
+      // 3. Restore credit card ? GL entry: Dr. Credit Card Payable, Cr. Bank
       //
       // The liability (Credit Card Payable) exists from purchase until restoration.
       // Clicking "Pay" only tracks credit usage, doesn't move money or change liability.
       //
-      // ✅ APPLIES TO ALL CREDIT CARD AP TYPES:
+      // ? APPLIES TO ALL CREDIT CARD AP TYPES:
       // - CREDIT_CARD_PURCHASE (main purchase)
       // - CREDIT_CARD_INVOICEASSOCIATE (associated invoice)
       // - CREDIT_CARD_EXPENSE (business expense)
@@ -439,7 +445,7 @@ class AccountsPayableService extends BaseService {
       ];
       
       if (!creditCardAPTypes.includes(ap.type)) {
-        // ✅ Only post GL entries for NON-credit-card payments (supplier credit, etc.)
+        // ? Only post GL entries for NON-credit-card payments (supplier credit, etc.)
         try {
           const paymentMethod = paymentData.bankAccountId ? 'BANK' : 'CASH';
           
@@ -458,13 +464,13 @@ class AccountsPayableService extends BaseService {
             entries: glEntries,
           }, transaction);
           
-          console.log('✅ GL entries posted successfully for supplier credit AP payment', ap.registrationNumber);
+          console.log('? GL entries posted successfully for supplier credit AP payment', ap.registrationNumber);
         } catch (glError: any) {
-          console.error('❌ Failed to post GL entries for AP payment:', glError.message);
+          console.error('? Failed to post GL entries for AP payment:', glError.message);
           throw glError; // Will trigger transaction rollback
         }
       } else {
-        console.log(`⚠️ Skipping GL entry for credit card AP (type: ${ap.type}) - liability already recorded at purchase time`);
+        console.log(`?? Skipping GL entry for credit card AP (type: ${ap.type}) - liability already recorded at purchase time`);
         console.log('   Current GL state: Dr. Inventory/Expense, Cr. Credit Card Payable (unchanged)');
         console.log('   Action taken: Credit limit tracking only (no GL impact)');
         console.log('   GL entry will be created when credit card is restored (paid to credit card company)');
@@ -664,8 +670,9 @@ class AccountsPayableService extends BaseService {
     
     if (data.ncf && data.ncf.trim().length > 0) {
       const ncf = data.ncf.replace(/\D/g, '');
-      if (ncf.length !== 8) {
-        throw new ValidationError('NCF must be 8 digits');
+      // Accept 8 digits (plain NCF) or 10 digits (Dominican B-prefix format stripped)
+      if (ncf.length !== 8 && ncf.length !== 10) {
+        throw new ValidationError('NCF must be 8 or 10 digits');
       }
     }
     
@@ -673,7 +680,13 @@ class AccountsPayableService extends BaseService {
     const validPaymentTypes = ['CASH', 'CREDIT', 'DEBIT_CARD', 'CREDIT_CARD', 'CHEQUE', 'BANK_TRANSFER'];
     this.validateEnum(data.paymentType, 'Payment type', validPaymentTypes);
     
-    const validTypes = ['CREDIT_PURCHASE', 'CREDIT_EXPENSE', 'CREDIT_CARD_PURCHASE', 'SUPPLIER_CREDIT'];
+    const validTypes = [
+      'CREDIT_PURCHASE',
+      'CREDIT_EXPENSE',
+      'CREDIT_CARD_PURCHASE',
+      'CREDIT_CARD_INVOICEASSOCIATE',
+      'SUPPLIER_CREDIT'
+    ];
     this.validateEnum(data.type, 'Type', validTypes);
     
     // Date validations
@@ -722,10 +735,10 @@ class AccountsPayableService extends BaseService {
     try {
       // Check if this AP is related to a business expense
       if (ap.relatedDocumentType === 'Business Expense' && ap.relatedDocumentId) {
-        console.log(`🔄 Updating related business expense ${ap.relatedDocumentId} for AP payment`);
+        console.log(`?? Updating related business expense ${ap.relatedDocumentId} for AP payment`);
         
         // Import BusinessExpense model
-        const BusinessExpense = (await import('../models/BusinessExpense')).default;
+        // BusinessExpense already imported at top
         
         // Get the business expense
         const businessExpense = await BusinessExpense.findByPk(ap.relatedDocumentId, { transaction });
@@ -753,9 +766,9 @@ class AccountsPayableService extends BaseService {
           }, { transaction });
           
           console.log(` Updated business expense ${businessExpense.registrationNumber}:`);
-          console.log(`   - Paid Amount: ₹${currentPaidAmount} → ₹${newPaidAmount}`);
-          console.log(`   - Balance: ₹${totalAmount - currentPaidAmount} → ₹${newBalanceAmount}`);
-          console.log(`   - Status: ${businessExpense.paymentStatus} → ${newPaymentStatus}`);
+          console.log(`   - Paid Amount: ?${currentPaidAmount} ? ?${newPaidAmount}`);
+          console.log(`   - Balance: ?${totalAmount - currentPaidAmount} ? ?${newBalanceAmount}`);
+          console.log(`   - Status: ${businessExpense.paymentStatus} ? ${newPaymentStatus}`);
         } else {
           console.log(` Business expense ${ap.relatedDocumentId} not found`);
         }
@@ -781,7 +794,7 @@ class AccountsPayableService extends BaseService {
       bankAccountId: paymentData.bankAccountId
     });
 
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     
     const bankAccount = await BankAccount.findByPk(paymentData.bankAccountId, { transaction });
     if (!bankAccount) {
@@ -811,11 +824,11 @@ class AccountsPayableService extends BaseService {
     //  REMOVED: Credit card debt restoration logic - no longer needed with new approach
     // Credit card payments now directly reduce credit limit when paying (not when creating AP)
     
-    console.log('🏦 Creating Bank Register entry using TransactionFactory...');
+    console.log('?? Creating Bank Register entry using TransactionFactory...');
     
     // REFACTORED: Use TransactionFactory instead of manual data construction
     try {
-      const bankRegisterService = (await import('./bankRegisterService')).default;
+      // bankRegisterService already imported at top
       
       // Create AP context for TransactionFactory
       const context: APContext = {
@@ -864,8 +877,8 @@ class AccountsPayableService extends BaseService {
    * Process card payment with proper validation
    */
   private async processCardPayment(ap: AccountsPayable, paymentData: PaymentRequest, transaction: any): Promise<void> {
-    const Card = (await import('../models/Card')).default;
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // Card already imported at top
+    // BankAccount already imported at top
     
     const card = await Card.findByPk(paymentData.cardId, { transaction });
     if (!card) {
@@ -892,7 +905,7 @@ class AccountsPayableService extends BaseService {
       throw new ValidationError(`DEBIT card ${cardInfo} is not linked to a bank account`);
     }
     
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
     if (!bankAccount) {
       throw new ValidationError(`Bank account not found for DEBIT card ${cardInfo}`);
@@ -912,7 +925,7 @@ class AccountsPayableService extends BaseService {
     await bankAccount.update({ balance: newBankBalance }, { transaction });
     
     //  REFACTORED: Use TransactionFactory instead of removed createBankRegisterEntry method
-    const bankRegisterService = (await import('./bankRegisterService')).default;
+    // bankRegisterService already imported at top
     
     // Create AP context for TransactionFactory
     const context: APContext = {
@@ -952,7 +965,7 @@ class AccountsPayableService extends BaseService {
    */
   private async processCreditCardPayment(card: any, ap: AccountsPayable, amount: number, cardInfo: string, paymentData: PaymentRequest, transaction: any): Promise<void> {
     //  UPDATED LOGIC: Use Credit Card Register instead of Bank Register
-    console.log(`💳 [Credit Card Payment] Processing payment for AP ${ap.registrationNumber} using card ${cardInfo}`);
+    console.log(`?? [Credit Card Payment] Processing payment for AP ${ap.registrationNumber} using card ${cardInfo}`);
     
     // Validate credit limit
     const creditLimit = Number(card.creditLimit || 0);
@@ -971,7 +984,7 @@ class AccountsPayableService extends BaseService {
     );
     
     //  Create Credit Card Register entry (this will also update the card's used credit)
-    const creditCardRegisterService = (await import('./creditCardRegisterService')).default;
+    // creditCardRegisterService already imported at top
     
     const ccPaymentData = {
       cardId: card.id,
@@ -988,31 +1001,31 @@ class AccountsPayableService extends BaseService {
     
     const ccRegisterEntry = await creditCardRegisterService.processCreditCardPayment(ccPaymentData);
     
-    console.log(`💳 [CC Register] Created entry ${ccRegisterEntry.registrationNumber} - Credit limit reduced and payment recorded`);
+    console.log(`?? [CC Register] Created entry ${ccRegisterEntry.registrationNumber} - Credit limit reduced and payment recorded`);
   }
 
   /**
    * Restore credit limit when paying credit card debt
    */
-  // ✅ REMOVED: restoreCreditLimit method - no longer needed with new approach
+  // ? REMOVED: restoreCreditLimit method - no longer needed with new approach
   // Credit card payments now work simply:
   // 1. Purchase creates AP (no credit limit change)
   // 2. Pay button reduces credit limit + creates bank entry
   
-  // ✅ REMOVED: createCreditCardDebtEntry method - no longer needed with new approach
+  // ? REMOVED: createCreditCardDebtEntry method - no longer needed with new approach
   // No more complex debt creation - direct payment to supplier
 
   /**
    * Create bank register entry
    */
-  // ✅ REMOVED: createBankRegisterEntry method - now using shared bankRegisterService.createBankRegister()
+  // ? REMOVED: createBankRegisterEntry method - now using shared bankRegisterService.createBankRegister()
   // This eliminates 45 lines of duplicated code that exists in Purchase Service
 
   /**
    * Get last bank balance
    */
   private async getLastBankBalance(bankAccountId?: number, transaction?: any): Promise<number> {
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankRegister not needed here
     
     const whereClause = bankAccountId ? { bankAccountId } : {};
     

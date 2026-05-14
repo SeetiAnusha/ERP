@@ -1,8 +1,12 @@
-﻿import Purchase from '../models/Purchase';
+import Purchase from '../models/Purchase';
 import PurchaseItem from '../models/PurchaseItem';
 import AssociatedInvoice from '../models/AssociatedInvoice';
 import Supplier from '../models/Supplier';
 import Product from '../models/Product';
+import BankAccount from '../models/BankAccount';
+import BankRegister from '../models/BankRegister';
+import Card from '../models/Card';
+import AccountsPayable from '../models/AccountsPayable';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import { TransactionType } from '../types/TransactionType';
@@ -153,7 +157,7 @@ class PurchaseService extends BaseService {
       
       // Step 2: Generate registration number
       console.time('  ├─ Registration Number');
-      const registrationNumber = await this.generatePurchaseRegistrationNumber(transaction);
+      const registrationNumber = await this.generateRegistrationNumber(transaction);
       console.timeEnd('  ├─ Registration Number');
       
       // Step 3: Calculate payment status and amounts
@@ -681,7 +685,7 @@ class PurchaseService extends BaseService {
   }
   
   private async getLastBankBalance(bankAccountId?: number, transaction?: any): Promise<number> {
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankRegister already imported at top
     
     const whereClause = bankAccountId ? { bankAccountId } : {};
     
@@ -695,7 +699,7 @@ class PurchaseService extends BaseService {
   }
   
   private async updateBankAccountBalance(bankAccountId: number, amount: number, isDebit: boolean = true, transaction?: any): Promise<void> {
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     
     const bankAccount = await BankAccount.findByPk(bankAccountId, { transaction });
     if (!bankAccount) {
@@ -735,7 +739,7 @@ class PurchaseService extends BaseService {
   }
   
   private async processBankPayment(data: any, purchase: any, amount: number, transaction: any): Promise<void> {
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     
     console.log('🏦 Processing bank payment:', {
       bankAccountId: data.bankAccountId,
@@ -810,7 +814,7 @@ class PurchaseService extends BaseService {
   }
   
   private async processCardPayment(data: any, purchase: any, amount: number, transaction: any): Promise<void> {
-    const Card = (await import('../models/Card')).default;
+    // Card already imported at top
     
     // Get and validate card
     const card = await Card.findByPk(data.cardId, { transaction });
@@ -835,7 +839,7 @@ class PurchaseService extends BaseService {
       throw new ValidationError('DEBIT card must be linked to a bank account');
     }
     
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
     if (!bankAccount) {
       throw new NotFoundError('Bank account not found for this DEBIT card');
@@ -981,13 +985,13 @@ class PurchaseService extends BaseService {
     supplierId?: number;  // ⭐ NEW: Add supplier ID
     originalPaymentType?: string;  // ⭐ NEW: Add original payment type
   }, transaction?: any): Promise<void> {
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankRegister already imported at top
     
     // ⭐ NEW: Get bank account name and account type if bankAccountId is provided
     let bankAccountName = '';
     let accountType: 'CHECKING' | 'SAVINGS' | undefined = undefined;
     if (data.bankAccountId) {
-      const BankAccount = (await import('../models/BankAccount')).default;
+      // BankAccount already imported at top
       const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
       if (bankAccount) {
         bankAccountName = `${bankAccount.bankName} - ${bankAccount.accountNumber}`;
@@ -1046,7 +1050,7 @@ class PurchaseService extends BaseService {
     amount: number;
     notes?: string;
   }, transaction?: any): Promise<void> {
-    const AccountsPayable = (await import('../models/AccountsPayable')).default;
+    // AccountsPayable already imported at top
     
     await AccountsPayable.create({
       registrationNumber: data.registrationNumber,
@@ -1193,7 +1197,7 @@ class PurchaseService extends BaseService {
       throw new ValidationError(`Invoice "${invoice.concept}" requires a card to be selected for DEBIT_CARD payment`);
     }
     
-    const Card = (await import('../models/Card')).default;
+    // Card already imported at top
     const card = await Card.findByPk(invoice.cardId, { transaction });
     if (!card) {
       throw new NotFoundError(`Card not found for invoice: ${invoice.concept}`);
@@ -1205,7 +1209,7 @@ class PurchaseService extends BaseService {
       throw new ValidationError(`DEBIT card ****${card.cardNumberLast4} must be linked to a bank account`);
     }
     
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankAccount already imported at top
     const bankAccount = await BankAccount.findByPk(card.bankAccountId, { transaction });
     if (!bankAccount) {
       throw new NotFoundError(`Bank account not found for DEBIT card ****${card.cardNumberLast4}`);
@@ -1241,7 +1245,7 @@ class PurchaseService extends BaseService {
       throw new ValidationError(`Invoice "${invoice.concept}" requires a card to be selected for CREDIT_CARD payment`);
     }
     
-    const Card = (await import('../models/Card')).default;
+    // Card already imported at top
     const card = await Card.findByPk(invoice.cardId, { transaction });
     if (!card) {
       throw new NotFoundError(`Card not found for invoice: ${invoice.concept}`);
@@ -1336,7 +1340,7 @@ class PurchaseService extends BaseService {
     
     // Handle bank account payments
     if ((invoice.paymentType === 'BANK_TRANSFER' || invoice.paymentType === 'CHEQUE' || invoice.paymentType === 'DEPOSIT') && invoice.bankAccountId) {
-      const BankAccount = (await import('../models/BankAccount')).default;
+      // BankAccount already imported at top
       const bankAccount = await BankAccount.findByPk(invoice.bankAccountId, { transaction });
       if (!bankAccount) {
         throw new NotFoundError(`Bank account not found for invoice: ${invoice.concept}`);

@@ -1,5 +1,8 @@
 import AccountsReceivable from '../models/AccountsReceivable';
 import Expense from '../models/Expense';
+import BusinessExpense from '../models/BusinessExpense';
+import BankRegister from '../models/BankRegister';
+import BankAccount from '../models/BankAccount';
 import { Op } from 'sequelize';
 import sequelize from '../config/database';
 import * as creditBalanceService from './creditBalanceService';
@@ -82,7 +85,7 @@ class AccountsReceivableService extends BaseService {
           });
 
           // Check BusinessExpense table for processing fees
-          const BusinessExpense = (await import('../models/BusinessExpense')).default;
+          // BusinessExpense already imported at top
           const businessExpenses = await BusinessExpense.findAll({
             where: {
               description: {
@@ -443,8 +446,8 @@ class AccountsReceivableService extends BaseService {
 
 
   private async processCardSalePayment(ar: AccountsReceivable, paymentData: RecordPaymentRequest, amount: number, transaction: any): Promise<void> {
-    const BankRegister = (await import('../models/BankRegister')).default;
-    const BankAccount = (await import('../models/BankAccount')).default;
+    // BankRegister already imported at top
+    // BankAccount already imported at top
     
     if (!paymentData.bankAccountId) {
       throw new ValidationError('Bank account ID is required for card sale payment');
@@ -575,7 +578,7 @@ class AccountsReceivableService extends BaseService {
   }
 
   private async generateBankRegisterNumber(transaction?: any): Promise<string> {
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankRegister already imported at top
     
     const lastBankTransaction = await BankRegister.findOne({
       where: {
@@ -597,7 +600,7 @@ class AccountsReceivableService extends BaseService {
   }
 
   private async getLastBankBalance(bankAccountId: number, transaction?: any): Promise<number> {
-    const BankRegister = (await import('../models/BankRegister')).default;
+    // BankRegister already imported at top
     
     const lastBankBalance = await BankRegister.findOne({
       where: { bankAccountId },

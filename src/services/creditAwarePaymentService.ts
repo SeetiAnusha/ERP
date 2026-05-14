@@ -5,6 +5,9 @@ import { TransactionType } from '../types/TransactionType';
 import sequelize from '../config/database';
 import { creditBalanceService } from './creditBalanceService';
 import bankRegisterService from './bankRegisterService';
+import AccountsPayable from '../models/AccountsPayable';
+import BankAccount from '../models/BankAccount';
+import BusinessExpense from '../models/BusinessExpense';
 
 export interface CreditAwarePaymentRequest {
   supplierId: number;
@@ -40,7 +43,7 @@ export class CreditAwarePaymentService extends BaseService {
     this.validatePaymentRequest(request);
 
     try {
-      const AccountsPayable = (await import('../models/AccountsPayable')).default;
+      // AccountsPayable already imported at top
 
       // Step 1: Get available credit balances for supplier
       const availableCredits = await creditBalanceService.getCreditBalancesByEntity(
@@ -142,7 +145,7 @@ export class CreditAwarePaymentService extends BaseService {
       if (bankPaymentNeeded > 0) {
         console.log(` Validating bank account balance for payment of ₹${bankPaymentNeeded}...`);
         
-        const BankAccount = (await import('../models/BankAccount')).default;
+        // BankAccount already imported at top
         const bankAccount = await BankAccount.findByPk(request.bankAccountId);
         
         if (!bankAccount) {
@@ -203,7 +206,7 @@ export class CreditAwarePaymentService extends BaseService {
       if (creditUsed > 0 || bankPaymentNeeded > 0) {
         console.log(' Verifying final AP status after combined payments...');
         
-        const AccountsPayable = (await import('../models/AccountsPayable')).default;
+        // AccountsPayable already imported at top
         
         for (const invoiceId of request.invoiceIds) {
           const apInvoice = await AccountsPayable.findByPk(invoiceId);
@@ -241,7 +244,7 @@ export class CreditAwarePaymentService extends BaseService {
             
             // Also update related Business Expense if needed
             if (apInvoice.relatedDocumentType === 'Business Expense' && apInvoice.relatedDocumentId) {
-              const BusinessExpense = (await import('../models/BusinessExpense')).default;
+              // BusinessExpense already imported at top
               const businessExpense = await BusinessExpense.findByPk(apInvoice.relatedDocumentId);
               
               if (businessExpense) {
@@ -353,7 +356,7 @@ export class CreditAwarePaymentService extends BaseService {
     );
     
     // Get invoice balances
-    const AccountsPayable = (await import('../models/AccountsPayable')).default;
+    // AccountsPayable already imported at top
     const invoices = await AccountsPayable.findAll({
       where: { id: invoiceIds }
     });
@@ -400,7 +403,7 @@ export class CreditAwarePaymentService extends BaseService {
     let bankBalanceValidation;
     if (bankPaymentNeeded > 0 && bankAccountId && !overpaymentBlocked) {
       try {
-        const BankAccount = (await import('../models/BankAccount')).default;
+        // BankAccount already imported at top
         const bankAccount = await BankAccount.findByPk(bankAccountId);
         
         if (bankAccount) {
