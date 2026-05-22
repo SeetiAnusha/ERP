@@ -431,6 +431,10 @@ class AccountsReceivableService extends BaseService {
         // Status
         status: FeeStatus.RECORDED,
         
+        // Expense categorization (required fields)
+        expenseType: 'CARD_PROCESSING_FEE',
+        expenseCategory: 'Card Expenses',
+        
         // Notes with full context
         notes: `${cardNetworkName} Processing Fee - Client: ${client.name}${client.rncCedula ? ` (RNC: ${client.rncCedula})` : ''} - AR: ${ar.registrationNumber} - Original Amount: ₹${ar.amount}, Received: ₹${paymentData.amount}, Processing Fee: ₹${processingFeeAmount}. Automatically created from AR collection.`,
       }, { transaction });
@@ -610,6 +614,124 @@ class AccountsReceivableService extends BaseService {
     
     return lastBankBalance ? Number(lastBankBalance.balance) : 0;
   }
+  
+  // ==================== CARD PAYMENT RECORDING ====================
+  
+  /**
+   * Record Card Payment - For AR records marked with collection_method = CREDIT_CARD/DEBIT_CARD
+   * This is called from the "Record Payment" button in AR page
+   * 
+   * Purpose: Actually process the bank transaction for card payments that were marked earlier
+   * 
+   * @param id - AR record ID
+   * @param bankAccountId - Bank account to record the payment to
+   * @param amount - Optional amount (defaults to AR balance amount)
+   */
+  async recordCardPayment(id: number, bankAccountId: number, amount?: number): Promise<any> {
+    return this.executeWithTransaction(async (transaction) => {
+      console.log('💳 [Record Card Payment] Starting card payment recording');
+      
+      // Get AR record
+      const ar = await AccountsReceivable.findByPk(id, { transaction });
+      if (!ar) {
+        throw new NotFoundError('Accounts Receivable not found');
+      }
+      
+      // Validate that this AR has a card collection method
+      if (!ar.collection_method || !['CREDIT_CARD', 'DEBIT_CARD'].includes(ar.collection_method)) {
+        throw new BusinessLogicError(
+          'This AR record does not have a card collection method. ' +
+          'Only records marked with Credit Card or Debit Card can use this function.'
+        );
+      }
+      
+      console.log(`📋 [Record Card Payment] AR: ${ar.registrationNumber}, collection_method: ${ar.collection_method}`);
+      
+      // Get bank account
+      const bankAccount = await BankAccount.findByPk(bankAccountId, { transaction });
+      if (!bankAccount) {
+        throw new NotFoundError('Bank account not found');
+      }
+      
+      // Determine payment amount (use provided amount or AR balance)
+      const paymentAmount = amount || Number(ar.balanceAmount);
+      
+      if (paymentAmount <= 0) {
+        throw new ValidationError('Payment amount must be greater than 0');
+      }
+      
+      if (paymentAmount > Number(ar.balanceAmount)) {
+        throw new ValidationError(
+          `Payment amount (₹${paymentAmount}) cannot exceed balance amount (₹${ar.balanceAmount})`
+        );
+      }
+      
+      console.log(`💰 [Record Card Payment] Payment amount: ₹${paymentAmount}`);
+      
+      // Generate bank register number
+      const bankRegistrationNumber = await this.generateBankRegisterNumber(transaction);
+      
+      // Get last bank balance
+      const lastBankBalance = await this.getLastBankBalance(bankAccountId, transaction);
+      const newBankBalance = lastBankBalance + paymentAmount;
+      
+      // Create bank register entry
+      await BankRegister.create({
+        registrationNumber: bankRegistrationNumber,
+        registrationDate: new Date(),
+        transactionType: 'INFLOW',
+        sourceTransactionType: 'AR_COLLECTION',
+        amount: paymentAmount,
+        paymentMethod: ar.collection_method, // CREDIT_CARD or DEBIT_CARD
+        relatedDocumentType: 'AR_COLLECTION',
+        relatedDocumentNumber: ar.registrationNumber,
+        clientName: ar.clientName || 'Card Payment',
+        clientRnc: ar.clientRnc || '',
+        ncf: ar.ncf || '',
+        description: `${ar.collection_method} Payment - ${ar.relatedDocumentNumber} - ${ar.clientName || 'Customer'}`,
+        balance: newBankBalance,
+        bankAccountId: bankAccountId,
+        bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+        originalPaymentType: ar.type || 'CREDIT_SALE'
+      }, { transaction });
+      
+      console.log(`✅ [Record Card Payment] Bank register entry created: ${bankRegistrationNumber}`);
+      
+      // Update bank account balance
+      const newBankAccountBalance = Number(bankAccount.balance) + paymentAmount;
+      await bankAccount.update({
+        balance: newBankAccountBalance,
+      }, { transaction });
+      
+      console.log(`✅ [Record Card Payment] Bank account balance updated: ₹${newBankAccountBalance}`);
+      
+      // Update AR record
+      const newReceivedAmount = Number(ar.receivedAmount) + paymentAmount;
+      const newBalanceAmount = Number(ar.amount) - newReceivedAmount;
+      const newStatus = newBalanceAmount <= 0.01 ? 'Received' : 'Partial';
+      
+      await ar.update({
+        receivedAmount: newReceivedAmount,
+        balanceAmount: newBalanceAmount,
+        status: newStatus,
+        receivedDate: newStatus === 'Received' ? new Date() : ar.receivedDate,
+        actualBankDeposit: paymentAmount,
+        bankAccountId: bankAccountId,
+        collectionNotes: `${ar.collectionNotes || ''}\nPayment recorded: ₹${paymentAmount} on ${new Date().toLocaleDateString()}`
+      }, { transaction });
+      
+      console.log(`✅ [Record Card Payment] AR record updated: ${ar.registrationNumber}`);
+      console.log(`   Received: ₹${ar.receivedAmount} → ₹${newReceivedAmount}`);
+      console.log(`   Balance: ₹${ar.balanceAmount} → ₹${newBalanceAmount}`);
+      console.log(`   Status: ${ar.status} → ${newStatus}`);
+      
+      return {
+        accountsReceivable: ar,
+        bankRegister: bankRegistrationNumber,
+        message: `Card payment of ₹${paymentAmount} recorded successfully. Bank account balance updated.`
+      };
+    });
+  }
 }
 
 // Export singleton instance
@@ -622,4 +744,5 @@ export const getAccountsReceivableById = (id: number) => accountsReceivableServi
 export const getPendingAccountsReceivable = () => accountsReceivableService.getPendingAccountsReceivable();
 export const createAccountsReceivable = (data: CreateARRequest) => accountsReceivableService.createAccountsReceivable(data);
 export const recordPayment = (id: number, paymentData: RecordPaymentRequest) => accountsReceivableService.recordPayment(id, paymentData);
+export const recordCardPayment = (id: number, bankAccountId: number, amount?: number) => accountsReceivableService.recordCardPayment(id, bankAccountId, amount);
 export const deleteAccountsReceivable = (id: number) => accountsReceivableService.deleteAccountsReceivable(id);

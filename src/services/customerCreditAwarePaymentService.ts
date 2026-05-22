@@ -158,70 +158,75 @@ class CustomerCreditAwarePaymentService extends BaseService {
       
       console.log(`💰 Payment Analysis: Invoice=₹${totalInvoiceBalance}, Credit=₹${availableCredit}, Requested=₹${request.requestedPaymentAmount}`);
       
-      // Step 4: Implement EXACT scenario logic from user table
+      // Step 4: Implement PARTIAL PAYMENT logic with credit awareness
       let creditUsed = 0;
       let cashPaymentNeeded = 0;
       let newCreditCreated = 0;
       let recordInCashRegister = false;
       let paymentTypeRequired = false;
       
-      if (availableCredit >= totalInvoiceBalance) {
-        // 🎯 Credit covers invoice fully - but still show payment type dropdown
-        console.log(`✅ Scenario: Credit covers invoice (Credit ≥ Invoice)`);
+      // 🔥 CRITICAL FIX: Support partial payments
+      // The requestedPaymentAmount is what the customer is ACTUALLY paying now
+      // This can be less than, equal to, or more than the invoice balance
+      
+      if (request.requestedPaymentAmount > totalInvoiceBalance) {
+        // Overpayment scenario - customer paying more than owed
+        console.log(`✅ Scenario: Overpayment (Payment > Invoice)`);
         
-        if (request.requestedPaymentAmount > totalInvoiceBalance) {
-          // 🚫 Block unnecessary overpayment
-          throw new BusinessLogicError(
-            `🚫 OVERPAYMENT BLOCKED: You have sufficient credit (₹${availableCredit.toFixed(2)}) to pay invoice (₹${totalInvoiceBalance.toFixed(2)}). No need to pay extra.`
-          );
-        }
+        // Use available credit first (if any)
+        creditUsed = Math.min(availableCredit, totalInvoiceBalance);
         
-        // NEW PLAN: Always require payment type, record full invoice amount
-        creditUsed = totalInvoiceBalance;
-        cashPaymentNeeded = totalInvoiceBalance; // Record FULL invoice amount
+        // Calculate actual cash needed from customer
+        const remainingAfterCredit = totalInvoiceBalance - creditUsed;
+        cashPaymentNeeded = request.requestedPaymentAmount - creditUsed; // Actual cash from customer
+        
+        // Create new credit from overpayment
+        newCreditCreated = request.requestedPaymentAmount - totalInvoiceBalance;
+        
         recordInCashRegister = true;
         paymentTypeRequired = true;
         
-        console.log(`💳 Credit-only payment: Using ₹${creditUsed} from credit, recording ₹${cashPaymentNeeded} in selected register`);
+        console.log(`💰 Overpayment: Credit=₹${creditUsed}, Cash=₹${cashPaymentNeeded}, NewCredit=₹${newCreditCreated}`);
+        
+      } else if (request.requestedPaymentAmount === totalInvoiceBalance) {
+        // Exact payment scenario - customer paying exactly what's owed
+        console.log(`✅ Scenario: Exact payment (Payment = Invoice)`);
+        
+        // Use available credit first (if any)
+        creditUsed = Math.min(availableCredit, totalInvoiceBalance);
+        
+        // Calculate actual cash needed from customer
+        cashPaymentNeeded = request.requestedPaymentAmount - creditUsed; // Actual cash from customer
+        
+        recordInCashRegister = true;
+        paymentTypeRequired = true;
+        
+        console.log(`💰 Exact payment: Credit=₹${creditUsed}, Cash=₹${cashPaymentNeeded}`);
         
       } else {
-        // 🎯 Scenarios 1️⃣, 3️⃣, 7️⃣, 8️⃣, 🔟 - Credit < Invoice, payment type needed
-        console.log(`✅ Scenario: Credit insufficient (Credit < Invoice), payment type required`);
+        // Partial payment scenario - customer paying less than owed
+        console.log(`✅ Scenario: Partial payment (Payment < Invoice)`);
         
-        if (request.requestedPaymentAmount < totalInvoiceBalance) {
-          // 🚫 Scenario 9️⃣ - Insufficient amount
-          throw new BusinessLogicError(
-            `❌ INSUFFICIENT AMOUNT: Amount ₹${request.requestedPaymentAmount.toFixed(2)} < Invoice ₹${totalInvoiceBalance.toFixed(2)}. Please enter full invoice amount or more.`
-          );
-        }
+        // Use available credit first (if any), but only up to the payment amount
+        creditUsed = Math.min(availableCredit, request.requestedPaymentAmount);
         
-        // Use available credit silently
-        creditUsed = availableCredit;
+        // Calculate actual cash needed from customer
+        cashPaymentNeeded = request.requestedPaymentAmount - creditUsed; // Actual cash from customer
         
-        // 🔥 CORRECTED: Record FULL invoice amount in selected payment method
-        // This represents the complete settlement regardless of credit/cash mix
-        const totalInvoiceAmount = totalInvoiceBalance; // Full invoice amount
-        cashPaymentNeeded = totalInvoiceAmount; // Record full amount in register
         recordInCashRegister = true;
         paymentTypeRequired = true;
         
-        // 🔥 FIX: Calculate new credit correctly - only if user pays MORE than invoice amount
-        if (request.requestedPaymentAmount > totalInvoiceBalance) {
-          // True overpayment: user pays more than invoice amount
-          newCreditCreated = request.requestedPaymentAmount - totalInvoiceBalance;
-        } else {
-          // No overpayment: user pays exactly invoice amount or less
-          newCreditCreated = 0;
-        }
-        
-        console.log(`💰 Mixed payment: Credit=₹${creditUsed}, Cash=₹${cashPaymentNeeded}, NewCredit=₹${newCreditCreated}`);
+        console.log(`💰 Partial payment: Credit=₹${creditUsed}, Cash=₹${cashPaymentNeeded}, Remaining=₹${totalInvoiceBalance - request.requestedPaymentAmount}`);
       }
       
-      // Step 5: Apply credit if needed
+      // Step 5: Update invoice balances with the payment
+      // Apply credit first, then cash payment
+      const totalPaymentToApply = creditUsed + cashPaymentNeeded;
+      
       if (creditUsed > 0) {
         console.log(`🔄 Applying ₹${creditUsed} from existing credit balances...`);
         
-        const creditApplication = await creditBalanceService.creditBalanceService.applyCreditToInvoices({
+        await creditBalanceService.creditBalanceService.applyCreditToInvoices({
           entityType: 'CLIENT',
           entityId: request.customerId,
           invoicesToUpdate: invoices,
@@ -229,6 +234,38 @@ class CustomerCreditAwarePaymentService extends BaseService {
         });
         
         console.log(`✅ Applied ₹${creditUsed} from credit balances to invoices`);
+      }
+      
+      // Update invoice balances with cash payment portion
+      if (cashPaymentNeeded > 0) {
+        console.log(`🔄 Updating invoices with cash payment of ₹${cashPaymentNeeded}...`);
+        
+        let remainingCashPayment = cashPaymentNeeded;
+        
+        for (const invoice of invoices) {
+          if (remainingCashPayment <= 0) break;
+          
+          const currentBalance = parseFloat(invoice.balanceAmount.toString());
+          const currentReceived = parseFloat(invoice.receivedAmount.toString());
+          const invoiceTotal = parseFloat(invoice.amount.toString());
+          
+          // Calculate how much to apply to this invoice
+          const amountToApply = Math.min(remainingCashPayment, currentBalance);
+          
+          const newReceivedAmount = currentReceived + amountToApply;
+          const newBalanceAmount = invoiceTotal - newReceivedAmount;
+          const newStatus = newBalanceAmount <= 0.01 ? 'Received' : 'Partial';
+          
+          await invoice.update({
+            receivedAmount: this.roundCurrency(newReceivedAmount),
+            balanceAmount: this.roundCurrency(Math.max(0, newBalanceAmount)),
+            status: newStatus,
+          }, { transaction });
+          
+          remainingCashPayment -= amountToApply;
+          
+          console.log(`✅ Updated invoice ${invoice.registrationNumber}: Received=₹${newReceivedAmount}, Balance=₹${newBalanceAmount}, Status=${newStatus}`);
+        }
       }
       
       // Step 6: Process payment if needed
@@ -293,9 +330,9 @@ class CustomerCreditAwarePaymentService extends BaseService {
       const result = await this.calculateFinalResults(
         request.invoiceIds,
         creditUsed,
-        recordInCashRegister ? cashPaymentNeeded : 0, // Show full amount recorded in register
+        cashPaymentNeeded, // This is the ACTUAL cash from customer
         newCreditCreated,
-        paymentEntry, // Use generic paymentEntry instead of cashRegisterEntry
+        paymentEntry,
         transaction
       );
       
@@ -307,8 +344,10 @@ class CustomerCreditAwarePaymentService extends BaseService {
       
       console.log(`🎉 Payment completed successfully:`, {
         creditUsed,
-        cashFromCustomer: recordInCashRegister ? cashPaymentNeeded : 0,
+        cashFromCustomer: cashPaymentNeeded,
+        totalPaymentProcessed: creditUsed + cashPaymentNeeded,
         newCreditCreated,
+        remainingInvoiceBalance: totalInvoiceBalance - (creditUsed + cashPaymentNeeded),
         paymentTypeRequired,
         recordInCashRegister
       });
@@ -377,7 +416,7 @@ class CustomerCreditAwarePaymentService extends BaseService {
         );
       }
       
-      // Implement exact scenario logic from user table
+      // Implement partial payment logic with credit awareness
       let creditWillBeUsed = 0;
       let cashPaymentNeeded = 0;
       let willCreateNewCredit = false;
@@ -386,44 +425,48 @@ class CustomerCreditAwarePaymentService extends BaseService {
       let recordInCashRegister = false;
       let errorMessage = undefined;
       
-      if (availableCredit >= totalInvoiceBalance) {
-        // Scenarios 2️⃣, 4️⃣, 6️⃣ - Credit covers invoice fully
+      if (requestedAmount > totalInvoiceBalance) {
+        // Overpayment scenario - customer paying more than owed
+        console.log(`📊 Preview: Overpayment (Payment > Invoice)`);
         
-        if (requestedAmount > totalInvoiceBalance) {
-          // Scenario 5️⃣ - Block unnecessary overpayment
-          errorMessage = `You have sufficient credit (₹${availableCredit}) to pay invoice (₹${totalInvoiceBalance}). No need to pay extra.`;
-        } else {
-          // Credit-only payment - Record FULL invoice amount in selected register
-          creditWillBeUsed = totalInvoiceBalance;
-          cashPaymentNeeded = totalInvoiceBalance; // FULL invoice amount
-          paymentTypeRequired = true;
-          recordInCashRegister = true;
-        }
+        // Use available credit first (if any)
+        creditWillBeUsed = Math.min(availableCredit, totalInvoiceBalance);
+        
+        // Calculate actual cash needed from customer
+        cashPaymentNeeded = requestedAmount - creditWillBeUsed;
+        
+        // Create new credit from overpayment
+        willCreateNewCredit = true;
+        newCreditAmount = requestedAmount - totalInvoiceBalance;
+        
+        paymentTypeRequired = true;
+        recordInCashRegister = true;
+        
+      } else if (requestedAmount === totalInvoiceBalance) {
+        // Exact payment scenario - customer paying exactly what's owed
+        console.log(`📊 Preview: Exact payment (Payment = Invoice)`);
+        
+        // Use available credit first (if any)
+        creditWillBeUsed = Math.min(availableCredit, totalInvoiceBalance);
+        
+        // Calculate actual cash needed from customer
+        cashPaymentNeeded = requestedAmount - creditWillBeUsed;
+        
+        paymentTypeRequired = true;
+        recordInCashRegister = true;
         
       } else {
-        // Scenarios 1️⃣, 3️⃣, 7️⃣, 8️⃣, 🔟 - Credit < Invoice, payment type needed
+        // Partial payment scenario - customer paying less than owed
+        console.log(`📊 Preview: Partial payment (Payment < Invoice)`);
         
-        if (requestedAmount < totalInvoiceBalance) {
-          // Scenario 9️⃣ - Insufficient amount
-          errorMessage = `Amount ₹${requestedAmount} < Invoice ₹${totalInvoiceBalance}. Please enter full invoice amount or more.`;
-        } else {
-          // Payment type required - Record FULL invoice amount in selected method
-          creditWillBeUsed = availableCredit; // Used silently
-          cashPaymentNeeded = totalInvoiceBalance; // FULL invoice amount recorded
-          paymentTypeRequired = true;
-          recordInCashRegister = true;
-          
-          // 🔥 FIX: Calculate new credit correctly - only if user pays MORE than invoice amount
-          if (requestedAmount > totalInvoiceBalance) {
-            // True overpayment: user pays more than invoice amount
-            willCreateNewCredit = true;
-            newCreditAmount = requestedAmount - totalInvoiceBalance;
-          } else {
-            // No overpayment: user pays exactly invoice amount or less
-            willCreateNewCredit = false;
-            newCreditAmount = 0;
-          }
-        }
+        // Use available credit first (if any), but only up to the payment amount
+        creditWillBeUsed = Math.min(availableCredit, requestedAmount);
+        
+        // Calculate actual cash needed from customer
+        cashPaymentNeeded = requestedAmount - creditWillBeUsed;
+        
+        paymentTypeRequired = true;
+        recordInCashRegister = true;
       }
       
       return {
@@ -611,12 +654,30 @@ class CustomerCreditAwarePaymentService extends BaseService {
 
       // Route based on payment method
       const cashMethods = ['CASH'];
-      const bankMethods = ['UPI', 'BANK_TRANSFER', 'CHEQUE', 'CARD', 'DEBIT_CARD', 'CREDIT_CARD'];
+      const bankMethods = ['UPI', 'BANK_TRANSFER', 'DEPOSIT', 'CHEQUE', 'CARD', 'DEBIT_CARD', 'CREDIT_CARD'];
+      
+      // ✅ ADD: Comprehensive logging for debugging
+      console.log('💰 [Payment Routing]', {
+        paymentMethod: request.paymentMethod,
+        amount: cashPaymentAmount,
+        cashRegisterId: request.cashRegisterId,
+        bankAccountId: request.bankAccountId,
+        willRouteToCash: cashMethods.includes(request.paymentMethod),
+        willRouteToBank: bankMethods.includes(request.paymentMethod)
+      });
       
       if (cashMethods.includes(request.paymentMethod)) {
+        console.log('→ Routing to Cash Register Master');
         // Route to Cash Register Master
         return await this.processCashRegisterPayment(request, cashPaymentAmount, transaction);
       } else if (bankMethods.includes(request.paymentMethod)) {
+        console.log('→ Routing to Bank Register');
+        
+        // ✅ ADD: Validate bank account ID for bank payments
+        if (!request.bankAccountId) {
+          throw new ValidationError('Bank account selection is required for bank payments');
+        }
+        
         // Route to Bank Register
         return await this.processBankRegisterPayment(request, cashPaymentAmount, transaction);
       } else {

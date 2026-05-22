@@ -50,6 +50,10 @@ interface CashTransactionRequest {
   // Flag to prevent duplicate credit balance creation when called from Customer Credit Aware Payment Service
   skipCreditBalanceCreation?: boolean;
   
+  // ✅ NEW: Fields for AR collection with card (prevent duplicate AR records)
+  fromAccountsReceivable?: boolean;      // Flag to indicate source
+  accountsReceivableId?: number;         // Existing AR record ID
+  
   // ✅ PROFESSIONAL: Deposit tracking fields (for sales date vs deposit date clarity)
   sales_date?: Date | string;             // When money was earned
   deposit_date?: Date | string;           // When deposit physically happened
@@ -282,6 +286,16 @@ class CashRegisterService extends BaseService {
   ): Promise<CashRegister> {
     return this.executeWithTransaction(async (transaction) => {
       
+      console.log('🔵 [Cash Register] Starting transaction creation:', {
+        transactionType: data.transactionType,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        relatedDocumentType: data.relatedDocumentType,
+        cashRegisterId: data.cashRegisterId,
+        bankAccountId: data.bankAccountId,
+        customerId: data.customerId
+      });
+      
       // ✅ PROFESSIONAL: Normalize source type before validation
       const normalizedData = {
         ...data,
@@ -290,9 +304,11 @@ class CashRegisterService extends BaseService {
       
       // Step 1: Comprehensive validation using ValidationFramework
       this.validateCashTransactionRequest(normalizedData);
+      console.log('✅ [Cash Register] Validation passed');
       
       // Step 2: Determine if cash register is required
       const needsCashRegister = this.determineIfCashRegisterRequired(normalizedData);
+      console.log(`🔍 [Cash Register] Needs cash register: ${needsCashRegister}`);
       
       // Step 3: Validate and get cash register (if needed)
       let cashRegisterMaster = null;
@@ -305,13 +321,16 @@ class CashRegisterService extends BaseService {
         
         cashRegisterMaster = await this.validateAndGetCashRegister(normalizedData.cashRegisterId, transaction);
         lastBalance = await this.getLastCashRegisterBalance(normalizedData.cashRegisterId, cashRegisterMaster, transaction);
+        console.log(`💰 [Cash Register] Current balance: ₹${lastBalance}`);
       }
       
       // Step 4: Generate registration number
       const registrationNumber = await this.generateCashRegistrationNumber(transaction);
+      console.log(`📝 [Cash Register] Generated registration number: ${registrationNumber}`);
       
       // Step 5: Process transaction based on type
       if (normalizedData.transactionType === 'INFLOW') {
+        console.log('→ [Cash Register] Processing INFLOW transaction');
         return await this.processInflowTransaction(
           normalizedData,
           registrationNumber,
@@ -321,6 +340,7 @@ class CashRegisterService extends BaseService {
           transaction
         );
       } else {
+        console.log('→ [Cash Register] Processing OUTFLOW transaction');
         return await this.processOutflowTransaction(
           normalizedData,
           registrationNumber,
@@ -427,9 +447,73 @@ class CashRegisterService extends BaseService {
     transaction: any
   ): Promise<CashRegister> {
     
+    console.log('🔵 [INFLOW] Processing inflow transaction:', {
+      relatedDocumentType: data.relatedDocumentType,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      needsCashRegister,
+      cashRegisterMasterId: cashRegisterMaster?.id,
+      bankAccountId: data.bankAccountId
+    });
+    
+    // ✅ CRITICAL FIX: For AR Collection with bank payment methods, route to Bank Register
+    // ⚠️ IMPORTANT: CHEQUE goes to Cash Register (physical cheque in hand), not Bank Register
+    const bankPaymentMethods = ['BANK_TRANSFER', 'DEPOSIT', 'UPI'];
+    const isARCollectionWithBankPayment = 
+      data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION && 
+      bankPaymentMethods.includes(data.paymentMethod);
+    
+    if (isARCollectionWithBankPayment) {
+      console.log('💳 [INFLOW] AR Collection with bank payment - routing to Bank Register');
+      
+      if (!data.bankAccountId) {
+        throw new ValidationError('Bank Account ID is required for bank payment methods');
+      }
+      
+      // Process AR Collection (updates AR status)
+      await this.processARCollection(data, transaction);
+      
+      // Create Bank Register entry instead of Cash Register
+      await this.createBankRegisterForARCollection(data, registrationNumber, transaction);
+      
+      // Return a placeholder cash register entry (for response consistency)
+      return {
+        id: 0,
+        registrationNumber,
+        ...data,
+        balance: lastBalance
+      } as CashRegister;
+    }
+    
+    // ✅ CRITICAL FIX: For AR Collection with Credit/Debit Card, ONLY mark collection_method (NO payment processing)
+    const cardPaymentMethods = ['CREDIT_CARD', 'DEBIT_CARD'];
+    const isARCollectionWithCard = 
+      data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION && 
+      cardPaymentMethods.includes(data.paymentMethod) &&
+      data.fromAccountsReceivable === true &&  // Flag from frontend
+      data.accountsReceivableId != null;       // Existing AR ID
+    
+    if (isARCollectionWithCard) {
+      console.log('💳 [INFLOW] AR Collection with Card - ONLY mark collection_method (NO payment processing yet)');
+      console.log('⚠️ [INFLOW] Actual payment will be recorded later via "Record Payment" button in AR page');
+      
+      // Process card collection marking (ONLY sets collection_method, NO payment processing)
+      await this.processARCollectionWithCard(data, registrationNumber, transaction);
+      
+      // Return placeholder (no cash register entry needed)
+      return {
+        id: 0,
+        registrationNumber,
+        ...data,
+        balance: lastBalance
+      } as CashRegister;
+    }
+    
     if (data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION) {
+      console.log('→ [INFLOW] Processing AR Collection (Cash payment)');
       await this.processARCollection(data, transaction);
     } else if (data.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION || data.relatedDocumentType === CashRegisterSourceType.LOAN) {
+      console.log('→ [INFLOW] Processing Investment Transaction');
       await this.processInvestmentTransaction(data, transaction);
       
       // ✅ NEW: For non-cash CONTRIBUTION/LOAN, create Bank Register entry instead
@@ -450,6 +534,7 @@ class CashRegisterService extends BaseService {
     let newBalance = lastBalance;
     if (needsCashRegister) {
       newBalance = lastBalance + parseFloat(data.amount.toString());
+      console.log(`💰 [INFLOW] Balance calculation: ₹${lastBalance} + ₹${data.amount} = ₹${newBalance}`);
     }
     
     // ✅ PROFESSIONAL: Add sales date and store info for INFLOW transactions
@@ -472,13 +557,27 @@ class CashRegisterService extends BaseService {
       cashTransactionData.cashRegisterId = data.cashRegisterId;
     }
     
+    console.log('📝 [INFLOW] Creating cash register transaction:', {
+      registrationNumber,
+      amount: data.amount,
+      balance: newBalance,
+      cashRegisterId: cashTransactionData.cashRegisterId
+    });
+    
     const cashTransaction = await CashRegister.create(cashTransactionData, { transaction });
+    console.log(`✅ [INFLOW] Cash register transaction created: ${cashTransaction.id}`);
     
     // Update cash register master balance (only if cash register is involved)
     if (needsCashRegister && cashRegisterMaster) {
+      const oldBalance = parseFloat(cashRegisterMaster.balance.toString());
       await cashRegisterMaster.update({
         balance: newBalance,
       }, { transaction });
+      
+      // ✅ ADD: Confirmation logging
+      console.log(`✅ [Cash Register Balance Updated] ${cashRegisterMaster.name}: ₹${oldBalance} → ₹${newBalance} (+₹${parseFloat(data.amount.toString())})`);
+    } else {
+      console.log('⚠️ [INFLOW] Cash register master NOT updated (needsCashRegister=false or no cashRegisterMaster)');
     }
     
     return cashTransaction;
@@ -533,14 +632,18 @@ class CashRegisterService extends BaseService {
   }
   
   /**
-   * Process AR Collection with overpayment handling
+   * Process AR Collection with partial payment support and overpayment handling
    */
   private async processARCollection(data: CashTransactionRequest, transaction: any): Promise<void> {
+    console.log('🔵 [AR Collection] Starting AR collection processing');
+    
     if (!data.customerId || !data.invoiceIds) {
       throw new ValidationError('Customer ID and Invoice IDs are required for AR Collection');
     }
     
     const invoiceIdsArray = JSON.parse(data.invoiceIds);
+    console.log(`📋 [AR Collection] Processing ${invoiceIdsArray.length} invoice(s):`, invoiceIdsArray);
+    
     let totalOutstandingBalance = 0;
     const invoicesToUpdate = [];
     
@@ -572,9 +675,16 @@ class CashRegisterService extends BaseService {
       invoicesToUpdate.push(arInvoice);
     }
     
-    // Handle overpayment
     const paymentAmount = parseFloat(data.amount.toString());
+    console.log(`💰 [AR Collection] Payment: ₹${paymentAmount}, Outstanding: ₹${totalOutstandingBalance}`);
+    
+    // 🔥 CRITICAL FIX: Support partial payments
+    // Allow payment amount to be less than, equal to, or more than outstanding balance
+    
     if (paymentAmount > totalOutstandingBalance) {
+      // Overpayment scenario
+      console.log(`⚠️ [AR Collection] Overpayment detected: ₹${paymentAmount - totalOutstandingBalance}`);
+      
       await this.handleAROverpayment(
         data,
         paymentAmount,
@@ -582,10 +692,18 @@ class CashRegisterService extends BaseService {
         invoicesToUpdate[0],
         transaction
       );
+    } else if (paymentAmount < totalOutstandingBalance) {
+      // Partial payment scenario
+      console.log(`✅ [AR Collection] Partial payment: ₹${paymentAmount} of ₹${totalOutstandingBalance}`);
+    } else {
+      // Exact payment scenario
+      console.log(`✅ [AR Collection] Exact payment: ₹${paymentAmount}`);
     }
     
-    // Update AR invoices
+    // Update AR invoices with the actual payment amount
+    console.log('→ [AR Collection] Updating AR invoices...');
     await this.updateARInvoices(invoicesToUpdate, paymentAmount, totalOutstandingBalance, transaction);
+    console.log('✅ [AR Collection] AR invoices updated successfully');
   }
   
   /**
@@ -668,6 +786,53 @@ class CashRegisterService extends BaseService {
   }
   
   /**
+   * Process AR Collection with Credit/Debit Card
+   * ONLY marks the collection_method field - NO payment processing yet
+   * Actual payment will be recorded later via "Record Payment" button in AR page
+   * 
+   * Time Complexity: O(1) - Single AR record update
+   * Space Complexity: O(1) - No additional data structures
+   */
+  private async processARCollectionWithCard(
+    data: CashTransactionRequest,
+    registrationNumber: string,
+    transaction: any
+  ): Promise<void> {
+    
+    console.log('💳 [AR Collection Card] Starting card collection marking (NO payment processing yet)');
+    
+    // Validate required fields
+    if (!data.accountsReceivableId) {
+      throw new ValidationError('Accounts Receivable ID is required for card collection');
+    }
+    
+    // Get existing AR record
+    const arRecord = await AccountsReceivable.findByPk(
+      data.accountsReceivableId, 
+      { transaction }
+    );
+    
+    if (!arRecord) {
+      throw new NotFoundError(`Accounts Receivable record with ID ${data.accountsReceivableId} not found`);
+    }
+    
+    console.log(`📋 [AR Collection Card] Found AR record: ${arRecord.registrationNumber}`);
+    console.log(`💰 [AR Collection Card] Current balance: ₹${arRecord.balanceAmount}`);
+    
+    // ✅ ONLY UPDATE collection_method field (NO amount changes, NO payment processing)
+    await arRecord.update({
+      collection_method: data.paymentMethod,  // ✅ Mark as CREDIT_CARD or DEBIT_CARD
+      collectionDate: new Date(),
+      collectionNotes: `Marked for ${data.paymentMethod} payment via Cash Register on ${new Date().toLocaleDateString()}. Amount: ₹${data.amount}. Payment will be recorded later.`
+    }, { transaction });
+    
+    console.log(`✅ [AR Collection Card] Marked AR record ${arRecord.id} with collection_method: ${data.paymentMethod}`);
+    console.log(`⚠️ [AR Collection Card] NO payment processed yet - amounts unchanged`);
+    console.log(`⚠️ [AR Collection Card] NO Bank Register entry created - will be created when "Record Payment" is clicked`);
+    console.log(`✅ [AR Collection Card] "Record Payment" button will be enabled in AR page for this record`);
+  }
+  
+  /**
    * Process investment transaction (CONTRIBUTION/LOAN)
    */
   private async processInvestmentTransaction(data: CashTransactionRequest, transaction: any): Promise<void> {
@@ -745,6 +910,53 @@ class CashRegisterService extends BaseService {
     
     await bankRegisterService.createBankRegister(bankRegisterData, transaction);
     console.log('✅ [Investment] Bank Register entry created successfully');
+  }
+
+  /**
+   * Create Bank Register entry for AR Collection with bank payment methods
+   */
+  private async createBankRegisterForARCollection(
+    data: CashTransactionRequest,
+    cashRegistrationNumber: string,
+    transaction: any
+  ): Promise<void> {
+    console.log('💳 [AR Collection] Creating Bank Register entry for bank payment');
+    
+    if (!data.bankAccountId) {
+      throw new ValidationError('Bank Account ID is required for bank payment methods');
+    }
+    
+    // Get bank account details
+    const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
+    if (!bankAccount) {
+      throw new NotFoundError('Bank Account not found');
+    }
+    
+    // Get customer name
+    const customerName = data.customerName || 'Customer';
+    
+    // Create Bank Register entry
+    const bankRegisterData = {
+      registrationDate: data.registrationDate || new Date(),
+      transactionType: 'INFLOW' as const,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      relatedDocumentType: 'AR_COLLECTION',
+      relatedDocumentNumber: cashRegistrationNumber,
+      clientName: customerName,
+      clientRnc: '',
+      description: data.description || `AR Collection from ${customerName} via ${data.paymentMethod}`,
+      bankAccountId: data.bankAccountId,
+      bankAccountName: `${bankAccount.bankName} - ${bankAccount.accountNumber}`,
+      chequeNumber: (data as any).chequeNumber,
+      transferNumber: (data as any).transferNumber,
+      sourceTransactionType: 'TRANSFER' as any
+    };
+    
+    await bankRegisterService.createBankRegister(bankRegisterData, transaction);
+    
+    console.log(`✅ [AR Collection] Bank Register entry created successfully`);
+    console.log(`✅ [Bank Account Balance Updated] ${bankAccount.bankName} (${bankAccount.accountNumber}): Bank balance updated with ₹${parseFloat(data.amount.toString())}`);
   }
 
   
@@ -947,6 +1159,9 @@ class CashRegisterService extends BaseService {
     await bankAccount.update({
       balance: newBankAccountBalance,
     }, { transaction });
+    
+    // ✅ ADD: Confirmation logging
+    console.log(`✅ [Bank Account Balance Updated] ${bankAccount.bankName} (${bankAccount.accountNumber}): ₹${parseFloat(bankAccount.balance.toString())} → ₹${newBankAccountBalance} (+₹${parseFloat(data.amount.toString())})`);
   }
 }
 

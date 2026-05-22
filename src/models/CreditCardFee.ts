@@ -40,6 +40,11 @@ interface CreditCardFeeAttributes {
   cardLastFour?: string;
   arId?: number;
   arRegistrationNumber?: string;
+  
+  // ✅ NEW: Expense categorization (not hardcoded)
+  expenseType: string; // 'CARD_PROCESSING_FEE', 'BANK_CHARGE', 'GATEWAY_FEE', etc.
+  expenseCategory: string; // 'Card Expenses', 'Bank Expenses', 'Gateway Expenses', etc.
+  
   status: FeeStatus;
   glEntryId?: number;
   notes?: string;
@@ -73,6 +78,11 @@ class CreditCardFee extends Model<CreditCardFeeAttributes, CreditCardFeeCreation
   public cardLastFour?: string;
   public arId?: number;
   public arRegistrationNumber?: string;
+  
+  // ✅ NEW: Expense categorization
+  public expenseType!: string;
+  public expenseCategory!: string;
+  
   public status!: FeeStatus;
   public glEntryId?: number;
   public notes?: string;
@@ -170,6 +180,21 @@ CreditCardFee.init(
       allowNull: true,
       comment: 'AR registration number for reference',
     },
+    
+    // ✅ NEW: Expense categorization (configurable, not hardcoded)
+    expenseType: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: 'CARD_PROCESSING_FEE',
+      comment: 'Type of expense: CARD_PROCESSING_FEE, BANK_CHARGE, GATEWAY_FEE, etc.',
+    },
+    expenseCategory: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      defaultValue: 'Card Expenses',
+      comment: 'Display category: Card Expenses, Bank Expenses, Gateway Expenses, etc.',
+    },
+    
     status: {
       type: DataTypes.ENUM(...Object.values(FeeStatus)),
       allowNull: false,
@@ -260,6 +285,8 @@ CreditCardFee.init(
       { fields: ['ar_id'] },
       { fields: ['card_type'] },
       { fields: ['status'] },
+      { fields: ['expense_type'] }, // ✅ NEW: Index for grouping
+      { fields: ['expense_category'] }, // ✅ NEW: Index for grouping
       { fields: ['created_at'] },
     ],
   }

@@ -488,9 +488,13 @@ class BankRegisterService extends BaseService {
     if (data.bankAccountId) {
       const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
       if (bankAccount) {
+        const oldBalance = parseFloat(bankAccount.balance.toString());
         const amount = parseFloat(data.amount.toString());
-        const newBankBalance = parseFloat(bankAccount.balance.toString()) + amount;
+        const newBankBalance = oldBalance + amount;
         await bankAccount.update({ balance: newBankBalance }, { transaction });
+        
+        // ✅ ADD: Confirmation logging
+        console.log(`✅ [Bank Account Balance Updated] ${bankAccount.bankName} (${bankAccount.accountNumber}): ₹${oldBalance} → ₹${newBankBalance} (+₹${amount})`);
       }
     }
     

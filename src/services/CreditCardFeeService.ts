@@ -27,6 +27,11 @@ export interface RecordFeeRequest {
   cardLastFour?: string;
   arId?: number;
   arRegistrationNumber?: string;
+  
+  // ✅ Configurable expense categorization
+  expenseType?: string; // Default: 'CARD_PROCESSING_FEE'
+  expenseCategory?: string; // Default: 'Card Expenses'
+  
   notes?: string;
   createdBy?: number;
 }
@@ -67,6 +72,11 @@ class CreditCardFeeService extends BaseService {
         cardLastFour: data.cardLastFour,
         arId: data.arId,
         arRegistrationNumber: data.arRegistrationNumber,
+        
+        // ✅ Configurable expense categorization (not hardcoded!)
+        expenseType: data.expenseType || 'CARD_PROCESSING_FEE',
+        expenseCategory: data.expenseCategory || 'Card Expenses',
+        
         status: FeeStatus.RECORDED,
         notes: data.notes,
         createdBy: data.createdBy,

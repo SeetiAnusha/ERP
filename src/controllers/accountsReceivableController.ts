@@ -110,3 +110,25 @@ export const collectPaymentWithFees = async (req: Request, res: Response, next: 
     next(error); // ✅ Pass to error middleware
   }
 };
+
+/**
+ * Record Card Payment - For AR records marked with collection_method = CREDIT_CARD/DEBIT_CARD
+ * This is called from the "Record Payment" button in AR page
+ */
+export const recordCardPayment = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const arId = parseInt(req.params.id);
+    const { bankAccountId, amount } = req.body;
+    
+    if (!bankAccountId) {
+      return res.status(400).json({
+        error: 'Bank Account ID is required'
+      });
+    }
+    
+    const result = await accountsReceivableService.recordCardPayment(arId, bankAccountId, amount);
+    res.json(result);
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
+  }
+};

@@ -7,6 +7,7 @@ import {
   BusinessLogicError, 
   NotFoundError 
 } from './AppError';
+import { PaginationService } from './PaginationService';
 
 /**
  * Base Service Class - Foundation for all services
@@ -378,9 +379,7 @@ export abstract class BaseService {
     options: any = {},
     additionalWhere: any = {},
     include: any[] = []
-  ): Promise<any> {
-    const { PaginationService } = await import('./PaginationService');
-    
+  ): Promise<any> {    
     return await PaginationService.paginate(
       model,
       options,

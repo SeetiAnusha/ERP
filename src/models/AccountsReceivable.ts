@@ -29,6 +29,7 @@ interface AccountsReceivableAttributes {
   collectionDate?: Date;
   transferReference?: string;
   collectionNotes?: string;
+  collection_method?: string; // How payment was collected (CASH, CREDIT_CARD, DEBIT_CARD, etc.)
   
   // Soft delete attributes
   deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
@@ -74,6 +75,7 @@ class AccountsReceivable extends Model<AccountsReceivableAttributes, AccountsRec
   public collectionDate?: Date;
   public transferReference?: string;
   public collectionNotes?: string;
+  public collection_method?: string; // How payment was collected
   
   // Soft delete attributes
   public deletion_status?: 'NONE' | 'REQUESTED' | 'APPROVED' | 'EXECUTED';
@@ -199,6 +201,11 @@ AccountsReceivable.init(
     collectionNotes: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    collection_method: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: 'How payment was collected (CASH, CREDIT_CARD, DEBIT_CARD, BANK_TRANSFER, etc.)',
     },
   
     // Soft delete attributes
