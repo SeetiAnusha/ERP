@@ -8,7 +8,7 @@ interface CashRegisterAttributes {
   transactionType: string;
   amount: number;
   paymentMethod: string;
-  relatedDocumentType?: string;
+  relatedDocumentType?: string; // ENUM values: CREDIT_CARD_SALE_COLLECTION, SHAREHOLDER_CONTRIBUTOR, FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER, SALE, REVERSAL
   relatedDocumentNumber?: string;
   clientRnc?: string;
   clientName?: string;
@@ -23,6 +23,9 @@ interface CashRegisterAttributes {
   customerId?: number;           // For AR collections (Credit Sales only)
   invoiceIds?: string;           // JSON array of invoice IDs being paid (Credit Sales only)
   investmentAgreementId?: number; // For CONTRIBUTION/LOAN transactions
+  // NEW: Shareholder contribution fields
+  shareholderId?: number;        // FK to financers (for SHAREHOLDER_CONTRIBUTOR)
+  shareholderAmount?: number;    // Amount of shareholder contribution
   // Deposit tracking fields (for sales date vs deposit date clarity)
   sales_date?: Date;             // When money was earned
   deposit_date?: Date;           // When deposit physically happened
@@ -61,7 +64,7 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public transactionType!: string;
   public amount!: number;
   public paymentMethod!: string;
-  public relatedDocumentType?: string;
+  public relatedDocumentType?: string; // ENUM values: CREDIT_CARD_SALE_COLLECTION, SHAREHOLDER_CONTRIBUTOR, FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER, SALE, REVERSAL
   public relatedDocumentNumber?: string;
   public clientRnc?: string;
   public clientName?: string;
@@ -76,6 +79,9 @@ class CashRegister extends Model<CashRegisterAttributes, CashRegisterCreationAtt
   public customerId?: number;
   public invoiceIds?: string;
   public investmentAgreementId?: number;
+  // NEW: Shareholder contribution fields
+  public shareholderId?: number;
+  public shareholderAmount?: number;
   // Deposit tracking fields
   public sales_date?: Date;
   public deposit_date?: Date;
@@ -134,8 +140,9 @@ CashRegister.init(
       allowNull: false,
     },
     relatedDocumentType: {
-      type: DataTypes.STRING(50),
+      type: DataTypes.STRING(50), // Database has ENUM but TypeScript uses STRING for flexibility
       allowNull: true,
+      comment: 'Expected values: CREDIT_CARD_SALE_COLLECTION, SHAREHOLDER_CONTRIBUTOR, FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER, SALE, REVERSAL',
     },
     relatedDocumentNumber: {
       type: DataTypes.STRING(50),
@@ -205,6 +212,21 @@ CashRegister.init(
         model: 'investment_agreements',
         key: 'id',
       },
+    },
+    // NEW: Shareholder contribution fields
+    shareholderId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'financers',
+        key: 'id',
+      },
+      comment: 'Foreign key to financers table (for SHAREHOLDER_CONTRIBUTOR transactions)',
+    },
+    shareholderAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+      comment: 'Amount of shareholder contribution',
     },
     // Deposit tracking fields
     sales_date: {

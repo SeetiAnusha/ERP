@@ -26,7 +26,22 @@ export enum CashRegisterSourceType {
   CORRECTION = 'CORRECTION',
   
   /** Manual entries without specific source */
-  MANUAL = 'MANUAL'
+  MANUAL = 'MANUAL',
+  
+  /** ✅ NEW: Credit Card Sale Collection */
+  CREDIT_CARD_SALE_COLLECTION = 'CREDIT_CARD_SALE_COLLECTION',
+  
+  /** ✅ NEW: Shareholder Contributor */
+  SHAREHOLDER_CONTRIBUTOR = 'SHAREHOLDER_CONTRIBUTOR',
+  
+  /** ✅ NEW: Financier */
+  FINANCIER = 'FINANCIER',
+  
+  /** ✅ NEW: Shareholder Lender */
+  SHAREHOLDER_LENDER = 'SHAREHOLDER_LENDER',
+  
+  /** ✅ NEW: Related Party Lender */
+  RELATED_PARTY_LENDER = 'RELATED_PARTY_LENDER'
 }
 
 /**
@@ -39,7 +54,12 @@ export const CashRegisterSourceTypeLabels: Record<CashRegisterSourceType, string
   [CashRegisterSourceType.LOAN]: 'Loan',
   [CashRegisterSourceType.BANK_DEPOSIT]: 'Bank Deposit',
   [CashRegisterSourceType.CORRECTION]: 'Correction',
-  [CashRegisterSourceType.MANUAL]: 'Manual Entry'
+  [CashRegisterSourceType.MANUAL]: 'Manual Entry',
+  [CashRegisterSourceType.CREDIT_CARD_SALE_COLLECTION]: 'Credit Card Sale Collection',
+  [CashRegisterSourceType.SHAREHOLDER_CONTRIBUTOR]: 'Shareholder Contributor',
+  [CashRegisterSourceType.FINANCIER]: 'Financier',
+  [CashRegisterSourceType.SHAREHOLDER_LENDER]: 'Shareholder Lender',
+  [CashRegisterSourceType.RELATED_PARTY_LENDER]: 'Related Party Lender'
 };
 
 /**

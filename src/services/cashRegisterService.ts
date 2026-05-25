@@ -367,12 +367,19 @@ class CashRegisterService extends BaseService {
   
   /**
    * Determine if cash register is required for this transaction
+   * ✅ BANK_CHEQUE follows same rules as CASH
    */
   private determineIfCashRegisterRequired(data: CashTransactionRequest): boolean {
+    const isCashOrCheque = data.paymentMethod === 'CASH' || data.paymentMethod === 'BANK_CHEQUE';
+    
     return (
-      (data.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION && data.paymentMethod === 'CASH') || 
-      (data.relatedDocumentType === CashRegisterSourceType.LOAN && data.paymentMethod === 'CASH') ||
-      (data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION && data.paymentMethod === 'CASH') ||
+      (data.relatedDocumentType === CashRegisterSourceType.CONTRIBUTION && isCashOrCheque) || 
+      (data.relatedDocumentType === CashRegisterSourceType.LOAN && isCashOrCheque) ||
+      (data.relatedDocumentType === CashRegisterSourceType.AR_COLLECTION && isCashOrCheque) ||
+      (data.relatedDocumentType === CashRegisterSourceType.SHAREHOLDER_CONTRIBUTOR && isCashOrCheque) ||
+      (data.relatedDocumentType === CashRegisterSourceType.FINANCIER && isCashOrCheque) ||
+      (data.relatedDocumentType === CashRegisterSourceType.SHAREHOLDER_LENDER && isCashOrCheque) ||
+      (data.relatedDocumentType === CashRegisterSourceType.RELATED_PARTY_LENDER && isCashOrCheque) ||
       data.transactionType === 'OUTFLOW' // All outflows require cash register
     );
   }
@@ -1324,3 +1331,498 @@ export const deleteCashTransaction = async (id: number) => {
   await transaction.destroy();
   return { message: 'Cash transaction deleted successfully' };
 };
+
+/**
+ * Create Shareholder Contribution Transaction
+ * 
+ * Business Rules:
+ * - IMMEDIATE PAYMENT (increase equity NOW): CASH, CHECK, TRANSFER
+ * - FUTURE PAYMENT (mark AR, increase equity LATER): CREDIT/DEBIT CARD
+ * 
+ * @param data Shareholder contribution data
+ * @returns Created transaction
+ */
+export const createShareholderContribution = async (data: {
+  registrationDate: Date;
+  shareholderId: number;
+  shareholderAmount: number;
+  paymentMethod: string;
+  description: string;
+  cashRegisterId?: number;
+  bankAccountId?: number;
+  relatedDocumentType: string; // Should be one of the financer types
+}) => {
+  return sequelize.transaction(async (transaction) => {
+    console.log('🔵 [Shareholder Contribution] Starting transaction:', {
+      shareholderId: data.shareholderId,
+      amount: data.shareholderAmount,
+      paymentMethod: data.paymentMethod,
+      relatedDocumentType: data.relatedDocumentType
+    });
+    
+    // Validate shareholder exists
+    const Financer = require('../models/Financer').default;
+    const shareholder = await Financer.findByPk(data.shareholderId, { transaction });
+    if (!shareholder) {
+      throw new NotFoundError(`Shareholder with ID ${data.shareholderId} not found`);
+    }
+    
+    // Validate shareholder is active
+    if (shareholder.status !== 'ACTIVE') {
+      throw new BusinessLogicError('Cannot record contribution for inactive shareholder');
+    }
+    
+    // Validate amount
+    if (!data.shareholderAmount || data.shareholderAmount <= 0) {
+      throw new ValidationError('Shareholder contribution amount must be greater than 0');
+    }
+    
+    const cardPaymentMethods = ['CREDIT_CARD', 'DEBIT_CARD'];
+    const isCardPayment = cardPaymentMethods.includes(data.paymentMethod);
+    
+    if (isCardPayment) {
+      // FUTURE PAYMENT: Create AR record (like Credit Card Sale Collection)
+      console.log('💳 [Shareholder Contribution] Card payment - creating AR record (FUTURE payment)');
+      
+      const registrationNumber = await generateARRegistrationNumber(transaction);
+      
+      await AccountsReceivable.create({
+        registrationNumber,
+        registrationDate: data.registrationDate,
+        type: 'SHAREHOLDER_CONTRIBUTION_PENDING', // ✅ Specific type for shareholder contribution
+        relatedDocumentType: data.relatedDocumentType,
+        relatedDocumentId: data.shareholderId,
+        relatedDocumentNumber: shareholder.code,
+        clientName: shareholder.name,
+        amount: data.shareholderAmount,
+        receivedAmount: 0,
+        balanceAmount: data.shareholderAmount,
+        expectedBankDeposit: data.shareholderAmount, // ✅ Required field
+        status: 'Pending',
+        collection_method: data.paymentMethod,
+        notes: data.description || `Shareholder contribution from ${shareholder.name} via ${data.paymentMethod}`
+      }, { transaction });
+      
+      console.log(`✅ [Shareholder Contribution] AR record created: ${registrationNumber}`);
+      console.log('⚠️ [Shareholder Contribution] Equity will increase ONLY when payment is actually received');
+      
+      return {
+        message: 'Shareholder contribution marked as pending (Card payment)',
+        registrationNumber,
+        shareholderName: shareholder.name,
+        amount: data.shareholderAmount,
+        paymentMethod: data.paymentMethod,
+        note: 'Equity will increase when payment is received via AR page'
+      };
+      
+    } else {
+      // IMMEDIATE PAYMENT: Process now (CASH, CHECK, TRANSFER)
+      console.log('💰 [Shareholder Contribution] Immediate payment - processing now');
+      
+      // Determine transaction routing
+      // ✅ BANK_CHEQUE follows same rules as CASH (goes to Cash Register)
+      const needsCashRegister = data.paymentMethod === 'CASH' || data.paymentMethod === 'CHECK' || data.paymentMethod === 'BANK_CHEQUE';
+      // ✅ BANK_TRANSFER and DEPOSIT go to Bank Account (immediate payment)
+      const needsBankAccount = data.paymentMethod === 'BANK_TRANSFER' || data.paymentMethod === 'DEPOSIT' || data.paymentMethod === 'UPI';
+      
+      if (needsCashRegister && !data.cashRegisterId) {
+        throw new ValidationError('Cash Register selection is required for CASH/CHECK/BANK_CHEQUE payments');
+      }
+      
+      if (needsBankAccount && !data.bankAccountId) {
+        throw new ValidationError('Bank Account selection is required for BANK_TRANSFER/DEPOSIT/UPI payments');
+      }
+      
+      // Generate registration number
+      const registrationNumber = await generateCashRegistrationNumber(transaction);
+      
+      // Create cash register entry (if needed)
+      let cashTransaction = null;
+      if (needsCashRegister) {
+        const cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId, { transaction });
+        if (!cashRegisterMaster) {
+          throw new NotFoundError('Cash Register not found');
+        }
+        
+        const lastBalance = await getLastCashRegisterBalance(data.cashRegisterId!, cashRegisterMaster, transaction);
+        const newBalance = lastBalance + data.shareholderAmount;
+        
+        cashTransaction = await CashRegister.create({
+          registrationNumber,
+          registrationDate: data.registrationDate,
+          transactionType: 'INFLOW',
+          amount: data.shareholderAmount,
+          paymentMethod: data.paymentMethod,
+          relatedDocumentType: data.relatedDocumentType,
+          relatedDocumentNumber: shareholder.code,
+          description: data.description,
+          cashRegisterId: data.cashRegisterId,
+          shareholderId: data.shareholderId,
+          shareholderAmount: data.shareholderAmount,
+          balance: newBalance
+        }, { transaction });
+        
+        // Update cash register master balance
+        await cashRegisterMaster.update({ balance: newBalance }, { transaction });
+        
+        console.log(`✅ [Cash Register] Balance updated: ₹${lastBalance} → ₹${newBalance}`);
+      }
+      
+      // Create bank register entry (if needed)
+      if (needsBankAccount) {
+        const TransactionType = require('../types/TransactionType').TransactionType;
+        
+        await bankRegisterService.createBankRegister({
+          registrationDate: data.registrationDate,
+          transactionType: 'INFLOW',
+          amount: data.shareholderAmount,
+          paymentMethod: data.paymentMethod,
+          sourceTransactionType: TransactionType.PAYMENT, // Generic payment type for shareholder contributions
+          relatedDocumentType: data.relatedDocumentType,
+          relatedDocumentNumber: shareholder.code,
+          description: data.description,
+          bankAccountId: data.bankAccountId,
+          transferNumber: registrationNumber,
+          clientName: shareholder.name
+        }, transaction);
+        
+        console.log(`✅ [Bank Register] Entry created for ${data.paymentMethod}`);
+      }
+      
+      // Update shareholder equity (IMMEDIATE)
+      const newTotalContributed = Number(shareholder.total_contributed) + data.shareholderAmount;
+      const newOutstandingBalance = Number(shareholder.outstanding_balance) + data.shareholderAmount;
+      
+      await shareholder.update({
+        total_contributed: newTotalContributed,
+        outstanding_balance: newOutstandingBalance
+      }, { transaction });
+      
+      console.log(`✅ [Shareholder Equity] Updated ${shareholder.name}:`);
+      console.log(`   Total Contributed: ₹${shareholder.total_contributed} → ₹${newTotalContributed}`);
+      console.log(`   Outstanding Balance: ₹${shareholder.outstanding_balance} → ₹${newOutstandingBalance}`);
+      
+      return {
+        message: 'Shareholder contribution recorded successfully',
+        registrationNumber,
+        shareholderName: shareholder.name,
+        amount: data.shareholderAmount,
+        paymentMethod: data.paymentMethod,
+        cashTransaction,
+        newTotalContributed,
+        newOutstandingBalance
+      };
+    }
+  });
+};
+
+/**
+ * Create Loan Receipt from Lenders (FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER)
+ * 
+ * Business Rules:
+ * - Creates ACCOUNTS PAYABLE record (liability, not equity)
+ * - Updates financer balance (total_contributed, outstanding_balance)
+ * - Routes money based on payment method:
+ *   - IMMEDIATE PAYMENT (goes to register NOW): CASH, CHECK, BANK_CHEQUE
+ *   - BANK PAYMENT (goes to bank NOW): BANK_TRANSFER, DEPOSIT, UPI
+ *   - FUTURE PAYMENT (mark AR, receive LATER): CREDIT/DEBIT CARD
+ * 
+ * @param data Loan receipt data
+ * @returns Created transaction
+ */
+export const createLoanReceipt = async (data: {
+  registrationDate: Date;
+  lenderId: number;
+  lenderType: 'FINANCIER' | 'SHAREHOLDER_LENDER' | 'RELATED_PARTY_LENDER';
+  loanAmount: number;
+  paymentMethod: string;
+  description: string;
+  cashRegisterId?: number;
+  bankAccountId?: number;
+  relatedDocumentType: string; // Should be one of the lender types
+}) => {
+  return sequelize.transaction(async (transaction) => {
+    console.log('🔵 [Loan Receipt] Starting transaction:', {
+      lenderId: data.lenderId,
+      lenderType: data.lenderType,
+      amount: data.loanAmount,
+      paymentMethod: data.paymentMethod,
+      relatedDocumentType: data.relatedDocumentType
+    });
+    
+    // Validate lender exists
+    const Financer = require('../models/Financer').default;
+    const lender = await Financer.findByPk(data.lenderId, { transaction });
+    if (!lender) {
+      throw new NotFoundError(`Lender with ID ${data.lenderId} not found`);
+    }
+    
+    // Validate lender is active
+    if (lender.status !== 'ACTIVE') {
+      throw new BusinessLogicError('Cannot record loan receipt for inactive lender');
+    }
+    
+    // Validate lender type matches
+    if (lender.financer_type !== data.lenderType) {
+      throw new ValidationError(`Lender type mismatch: expected ${data.lenderType}, got ${lender.financer_type}`);
+    }
+    
+    // Validate amount
+    if (!data.loanAmount || data.loanAmount <= 0) {
+      throw new ValidationError('Loan amount must be greater than 0');
+    }
+    
+    const cardPaymentMethods = ['CREDIT_CARD', 'DEBIT_CARD'];
+    const isCardPayment = cardPaymentMethods.includes(data.paymentMethod);
+    
+    // Generate registration numbers
+    const apRegistrationNumber = await generateAPRegistrationNumber(transaction);
+    const cashRegistrationNumber = await generateCashRegistrationNumber(transaction);
+    
+    if (isCardPayment) {
+      // FUTURE PAYMENT: Create AR record (like Credit Card Sale Collection)
+      console.log('💳 [Loan Receipt] Card payment - creating AR record (FUTURE payment)');
+      
+      const arRegistrationNumber = await generateARRegistrationNumber(transaction);
+      
+      await AccountsReceivable.create({
+        registrationNumber: arRegistrationNumber,
+        registrationDate: data.registrationDate,
+        type: `${data.lenderType}_LOAN_PENDING`, // e.g., FINANCIER_LOAN_PENDING
+        relatedDocumentType: data.relatedDocumentType,
+        relatedDocumentId: data.lenderId,
+        relatedDocumentNumber: lender.code,
+        clientName: lender.name,
+        amount: data.loanAmount,
+        receivedAmount: 0,
+        balanceAmount: data.loanAmount,
+        expectedBankDeposit: data.loanAmount,
+        status: 'Pending',
+        collection_method: data.paymentMethod,
+        notes: data.description || `Loan from ${lender.name} (${data.lenderType}) via ${data.paymentMethod}`
+      }, { transaction });
+      
+      console.log(`✅ [Loan Receipt] AR record created: ${arRegistrationNumber}`);
+      console.log('⚠️ [Loan Receipt] AP and financer balance will be updated ONLY when payment is actually received');
+      
+      return {
+        message: 'Loan receipt marked as pending (Card payment)',
+        registrationNumber: arRegistrationNumber,
+        lenderName: lender.name,
+        lenderType: data.lenderType,
+        amount: data.loanAmount,
+        paymentMethod: data.paymentMethod,
+        note: 'Accounts Payable will be created when payment is received via AR page'
+      };
+      
+    } else {
+      // IMMEDIATE PAYMENT: Process now (CASH, CHECK, TRANSFER)
+      console.log('💰 [Loan Receipt] Immediate payment - processing now');
+      
+      // Determine transaction routing
+      const needsCashRegister = data.paymentMethod === 'CASH' || data.paymentMethod === 'CHECK' || data.paymentMethod === 'BANK_CHEQUE';
+      const needsBankAccount = data.paymentMethod === 'BANK_TRANSFER' || data.paymentMethod === 'DEPOSIT' || data.paymentMethod === 'UPI';
+      
+      if (needsCashRegister && !data.cashRegisterId) {
+        throw new ValidationError('Cash Register selection is required for CASH/CHECK/BANK_CHEQUE payments');
+      }
+      
+      if (needsBankAccount && !data.bankAccountId) {
+        throw new ValidationError('Bank Account selection is required for BANK_TRANSFER/DEPOSIT/UPI payments');
+      }
+      
+      // Create cash register entry (if needed)
+      let cashTransaction = null;
+      if (needsCashRegister) {
+        const cashRegisterMaster = await CashRegisterMaster.findByPk(data.cashRegisterId, { transaction });
+        if (!cashRegisterMaster) {
+          throw new NotFoundError('Cash Register not found');
+        }
+        
+        const lastBalance = await getLastCashRegisterBalance(data.cashRegisterId!, cashRegisterMaster, transaction);
+        const newBalance = lastBalance + data.loanAmount;
+        
+        cashTransaction = await CashRegister.create({
+          registrationNumber: cashRegistrationNumber,
+          registrationDate: data.registrationDate,
+          transactionType: 'INFLOW',
+          amount: data.loanAmount,
+          paymentMethod: data.paymentMethod,
+          relatedDocumentType: data.relatedDocumentType,
+          relatedDocumentNumber: lender.code,
+          description: data.description,
+          cashRegisterId: data.cashRegisterId,
+          balance: newBalance
+        }, { transaction });
+        
+        // Update cash register master balance
+        await cashRegisterMaster.update({ balance: newBalance }, { transaction });
+        
+        console.log(`✅ [Cash Register] Balance updated: ₹${lastBalance} → ₹${newBalance}`);
+      }
+      
+      // Create bank register entry (if needed)
+      if (needsBankAccount) {
+        const TransactionType = require('../types/TransactionType').TransactionType;
+        
+        await bankRegisterService.createBankRegister({
+          registrationDate: data.registrationDate,
+          transactionType: 'INFLOW',
+          amount: data.loanAmount,
+          paymentMethod: data.paymentMethod,
+          sourceTransactionType: TransactionType.PAYMENT, // Generic payment type for loan receipts
+          relatedDocumentType: data.relatedDocumentType,
+          relatedDocumentNumber: lender.code,
+          description: data.description,
+          bankAccountId: data.bankAccountId,
+          transferNumber: cashRegistrationNumber,
+          clientName: lender.name
+        }, transaction);
+        
+        console.log(`✅ [Bank Register] Entry created for ${data.paymentMethod}`);
+      }
+      
+      // Create Accounts Payable record (LIABILITY)
+      const AccountsPayable = require('../models/AccountsPayable').default;
+      const TransactionType = require('../types/TransactionType').TransactionType;
+      
+      const apType = `${data.lenderType}_LOAN`; // e.g., FINANCIER_LOAN, SHAREHOLDER_LENDER_LOAN
+      
+      await AccountsPayable.create({
+        registrationNumber: apRegistrationNumber,
+        registrationDate: data.registrationDate,
+        type: apType,
+        sourceTransactionType: TransactionType.PAYMENT,
+        relatedDocumentType: data.relatedDocumentType,
+        relatedDocumentId: data.lenderId,
+        relatedDocumentNumber: lender.code,
+        financerId: data.lenderId,
+        financerName: lender.name,
+        loanAmount: data.loanAmount,
+        interestRate: lender.interest_rate,
+        amount: data.loanAmount,
+        paidAmount: 0,
+        balanceAmount: data.loanAmount,
+        status: 'Pending',
+        notes: data.description || `Loan received from ${lender.name} (${data.lenderType})`
+      }, { transaction });
+      
+      console.log(`✅ [Accounts Payable] Record created: ${apRegistrationNumber} (${apType})`);
+      
+      // Update lender balance (IMMEDIATE)
+      const newTotalContributed = Number(lender.total_contributed) + data.loanAmount;
+      const newOutstandingBalance = Number(lender.outstanding_balance) + data.loanAmount;
+      
+      await lender.update({
+        total_contributed: newTotalContributed,
+        outstanding_balance: newOutstandingBalance
+      }, { transaction });
+      
+      console.log(`✅ [Lender Balance] Updated ${lender.name}:`);
+      console.log(`   Total Contributed: ₹${lender.total_contributed} → ₹${newTotalContributed}`);
+      console.log(`   Outstanding Balance: ₹${lender.outstanding_balance} → ₹${newOutstandingBalance}`);
+      
+      return {
+        message: 'Loan receipt recorded successfully',
+        apRegistrationNumber,
+        cashRegistrationNumber,
+        lenderName: lender.name,
+        lenderType: data.lenderType,
+        amount: data.loanAmount,
+        paymentMethod: data.paymentMethod,
+        cashTransaction,
+        newTotalContributed,
+        newOutstandingBalance
+      };
+    }
+  });
+};
+
+/**
+ * Helper: Generate AP registration number
+ */
+async function generateAPRegistrationNumber(transaction: any): Promise<string> {
+  const AccountsPayable = require('../models/AccountsPayable').default;
+  const lastAP = await AccountsPayable.findOne({
+    where: {
+      registrationNumber: {
+        [Op.like]: 'AP%'
+      }
+    },
+    order: [['id', 'DESC']],
+    transaction
+  });
+  
+  let nextNumber = 1;
+  if (lastAP) {
+    const lastNumber = parseInt(lastAP.registrationNumber.substring(2));
+    nextNumber = lastNumber + 1;
+  }
+  
+  return `AP${String(nextNumber).padStart(4, '0')}`;
+}
+
+/**
+ * Helper: Generate AR registration number
+ */
+async function generateARRegistrationNumber(transaction: any): Promise<string> {
+  const lastAR = await AccountsReceivable.findOne({
+    where: {
+      registrationNumber: {
+        [Op.like]: 'AR%'
+      }
+    },
+    order: [['id', 'DESC']],
+    transaction
+  });
+  
+  let nextNumber = 1;
+  if (lastAR) {
+    const lastNumber = parseInt(lastAR.registrationNumber.substring(2));
+    nextNumber = lastNumber + 1;
+  }
+  
+  return `AR${String(nextNumber).padStart(4, '0')}`;
+}
+
+/**
+ * Helper: Generate cash registration number
+ */
+async function generateCashRegistrationNumber(transaction: any): Promise<string> {
+  const lastTransaction = await CashRegister.findOne({
+    where: {
+      registrationNumber: {
+        [Op.like]: 'CJ%'
+      }
+    },
+    order: [['id', 'DESC']],
+    transaction
+  });
+  
+  let nextNumber = 1;
+  if (lastTransaction) {
+    const lastNumber = parseInt(lastTransaction.registrationNumber.substring(2));
+    nextNumber = lastNumber + 1;
+  }
+  
+  return `CJ${String(nextNumber).padStart(4, '0')}`;
+}
+
+/**
+ * Helper: Get last cash register balance
+ */
+async function getLastCashRegisterBalance(
+  cashRegisterId: number,
+  cashRegisterMaster: any,
+  transaction: any
+): Promise<number> {
+  const lastRegisterTransaction = await CashRegister.findOne({
+    where: { cashRegisterId },
+    order: [['id', 'DESC']],
+    transaction
+  });
+  
+  return lastRegisterTransaction 
+    ? parseFloat(lastRegisterTransaction.balance.toString()) 
+    : parseFloat(cashRegisterMaster.balance.toString());
+}

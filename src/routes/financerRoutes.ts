@@ -1,54 +1,41 @@
-import { Router, Request, Response } from 'express';
-import * as financerService from '../services/financerService';
+import { Router } from 'express';
+import * as financerController from '../controllers/financerController';
+import { asyncHandler } from '../middleware/errorMiddleware';
 
 const router = Router();
 
-router.get('/', async (req: Request, res: Response) => {
-  try {
-    const financers = await financerService.getAllFinancers();
-    res.json(financers);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
+/**
+ * Financer Routes - Enhanced for Shareholder, Financier, and Related Party Management
+ * 
+ * Routes:
+ * - GET    /api/financers                      - Get all financers (with optional filters)
+ * - GET    /api/financers/summary              - Get summary statistics
+ * - GET    /api/financers/shareholders         - Get active shareholders for dropdown
+ * - GET    /api/financers/financiers           - Get active financiers for dropdown
+ * - GET    /api/financers/shareholder-lenders  - Get active shareholder lenders for dropdown
+ * - GET    /api/financers/related-party-lenders - Get active related party lenders for dropdown
+ * - GET    /api/financers/:id                  - Get financer by ID
+ * - POST   /api/financers                      - Create new financer
+ * - PUT    /api/financers/:id                  - Update financer
+ * - DELETE /api/financers/:id                  - Delete financer (soft delete)
+ * - POST   /api/financers/:id/contributions    - Record contribution
+ */
 
-router.get('/:id', async (req: Request, res: Response) => {
-  try {
-    const financer = await financerService.getFinancerById(parseInt(req.params.id));
-    if (!financer) {
-      return res.status(404).json({ error: 'Financer not found' });
-    }
-    res.json(financer);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// Summary and specific type endpoints must come before /:id to avoid route conflict
+router.get('/summary', asyncHandler(financerController.getFinancerSummary));
+router.get('/shareholders', asyncHandler(financerController.getActiveShareholders));
+router.get('/financiers', asyncHandler(financerController.getActiveFinanciers));
+router.get('/shareholder-lenders', asyncHandler(financerController.getActiveShareholderLenders));
+router.get('/related-party-lenders', asyncHandler(financerController.getActiveRelatedPartyLenders));
 
-router.post('/', async (req: Request, res: Response) => {
-  try {
-    const financer = await financerService.createFinancer(req.body);
-    res.status(201).json(financer);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
+// CRUD operations
+router.get('/', asyncHandler(financerController.getAllFinancers));
+router.get('/:id', asyncHandler(financerController.getFinancerById));
+router.post('/', asyncHandler(financerController.createFinancer));
+router.put('/:id', asyncHandler(financerController.updateFinancer));
+router.delete('/:id', asyncHandler(financerController.deleteFinancer));
 
-router.put('/:id', async (req: Request, res: Response) => {
-  try {
-    const financer = await financerService.updateFinancer(parseInt(req.params.id), req.body);
-    res.json(financer);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-router.delete('/:id', async (req: Request, res: Response) => {
-  try {
-    const result = await financerService.deleteFinancer(parseInt(req.params.id));
-    res.json(result);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
+// Contribution tracking
+router.post('/:id/contributions', asyncHandler(financerController.recordContribution));
 
 export default router;

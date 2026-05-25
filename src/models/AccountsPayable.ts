@@ -6,14 +6,19 @@ interface AccountsPayableAttributes {
   id: number;
   registrationNumber: string;
   registrationDate: Date;
-  type: string; // 'CREDIT_CARD_PURCHASE', 'SUPPLIER_CREDIT', etc.
+  type: string; // 'CREDIT_CARD_PURCHASE', 'SUPPLIER_CREDIT', 'FINANCIER_LOAN', 'SHAREHOLDER_LENDER_LOAN', 'RELATED_PARTY_LENDER_LOAN', etc.
   sourceTransactionType: TransactionType; // NEW FIELD
-  relatedDocumentType: string; // 'Purchase', 'Invoice', etc.
+  relatedDocumentType: string; // 'Purchase', 'Invoice', 'FINANCIER', 'SHAREHOLDER_LENDER', 'RELATED_PARTY_LENDER', etc.
   relatedDocumentId: number;
   relatedDocumentNumber: string;
   supplierId?: number;
   supplierName?: string;
   supplierRnc?: string; // Invoice supplier RNC
+  // ✅ NEW: Financer/Lender fields (reuse supplierId for financerId)
+  financerId?: number; // Financer ID (FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER)
+  financerName?: string; // Financer name
+  loanAmount?: number; // Loan amount (same as amount, but explicit for loans)
+  interestRate?: number; // Interest rate for the loan
   cardId?: number; // Card ID for CREDIT_CARD purchases
   cardIssuer?: string; // 'Bank Name', 'Credit Card Company', etc.
   ncf?: string; // Invoice NCF
@@ -57,6 +62,11 @@ class AccountsPayable extends Model<AccountsPayableAttributes, AccountsPayableCr
   public supplierId?: number;
   public supplierName?: string;
   public supplierRnc?: string;
+  // ✅ Financer/Lender fields (for FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER)
+  public financerId?: number;
+  public financerName?: string;
+  public loanAmount?: number;
+  public interestRate?: number;
   public cardId?: number;
   public cardIssuer?: string;
   public ncf?: string;
@@ -163,6 +173,27 @@ AccountsPayable.init(
     supplierRnc: {
       type: DataTypes.STRING(50),
       allowNull: true,
+    },
+    // ✅ Financer/Lender fields (for FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER)
+    financerId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Financer ID for loan-based AP (FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER)',
+    },
+    financerName: {
+      type: DataTypes.STRING(200),
+      allowNull: true,
+      comment: 'Financer name for display purposes',
+    },
+    loanAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: true,
+      comment: 'Original loan amount (same as amount, but explicit for loans)',
+    },
+    interestRate: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+      comment: 'Interest rate for the loan (percentage)',
     },
     cardId: {
       type: DataTypes.INTEGER,

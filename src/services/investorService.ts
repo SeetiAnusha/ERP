@@ -221,7 +221,7 @@ export const getAllInvestors = async () => {
         id: financer.id,
         code: financer.code,
         name: financer.name,
-        type: financer.type, // INVESTOR only
+        type: financer.legacy_type || financer.financer_type, // INVESTOR/SHAREHOLDER
         contactPerson: financer.contactPerson,
         phone: financer.phone,
         email: financer.email,
@@ -252,7 +252,7 @@ export const getAllInvestors = async () => {
 export const getInvestorById = async (investorId: number) => {
   try {
     const financer = await Financer.findByPk(investorId);
-    if (!financer || financer.type !== 'INVESTOR') {
+    if (!financer || (financer.legacy_type !== 'INVESTOR' && financer.financer_type !== 'SHAREHOLDER_CONTRIBUTOR')) {
       throw new Error('Investor not found');
     }
 

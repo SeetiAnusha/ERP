@@ -322,7 +322,7 @@ export const getInvestmentByFinancer = async (financerId: number) => {
     const apEntries = await AccountsPayable.findAll({
       where: {
         supplierId: financerId,
-        type: financer.type === 'INVESTOR' ? 'CONTRIBUTION' : 'LOAN'
+        type: (financer.legacy_type === 'INVESTOR' || financer.financer_type === 'SHAREHOLDER_CONTRIBUTOR') ? 'CONTRIBUTION' : 'LOAN'
       },
       order: [['registrationDate', 'DESC']]
     });

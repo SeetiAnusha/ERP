@@ -16,14 +16,14 @@ export const createInvestmentAgreement = async (data: any) => {
 
     // Validate financer type based on agreement type
     if (data.agreementType === 'INVESTMENT') {
-      // For investments, allow INVESTOR type financers
-      if (financer.type !== 'INVESTOR') {
-        throw new Error('For investment agreements, please select an INVESTOR type financer');
+      // For investments, allow INVESTOR type financers (legacy) or SHAREHOLDER (new)
+      if (financer.legacy_type !== 'INVESTOR' && financer.financer_type !== 'SHAREHOLDER_CONTRIBUTOR') {
+        throw new Error('For investment agreements, please select an INVESTOR or SHAREHOLDER type financer');
       }
     } else if (data.agreementType === 'LOAN') {
-      // For loans, allow BANK type financers (and optionally OTHER for private lenders)
-      if (financer.type !== 'BANK' && financer.type !== 'OTHER') {
-        throw new Error('For loan agreements, please select a BANK or OTHER type financer');
+      // For loans, allow BANK type financers (legacy) or FINANCIER (new)
+      if (financer.legacy_type !== 'BANK' && financer.legacy_type !== 'OTHER' && financer.financer_type !== 'FINANCIER') {
+        throw new Error('For loan agreements, please select a BANK, FINANCIER, or OTHER type financer');
       }
     } else {
       throw new Error('Invalid agreement type');

@@ -118,3 +118,29 @@ export const remove = async (req: Request, res: Response, next: NextFunction) =>
     next(error); // ✅ Pass to error middleware
   }
 };
+
+/**
+ * Create shareholder contribution transaction
+ * POST /api/cash-register/shareholder-contribution
+ */
+export const createShareholderContribution = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const transaction = await cashRegisterService.createShareholderContribution(req.body);
+    res.status(201).json(transaction);
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
+  }
+};
+
+/**
+ * Create loan receipt transaction from lenders (FINANCIER, SHAREHOLDER_LENDER, RELATED_PARTY_LENDER)
+ * POST /api/cash-register/loan-receipt
+ */
+export const createLoanReceipt = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const transaction = await cashRegisterService.createLoanReceipt(req.body);
+    res.status(201).json(transaction);
+  } catch (error) {
+    next(error); // ✅ Pass to error middleware
+  }
+};

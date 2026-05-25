@@ -274,7 +274,7 @@ export const getAllBanks = async () => {
         id: bank.id,
         code: bank.code,
         name: bank.name,
-        type: bank.type,
+        type: bank.legacy_type || bank.financer_type, // Use legacy_type for backward compatibility
         contactPerson: bank.contactPerson,
         phone: bank.phone,
         email: bank.email,
@@ -305,7 +305,7 @@ export const getAllBanks = async () => {
 export const getBankById = async (bankId: number) => {
   try {
     const bank = await Financer.findByPk(bankId);
-    if (!bank || (bank.type !== 'BANK' && bank.type !== 'OTHER')) {
+    if (!bank || (bank.legacy_type !== 'BANK' && bank.legacy_type !== 'OTHER' && bank.financer_type !== 'FINANCIER')) {
       throw new Error('Bank not found');
     }
 

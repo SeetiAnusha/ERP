@@ -12,6 +12,8 @@ router.get('/balance/:cashRegisterId', cashRegisterController.getCashRegisterBal
 router.get('/pending-credit-sales/:customerId', cashRegisterController.getPendingCreditSaleInvoices);
 router.get('/:id', cashRegisterController.getById);
 router.post('/', cashRegisterController.create);
+router.post('/shareholder-contribution', cashRegisterController.createShareholderContribution);
+router.post('/loan-receipt', cashRegisterController.createLoanReceipt);
 router.delete('/:id', cashRegisterController.remove);
 
 export default router;
