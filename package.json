@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm run build && npm start",
     "build": "npx tsc",
+    "build:prod": "npx tsc",
     "start": "node dist/index.js",
     "start:prod": "NODE_ENV=production node dist/index.js",
     "migrate": "npx sequelize-cli db:migrate",
