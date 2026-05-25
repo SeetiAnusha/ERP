@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "npm run build && npm start",
-    "build": "npx tsc",
-    "build:prod": "npx tsc",
+    "build": "./node_modules/.bin/tsc",
+    "build:prod": "./node_modules/.bin/tsc && npx sequelize-cli db:migrate",
     "start": "node dist/index.js",
     "start:prod": "NODE_ENV=production node dist/index.js",
     "migrate": "npx sequelize-cli db:migrate",
@@ -44,6 +44,7 @@
     "pg": "^8.11.3",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.32.1",
+    "sequelize-cli": "^6.6.5",
     "socket.io": "^4.8.3",
     "swagger-autogen": "^2.23.7",
     "swagger-jsdoc": "^6.2.8",
@@ -61,7 +62,6 @@
     "jest": "^30.3.0",
     "nodemon": "^3.1.14",
     "rimraf": "^5.0.5",
-    "sequelize-cli": "^6.6.5",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0"
