@@ -77,27 +77,47 @@ export class TransactionFactory {
   }
 
   /**
-   * Create accounts payable entry data - eliminates 4+ duplicated calls
+   * Create accounts payable entry data.
+   * All NOT NULL columns from the AccountsPayable model are explicitly set here
+   * so bulkCreate never hits a NOT NULL constraint regardless of model defaults.
+   *
+   * NOT NULL columns in accounts_payable:
+   *   registrationNumber, registrationDate, type, sourceTransactionType,
+   *   relatedDocumentType, relatedDocumentId, relatedDocumentNumber,
+   *   amount, paidAmount, balanceAmount, status
    */
   static createAPEntry(context: PurchaseContext, options: APEntryOptions) {
     return {
-      registrationNumber: context.purchase.registrationNumber,
-      type: options.type,
-      relatedDocumentType: options.documentType,
-      relatedDocumentId: context.purchase.id,
+      // ── Required NOT NULL fields ──────────────────────────────────────────
+      registrationNumber:    context.purchase.registrationNumber,
+      registrationDate:      context.purchase.date ?? new Date(),
+      type:                  options.type,
+      sourceTransactionType: TransactionType.PURCHASE,          // always PURCHASE from this factory
+      relatedDocumentType:   options.documentType,
+      relatedDocumentId:     context.purchase.id,
       relatedDocumentNumber: context.purchase.registrationNumber,
-      supplierId: context.purchase.supplierId, // ✅ Always store original supplier ID
-      supplierName: options.supplierName,
-      supplierRnc: options.supplierRnc || context.supplier?.rnc || '',
-      ncf: context.purchase.ncf || '',
-      purchaseDate: context.purchase.date,
-      purchaseType: context.purchase.purchaseType,
-      paymentType: options.paymentType,
-      cardId: options.cardId,
-      cardIssuer: options.cardIssuer,
-      paymentReference: options.paymentReference,
-      amount: context.amount,
-      notes: options.notes || `${options.type} for ${options.documentType.toLowerCase()} ${context.purchase.registrationNumber}`,
+      amount:                context.amount,
+      paidAmount:            0,
+      balanceAmount:         context.amount,
+      status:                'Unpaid',
+
+      // ── Optional supplier / card fields ───────────────────────────────────
+      supplierId:            context.purchase.supplierId,
+      supplierName:          options.supplierName,
+      supplierRnc:           options.supplierRnc ?? context.supplier?.rnc ?? '',
+      ncf:                   context.purchase.ncf ?? '',
+      purchaseDate:          context.purchase.date,
+      purchaseType:          context.purchase.purchaseType,
+      paymentType:           options.paymentType,
+      cardId:                options.cardId,
+      cardIssuer:            options.cardIssuer,
+      paymentReference:      options.paymentReference,
+
+      // ── Soft-delete defaults ──────────────────────────────────────────────
+      deletion_status:       'NONE',
+      is_reversal:           false,
+
+      notes: options.notes ?? `${options.type} for ${options.documentType.toLowerCase()} ${context.purchase.registrationNumber}`,
     };
   }
 

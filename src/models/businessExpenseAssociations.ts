@@ -35,7 +35,7 @@ BusinessExpense.belongsTo(CardPaymentNetwork, {
 
 // ✅ NEW: Related AR association for traceability
 BusinessExpense.belongsTo(AccountsReceivable, { 
-  foreignKey: 'relatedARId', 
+  foreignKey: 'relatedArId',  // matches model field name → maps to related_ar_id in DB
   as: 'relatedAR' 
 });
 

@@ -561,46 +561,14 @@ class AccountsReceivableService extends BaseService {
 
   // ==================== UTILITY METHODS ====================
 
+  /** Delegates to BaseService — advisory lock + MAX() prevents duplicates. */
   private async generateARRegistrationNumber(transaction?: any): Promise<string> {
-    const lastAR = await AccountsReceivable.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: 'AR%'
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
-    
-    let nextNumber = 1;
-    if (lastAR) {
-      const lastNumber = parseInt(lastAR.registrationNumber.substring(2));
-      nextNumber = lastNumber + 1;
-    }
-    
-    return `AR${String(nextNumber).padStart(4, '0')}`;
+    return this.generateRegistrationNumber('AR', AccountsReceivable, transaction);
   }
 
+  /** Delegates to BaseService — advisory lock + MAX() prevents duplicates. */
   private async generateBankRegisterNumber(transaction?: any): Promise<string> {
-    // BankRegister already imported at top
-    
-    const lastBankTransaction = await BankRegister.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: 'BR%'
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
-    
-    let nextBankNumber = 1;
-    if (lastBankTransaction) {
-      const lastBankNumber = parseInt(lastBankTransaction.registrationNumber.substring(2));
-      nextBankNumber = lastBankNumber + 1;
-    }
-    
-    return `BR${String(nextBankNumber).padStart(4, '0')}`;
+    return this.generateRegistrationNumber('BR', BankRegister, transaction);
   }
 
   private async getLastBankBalance(bankAccountId: number, transaction?: any): Promise<number> {

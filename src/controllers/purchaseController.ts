@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as purchaseService from '../services/purchaseService';
+import { parsePurchaseDTO } from '../dto/purchase.dto';
 
 export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -45,8 +46,13 @@ export const getById = async (req: Request, res: Response, next: NextFunction) =
 export const create = async (req: Request, res: Response, next: NextFunction) => {
   try {
     console.time('⏱️ Total Purchase Creation');
-    
-    const purchase = await purchaseService.createPurchase(req.body);
+
+    // Parse and sanitise the request body before it reaches the service.
+    // Unknown fields are dropped, types are coerced, basic shape is validated.
+    // Any ValidationError here returns HTTP 400 before the DB transaction opens.
+    const dto = parsePurchaseDTO(req.body);
+
+    const purchase = await purchaseService.createPurchase(dto);
     
     console.timeEnd('⏱️ Total Purchase Creation');
     console.log("✅ Purchase created:", purchase.id);

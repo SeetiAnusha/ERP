@@ -700,26 +700,11 @@ class AccountsPayableService extends BaseService {
   }
 
   /**
-   * Generate AP registration number with proper sequencing
+   * Generate AP registration number.
+   * Delegates to BaseService — advisory lock + MAX() prevents duplicates.
    */
   private async generateAPRegistrationNumber(transaction?: any): Promise<string> {
-    const lastAP = await AccountsPayable.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: 'AP%'
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
-    
-    let nextNumber = 1;
-    if (lastAP) {
-      const lastNumber = parseInt(lastAP.registrationNumber.substring(2));
-      nextNumber = lastNumber + 1;
-    }
-    
-    return `AP${String(nextNumber).padStart(4, '0')}`;
+    return this.generateRegistrationNumber('AP', AccountsPayable, transaction);
   }
   // ==================== PAYMENT PROCESSING METHODS ====================
   

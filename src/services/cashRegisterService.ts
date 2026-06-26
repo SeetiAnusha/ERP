@@ -11,7 +11,7 @@ import CashRegisterMaster from '../models/CashRegisterMaster';
 import BankAccount from '../models/BankAccount';
 import BankRegister from '../models/BankRegister';
 import AccountsReceivable from '../models/AccountsReceivable';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import { BaseService } from '../core/BaseService';
 import { ValidationFramework, CommonValidators, ValidationSchema } from '../core/ValidationFramework';
@@ -418,26 +418,11 @@ class CashRegisterService extends BaseService {
   }
   
   /**
-   * Generate cash registration number
+   * Generate cash registration number.
+   * Delegates to BaseService — advisory lock + MAX() prevents duplicates.
    */
   private async generateCashRegistrationNumber(transaction: any): Promise<string> {
-    const lastTransaction = await CashRegister.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: 'CJ%'
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
-    
-    let nextNumber = 1;
-    if (lastTransaction) {
-      const lastNumber = parseInt(lastTransaction.registrationNumber.substring(2));
-      nextNumber = lastNumber + 1;
-    }
-    
-    return `CJ${String(nextNumber).padStart(4, '0')}`;
+    return this.generateRegistrationNumber('CJ', CashRegister, transaction);
   }
   
   // ==================== TRANSACTION PROCESSING METHODS ====================
@@ -1739,73 +1724,58 @@ export const createLoanReceipt = async (data: {
 };
 
 /**
- * Helper: Generate AP registration number
+ * Helper: Generate AP registration number.
+ * Uses BaseService advisory lock pattern via a temporary service instance.
  */
 async function generateAPRegistrationNumber(transaction: any): Promise<string> {
   const AccountsPayable = require('../models/AccountsPayable').default;
-  const lastAP = await AccountsPayable.findOne({
-    where: {
-      registrationNumber: {
-        [Op.like]: 'AP%'
-      }
-    },
-    order: [['id', 'DESC']],
-    transaction
-  });
-  
-  let nextNumber = 1;
-  if (lastAP) {
-    const lastNumber = parseInt(lastAP.registrationNumber.substring(2));
-    nextNumber = lastNumber + 1;
-  }
-  
-  return `AP${String(nextNumber).padStart(4, '0')}`;
+  const [results] = await AccountsPayable.sequelize.query(
+    `SELECT pg_advisory_xact_lock(hashtext(:lockKey)::bigint)`,
+    { replacements: { lockKey: 'accounts_payables:AP' }, type: QueryTypes.SELECT, transaction }
+  );
+  const [maxResult] = await AccountsPayable.sequelize.query(
+    `SELECT MAX(registration_number) AS max_reg_number FROM accounts_payables WHERE registration_number LIKE :pattern`,
+    { replacements: { pattern: 'AP%' }, type: QueryTypes.SELECT, transaction }
+  );
+  const max = (maxResult as any)?.max_reg_number;
+  const next = max ? parseInt(max.substring(2), 10) + 1 : 1;
+  return `AP${String(next).padStart(4, '0')}`;
 }
 
 /**
- * Helper: Generate AR registration number
+ * Helper: Generate AR registration number.
+ * Uses advisory lock to prevent duplicates under concurrent load.
  */
 async function generateARRegistrationNumber(transaction: any): Promise<string> {
-  const lastAR = await AccountsReceivable.findOne({
-    where: {
-      registrationNumber: {
-        [Op.like]: 'AR%'
-      }
-    },
-    order: [['id', 'DESC']],
-    transaction
-  });
-  
-  let nextNumber = 1;
-  if (lastAR) {
-    const lastNumber = parseInt(lastAR.registrationNumber.substring(2));
-    nextNumber = lastNumber + 1;
-  }
-  
-  return `AR${String(nextNumber).padStart(4, '0')}`;
+  const [results] = await AccountsReceivable.sequelize!.query(
+    `SELECT pg_advisory_xact_lock(hashtext(:lockKey)::bigint)`,
+    { replacements: { lockKey: 'accounts_receivables:AR' }, type: QueryTypes.SELECT, transaction }
+  );
+  const [maxResult] = await AccountsReceivable.sequelize!.query(
+    `SELECT MAX(registration_number) AS max_reg_number FROM accounts_receivables WHERE registration_number LIKE :pattern`,
+    { replacements: { pattern: 'AR%' }, type: QueryTypes.SELECT, transaction }
+  );
+  const max = (maxResult as any)?.max_reg_number;
+  const next = max ? parseInt(max.substring(2), 10) + 1 : 1;
+  return `AR${String(next).padStart(4, '0')}`;
 }
 
 /**
- * Helper: Generate cash registration number
+ * Helper: Generate cash registration number.
+ * Uses advisory lock to prevent duplicates under concurrent load.
  */
 async function generateCashRegistrationNumber(transaction: any): Promise<string> {
-  const lastTransaction = await CashRegister.findOne({
-    where: {
-      registrationNumber: {
-        [Op.like]: 'CJ%'
-      }
-    },
-    order: [['id', 'DESC']],
-    transaction
-  });
-  
-  let nextNumber = 1;
-  if (lastTransaction) {
-    const lastNumber = parseInt(lastTransaction.registrationNumber.substring(2));
-    nextNumber = lastNumber + 1;
-  }
-  
-  return `CJ${String(nextNumber).padStart(4, '0')}`;
+  const [results] = await CashRegister.sequelize!.query(
+    `SELECT pg_advisory_xact_lock(hashtext(:lockKey)::bigint)`,
+    { replacements: { lockKey: 'cash_registers:CJ' }, type: QueryTypes.SELECT, transaction }
+  );
+  const [maxResult] = await CashRegister.sequelize!.query(
+    `SELECT MAX(registration_number) AS max_reg_number FROM cash_registers WHERE registration_number LIKE :pattern`,
+    { replacements: { pattern: 'CJ%' }, type: QueryTypes.SELECT, transaction }
+  );
+  const max = (maxResult as any)?.max_reg_number;
+  const next = max ? parseInt(max.substring(2), 10) + 1 : 1;
+  return `CJ${String(next).padStart(4, '0')}`;
 }
 
 /**

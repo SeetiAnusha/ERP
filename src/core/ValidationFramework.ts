@@ -191,27 +191,27 @@ export class CommonValidators {
     };
   }
   
-  static isValidRNC(message?: string) {
-    return {
-      validator: (value: any) => {
-        if (!value) return true; // Optional field
-        const rnc = String(value).replace(/\D/g, ''); // Remove non-digits
-        return rnc.length === 9 || rnc.length === 11;
-      },
-      message: message || 'RNC must be 9 or 11 digits'
-    };
-  }
+  // static isValidRNC(message?: string) {
+  //   return {
+  //     validator: (value: any) => {
+  //       if (!value) return true; // Optional field
+  //       const rnc = String(value).replace(/\D/g, ''); // Remove non-digits
+  //       return rnc.length === 9 || rnc.length === 11;
+  //     },
+  //     message: message || 'RNC must be 9 or 11 digits'
+  //   };
+  // }
   
-  static isValidNCF(message?: string) {
-    return {
-      validator: (value: any) => {
-        if (!value) return true; // Optional field
-        const ncf = String(value).replace(/\D/g, ''); // Remove non-digits
-        return ncf.length === 8;
-      },
-      message: message || 'NCF must be 8 digits'
-    };
-  }
+  // static isValidNCF(message?: string) {
+  //   return {
+  //     validator: (value: any) => {
+  //       if (!value) return true; // Optional field
+  //       const ncf = String(value).replace(/\D/g, ''); // Remove non-digits
+  //       return ncf.length === 8;
+  //     },
+  //     message: message || 'NCF must be 8 digits'
+  //   };
+  // }
   
   static isValidCurrency(message?: string) {
     return {
@@ -261,8 +261,8 @@ export class ValidationSchemas {
       { field: 'total', validator: CommonValidators.isValidAmount().validator, message: CommonValidators.isValidAmount().message, required: true },
       { field: 'paymentType', validator: CommonValidators.isValidPaymentType().validator, message: CommonValidators.isValidPaymentType().message, required: true },
       { field: 'date', validator: CommonValidators.isDate().validator, message: 'Valid date is required', required: true },
-      { field: 'supplierRnc', validator: CommonValidators.isValidRNC().validator, message: CommonValidators.isValidRNC().message, required: false },
-      { field: 'ncf', validator: CommonValidators.isValidNCF().validator, message: CommonValidators.isValidNCF().message, required: false }
+      // { field: 'supplierRnc', validator: CommonValidators.isValidRNC().validator, message: CommonValidators.isValidRNC().message, required: false },
+      // { field: 'ncf', validator: CommonValidators.isValidNCF().validator, message: CommonValidators.isValidNCF().message, required: false }
     ],
     customValidators: [
       (data: any) => {
@@ -312,6 +312,14 @@ export class ValidationSchemas {
             }
             if (!invoice.supplierName) {
               throw new ValidationError(`Associated invoice ${index + 1}: Supplier name is required`);
+            }
+            // Card is required when invoice payment type is card-based
+            const invPaymentType = invoice.paymentType?.toUpperCase();
+            if ((invPaymentType === 'DEBIT_CARD' || invPaymentType === 'CREDIT_CARD') && !invoice.cardId) {
+              throw new ValidationError(
+                `Associated invoice ${index + 1} ("${invoice.concept || 'Unknown'}"): ` +
+                `Card is required for ${invPaymentType} payment type`
+              );
             }
           });
         }

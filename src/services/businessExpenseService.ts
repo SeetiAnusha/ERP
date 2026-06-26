@@ -747,10 +747,8 @@ class BusinessExpenseService extends BaseService {
     // ✅ CRITICAL: Exclude soft-deleted expenses
     // whereClause.deletion_status = { [Op.ne]: 'EXECUTED' };
 
-    // ✅ NEW: Exclude processing fees (they have clientId, not supplierId)
-    // Processing fees are now managed in the dedicated Credit Card Fees page
-    whereClause.supplierId = { [Op.ne]: null };  // Must have a supplier
-    whereClause.clientId = null;  // Must NOT have a client
+    // ✅ Must have a supplier (exclude any orphaned records)
+    whereClause.supplierId = { [Op.ne]: null };
 
     // Apply filters
     if (categoryId) whereClause.expenseCategoryId = categoryId;
@@ -1111,8 +1109,8 @@ class BusinessExpenseService extends BaseService {
     const whereClause: any = {
       // Exclude deleted records (CRITICAL FIX)
       [Op.or]: [
-        { deletion_status: null },
-        { deletion_status: { [Op.ne]: 'EXECUTED' } }
+        { deletionStatus: null },
+        { deletionStatus: { [Op.ne]: 'EXECUTED' } }
       ],
       // Exclude reversed records (CRITICAL FIX)
       status: { [Op.ne]: 'REVERSED' }

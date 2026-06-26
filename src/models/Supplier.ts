@@ -104,6 +104,24 @@ Supplier.init(
     sequelize,
     tableName: 'suppliers',
     timestamps: true,
+    indexes: [
+      {
+        fields: ['id'],
+        name: 'idx_suppliers_id'
+      },
+      {
+        fields: ['name'],
+        name: 'idx_suppliers_name'
+      },
+      {
+        fields: ['status'],
+        name: 'idx_suppliers_status'
+      },
+      {
+        fields: ['rnc'],
+        name: 'idx_suppliers_rnc'
+      }
+    ]
   }
 );
 

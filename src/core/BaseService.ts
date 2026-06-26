@@ -1,6 +1,6 @@
 import { Transaction } from 'sequelize';
 import sequelize from '../config/database';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { 
   ValidationError, 
   InsufficientBalanceError, 
@@ -262,33 +262,80 @@ export abstract class BaseService {
   }
   
   // ==================== UTILITY METHODS ====================
-  
+
   /**
-   * Generate unique registration number with prefix
+   * generateRegistrationNumber — Lock-free, atomic sequential number generator.
+   *
+   * IMPLEMENTATION: PostgreSQL SEQUENCE via nextval()
+   * ──────────────────────────────────────────────────
+   * Previous approach used:
+   *   pg_advisory_xact_lock → serialises all callers (bottleneck)
+   *   SELECT MAX()          → still 2 DB round-trips
+   *
+   * This approach uses:
+   *   SELECT nextval('seq_reg_cp')  → single atomic DB operation
+   *
+   * WHY SEQUENCES ARE BETTER:
+   *   - nextval() is internally atomic — the DB engine increments the counter
+   *     and returns the new value in one indivisible step
+   *   - No application-level locking at all — concurrent callers each get a
+   *     unique value simultaneously without blocking each other
+   *   - O(1) time — sequence counters live in shared memory, no table scan
+   *   - Gaps can occur if a transaction rolls back (e.g. CP0043 is consumed
+   *     but never inserted) — this is acceptable in ERP systems and is the
+   *     standard trade-off for lock-free generation
+   *
+   * SEQUENCE NAMING CONVENTION (must match migration 20260618000000):
+   *   prefix → sequence name
+   *   'CP'   → seq_reg_cp
+   *   'AP'   → seq_reg_ap
+   *   'AR'   → seq_reg_ar
+   *   'BR'   → seq_reg_br
+   *   'CJ'   → seq_reg_cj
+   *   'INV-' → seq_reg_inv
+   *   'FA-'  → seq_reg_fa
+   *   'AJ'   → seq_reg_aj
+   *   'ND'   → seq_reg_nd
+   *   'NC'   → seq_reg_nc
+   *
+   * CALLERS — zero signature changes needed:
+   *   purchaseService        → generateRegistrationNumber('CP',   Purchase,    tx)
+   *   accountsPayableService → generateRegistrationNumber('AP',   AP,          tx)
+   *   accountsReceivable     → generateRegistrationNumber('AR',   AR,          tx)
+   *   bankRegisterService    → generateRegistrationNumber('BR',   BankReg,     tx)
+   *   cashRegisterService    → generateRegistrationNumber('CJ',   CashReg,     tx)
+   *   investmentService      → generateRegistrationNumber('INV-', Investment,  tx)
+   *   fixedAssetService      → generateRegistrationNumber('FA-',  FixedAsset,  tx)
+   *   adjustmentService      → generateRegistrationNumber(prefix, Adjustment,  tx)
+   *
+   * TIME  : O(1) — sequence counter read from shared memory
+   * SPACE : O(1) — single scalar result
    */
   protected async generateRegistrationNumber(
-    prefix: string, 
-    model: any, 
+    prefix: string,
+    model: any,
     transaction?: Transaction
   ): Promise<string> {
-    // ✅ FIX: Use SELECT FOR UPDATE SKIP LOCKED to prevent race conditions
-    // Prevents concurrent transactions from generating the same registration number
-    const tableName = model.getTableName();
-    const [results] = await sequelize.query(
-      `SELECT registration_number FROM ${tableName} 
-       WHERE registration_number LIKE '${prefix}%' 
-       ORDER BY id DESC 
-       LIMIT 1 
-       FOR UPDATE SKIP LOCKED`,
-      { transaction }
+    // Derive sequence name from prefix using the same convention as the migration.
+    // 'CP' → 'seq_reg_cp', 'INV-' → 'seq_reg_inv', 'FA-' → 'seq_reg_fa'
+    const seqName = `seq_reg_${prefix.toLowerCase().replace(/-/g, '')}`;
+
+    // nextval() is a single atomic DB call — no locks, no race conditions.
+    // The sequence is always inside the same transaction so if the transaction
+    // rolls back, the sequence number is consumed but not inserted (gap).
+    // This is the standard PostgreSQL behaviour and is acceptable for ERP IDs.
+    const [result] = await sequelize.query(
+      `SELECT nextval(:seqName) AS next_val`,
+      {
+        replacements: { seqName },
+        type: QueryTypes.SELECT,
+        transaction,
+      }
     );
-    
-    let nextNumber = 1;
-    if (results && (results as any[]).length > 0) {
-      const lastNumber = parseInt((results as any[])[0].registration_number.substring(prefix.length));
-      nextNumber = lastNumber + 1;
-    }
-    
+
+    const nextNumber = Number((result as any).next_val);
+
+    // Zero-pad to 4 digits: 'CP0001', 'AP0042', 'INV-0007', 'FA-0003'
     return `${prefix}${String(nextNumber).padStart(4, '0')}`;
   }
   

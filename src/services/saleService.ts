@@ -2,7 +2,7 @@ import Sale from '../models/Sale';
 import SaleItem from '../models/SaleItem';
 import Client from '../models/Client';
 import Product from '../models/Product';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import { BaseService } from '../core/BaseService';
 
@@ -104,22 +104,18 @@ export const createSale = async (data: any) => {
   let committed = false;
   
   try {
-    const lastSale = await Sale.findOne({
-      where: {
-        registrationNumber: {
-          [Op.like]: 'RV%'
-        }
-      },
-      order: [['id', 'DESC']],
-      transaction
-    });
-    
-    let nextNumber = 1;
-    if (lastSale) {
-      const lastNumber = parseInt(lastSale.registrationNumber.substring(2));
-      nextNumber = lastNumber + 1;
-    }
-    
+    // Advisory lock prevents concurrent transactions from generating duplicate RV numbers.
+    // MAX() is O(log n) on the indexed registration_number column.
+    await sequelize.query(
+      `SELECT pg_advisory_xact_lock(hashtext(:lockKey)::bigint)`,
+      { replacements: { lockKey: 'sales:RV' }, type: QueryTypes.SELECT, transaction }
+    );
+    const [maxResult] = await sequelize.query(
+      `SELECT MAX(registration_number) AS max_reg_number FROM sales WHERE registration_number LIKE :pattern`,
+      { replacements: { pattern: 'RV%' }, type: QueryTypes.SELECT, transaction }
+    );
+    const maxReg = (maxResult as any)?.max_reg_number;
+    const nextNumber = maxReg ? parseInt(maxReg.substring(2), 10) + 1 : 1;
     const registrationNumber = `RV${String(nextNumber).padStart(4, '0')}`;
     
     // Calculate collection status based on payment type

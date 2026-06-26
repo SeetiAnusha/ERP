@@ -116,6 +116,7 @@ AccountBalance.init(
       { fields: ['account_id', 'fiscal_period_id'], unique: true },
       { fields: ['fiscal_period_id'] },
       { fields: ['last_updated'] },
+      { fields: ['account_id'] }, // For faster single-account lookups
     ],
   }
 );

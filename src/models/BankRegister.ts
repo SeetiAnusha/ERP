@@ -233,6 +233,28 @@ BankRegister.init(
     sequelize,
     tableName: 'bank_registers',
     timestamps: true,
+    indexes: [
+      {
+        fields: ['bankAccountId'],
+        name: 'idx_bank_registers_bank_account_id'
+      },
+      {
+        fields: ['registrationNumber'],
+        name: 'idx_bank_registers_registration_number'
+      },
+      {
+        fields: ['registrationDate'],
+        name: 'idx_bank_registers_registration_date'
+      },
+      {
+        fields: ['bankAccountId', 'id'],
+        name: 'idx_bank_registers_account_id_desc'
+      },
+      {
+        fields: ['supplierId'],
+        name: 'idx_bank_registers_supplier_id'
+      }
+    ]
   }
 );
 

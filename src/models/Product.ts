@@ -122,6 +122,29 @@ Product.init(
     sequelize,
     tableName: 'products',
     timestamps: true,
+    indexes: [
+      {
+        fields: ['id'],
+        name: 'idx_products_id'
+      },
+      {
+        fields: ['supplierId'],
+        name: 'idx_products_supplier_id'
+      },
+      {
+        fields: ['category'],
+        name: 'idx_products_category'
+      },
+      {
+        fields: ['status'],
+        name: 'idx_products_status'
+      },
+      {
+        fields: ['code'],
+        unique: true,
+        name: 'unique_products_code'
+      }
+    ]
   }
 );
 

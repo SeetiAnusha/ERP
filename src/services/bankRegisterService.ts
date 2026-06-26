@@ -11,7 +11,7 @@
  * - Cheque and transfer number auto-generation
  */
 
-import { Op, Transaction } from 'sequelize';
+import { Op, Transaction, QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import BankRegister from '../models/BankRegister';
 import BankAccount from '../models/BankAccount';
@@ -26,6 +26,37 @@ import {
   BusinessLogicError, 
   NotFoundError 
 } from '../core/AppError';
+import { addBalance, subtractBalance } from './bankAccountService';
+
+// ─── Shared type: exported so purchaseService can use it without owning it ────
+//
+// WHY exported here (not in a types/ file):
+//   BankBalanceCache is a runtime object, not just a type contract.
+//   Its home is the service that manages bank balances — bankRegisterService.
+//   purchaseService USES it but does NOT own it.
+//   This is Dependency Inversion: high-level modules depend on abstractions
+//   defined by the low-level module that owns the concern.
+export interface BankBalanceCache {
+  readonly balances: Map<number, number>;
+  /** Returns the cached balance for the given account ID, or 0 if not cached */
+  getBalance(bankAccountId?: number): number;
+  /** Updates the cached balance — does NOT write to the DB */
+  updateBalance(bankAccountId: number, newBalance: number): void;
+}
+
+/** Factory: builds an empty BankBalanceCache pre-loaded with given balances */
+export function buildBankBalanceCache(initial: Map<number, number> = new Map()): BankBalanceCache {
+  const balances = new Map(initial);
+  return {
+    balances,
+    getBalance(id?: number): number {
+      return id != null ? (balances.get(id) ?? 0) : 0;
+    },
+    updateBalance(id: number, newBalance: number): void {
+      balances.set(id, newBalance);
+    },
+  };
+}
 
 /**
  * Interfaces for type safety and documentation
@@ -303,66 +334,56 @@ class BankRegisterService extends BaseService {
     return description;
   }
   /**
-   * Auto-generate cheque number for a bank account
-   * Time Complexity: O(1) for single query with index
-   * Space Complexity: O(1) for number generation
+   * Auto-generate cheque number for a bank account.
+   * Uses BaseService.generateRegistrationNumber with advisory lock — no duplicates.
+   * Scoped per bankAccountId so CK numbers are unique within each account.
    */
   private async generateChequeNumber(bankAccountId: number): Promise<string> {
-    const lastCheque = await BankRegister.findOne({
-      where: { 
-        bankAccountId,
-        chequeNumber: { [Op.ne]: null }
-      },
-      order: [['id', 'DESC']]
-    });
-    
-    const nextNumber = lastCheque && lastCheque.chequeNumber
-      ? parseInt(lastCheque.chequeNumber.replace('CK', '')) + 1
-      : 1;
-      
-    return `CK${nextNumber.toString().padStart(4, '0')}`;
+    // We don't use the model parameter here because we need to filter by bankAccountId.
+    // Use MAX() directly scoped to this account.
+    const [result] = await sequelize.query(
+      `SELECT MAX(cheque_number) AS max_num
+       FROM bank_registers
+       WHERE bank_account_id = :bankAccountId
+         AND cheque_number IS NOT NULL`,
+      {
+        replacements: { bankAccountId },
+        type: QueryTypes.SELECT,
+      }
+    );
+    const maxNum = (result as any)?.max_num;
+    const nextNumber = maxNum ? parseInt(maxNum.replace('CK', ''), 10) + 1 : 1;
+    return `CK${String(nextNumber).padStart(4, '0')}`;
   }
 
   /**
-   * Auto-generate transfer number for a bank account
-   * Time Complexity: O(1) for single query with index
-   * Space Complexity: O(1) for number generation
+   * Auto-generate transfer number for a bank account.
+   * Same pattern as generateChequeNumber — scoped per account.
    */
   private async generateTransferNumber(bankAccountId: number): Promise<string> {
-    const lastTransfer = await BankRegister.findOne({
-      where: { 
-        bankAccountId,
-        transferNumber: { [Op.ne]: null }
-      },
-      order: [['id', 'DESC']]
-    });
-    
-    const nextNumber = lastTransfer && lastTransfer.transferNumber
-      ? parseInt(lastTransfer.transferNumber.replace('TF', '')) + 1
-      : 1;
-      
-    return `TF${nextNumber.toString().padStart(4, '0')}`;
+    const [result] = await sequelize.query(
+      `SELECT MAX(transfer_number) AS max_num
+       FROM bank_registers
+       WHERE bank_account_id = :bankAccountId
+         AND transfer_number IS NOT NULL`,
+      {
+        replacements: { bankAccountId },
+        type: QueryTypes.SELECT,
+      }
+    );
+    const maxNum = (result as any)?.max_num;
+    const nextNumber = maxNum ? parseInt(maxNum.replace('TF', ''), 10) + 1 : 1;
+    return `TF${String(nextNumber).padStart(4, '0')}`;
   }
 
   /**
-   * Generate registration number for bank register entry
-   * Time Complexity: O(1) for single query with index
-   * Space Complexity: O(1) for number generation
+   * Generate registration number for bank register entry.
+   * Delegates to BaseService.generateRegistrationNumber:
+   *   — advisory lock prevents duplicates under concurrent load
+   *   — MAX() is O(log n), faster than ORDER BY on large tables
    */
   private async generateBankRegistrationNumber(transaction?: Transaction): Promise<string> {
-    const lastRegister = await BankRegister.findOne({
-      where: { registrationNumber: { [Op.like]: 'BR%' } },
-      order: [['id', 'DESC']],
-      transaction
-    });
-    
-    let nextNumber = 1;
-    if (lastRegister) {
-      const lastNumber = parseInt(lastRegister.registrationNumber.substring(2));
-      nextNumber = lastNumber + 1;
-    }
-    
-    return `BR${String(nextNumber).padStart(4, '0')}`;
+    return this.generateRegistrationNumber('BR', BankRegister, transaction);
   }
 
   /**
@@ -486,16 +507,7 @@ class BankRegisterService extends BaseService {
     
     // Update bank account balance (INFLOW increases balance)
     if (data.bankAccountId) {
-      const bankAccount = await BankAccount.findByPk(data.bankAccountId, { transaction });
-      if (bankAccount) {
-        const oldBalance = parseFloat(bankAccount.balance.toString());
-        const amount = parseFloat(data.amount.toString());
-        const newBankBalance = oldBalance + amount;
-        await bankAccount.update({ balance: newBankBalance }, { transaction });
-        
-        // ✅ ADD: Confirmation logging
-        console.log(`✅ [Bank Account Balance Updated] ${bankAccount.bankName} (${bankAccount.accountNumber}): ₹${oldBalance} → ₹${newBankBalance} (+₹${amount})`);
-      }
+      await addBalance(data.bankAccountId, data.amount, transaction);
     }
     
     return bankRegister;
@@ -563,8 +575,7 @@ class BankRegisterService extends BaseService {
     }, { transaction });
     
     // Update bank account balance (OUTFLOW decreases balance)
-    const newBankBalance = currentBankBalance - outflowAmount;
-    await bankAccount.update({ balance: newBankBalance }, { transaction });
+    await subtractBalance(data.bankAccountId, outflowAmount, transaction);
     
     return bankRegister;
   }

@@ -3,11 +3,22 @@ import BankAccount from '../models/BankAccount';
 import { Op } from 'sequelize';
 import { BaseService } from '../core/BaseService';
 
+/**
+ * CardService
+ * Manages credit and debit cards used by the business for payments.
+ * Cards are linked to bank accounts (for debit cards) and have credit limits (for credit cards).
+ * They are used in purchases, business expenses, and credit card register entries.
+ */
 class CardService extends BaseService {
   
+  /**
+   * Retrieves all cards with optional pagination and search.
+   * Includes the linked bank account details for each card.
+   * Searches across card code, name, last 4 digits, brand, and bank name.
+   * Used by: Card list page, payment method dropdowns in expense/purchase forms.
+   */
   async getAllCards(options: any = {}): Promise<any> {
     return this.executeWithRetry(async () => {
-      // Use generic pagination from BaseService
       const result = await this.getAllWithPagination(
         Card,
         {
@@ -18,6 +29,7 @@ class CardService extends BaseService {
         {},
         [
           {
+            // Include the linked bank account so the UI can show bank name and balance.
             model: BankAccount,
             as: 'BankAccount',
             attributes: ['id', 'bankName', 'accountNumber', 'balance'],
@@ -28,6 +40,10 @@ class CardService extends BaseService {
     });
   }
 
+  /**
+   * Finds a single card by its database ID, including its linked bank account.
+   * Used when editing a card or displaying card details.
+   */
   async getCardById(id: number) {
     return await Card.findByPk(id, {
       include: [
@@ -40,9 +56,15 @@ class CardService extends BaseService {
     });
   }
 
+  /**
+   * Creates a new card record.
+   * Auto-generates a sequential code (CD0001, CD0002, ...) for internal reference.
+   * Converts empty bankAccountId to null to avoid foreign key errors.
+   * Sets creditLimit to 0 if not provided.
+   */
   async createCard(data: any) {
     return this.executeWithRetry(async () => {
-      // Generate code (CD0001, CD0002, etc.)
+      // Find the last card to determine the next sequential code number.
       const lastCard = await Card.findOne({
         where: {
           code: {
@@ -58,9 +80,10 @@ class CardService extends BaseService {
         nextNumber = lastNumber + 1;
       }
       
+      // Format: CD0001, CD0002, etc.
       const code = `CD${String(nextNumber).padStart(4, '0')}`;
       
-      // Clean up data - convert empty strings to null for integer fields
+      // Sanitize: empty string for bankAccountId would cause a DB foreign key error.
       const cleanData = {
         ...data,
         code,
@@ -72,12 +95,16 @@ class CardService extends BaseService {
     });
   }
 
+  /**
+   * Updates an existing card's details (name, limit, status, etc.).
+   * Sanitizes bankAccountId and creditLimit the same way as createCard.
+   * Throws an error if the card does not exist.
+   */
   async updateCard(id: number, data: any) {
     return this.executeWithRetry(async () => {
       const card = await Card.findByPk(id);
       if (!card) throw new Error('Card not found');
       
-      // Clean up data - convert empty strings to null for integer fields
       const cleanData = {
         ...data,
         bankAccountId: data.bankAccountId === '' ? null : data.bankAccountId,
@@ -88,6 +115,11 @@ class CardService extends BaseService {
     });
   }
 
+  /**
+   * Permanently deletes a card from the database.
+   * Throws an error if the card does not exist.
+   * Note: Do not delete cards that have transaction history in the Credit Card Register.
+   */
   async deleteCard(id: number) {
     const card = await Card.findByPk(id);
     if (!card) throw new Error('Card not found');

@@ -33,6 +33,8 @@ import ApprovalStep from './ApprovalStep';
 import TransactionAuditTrail from './TransactionAuditTrail';
 import CreditCardFee from './CreditCardFee';
 import AccountsReceivable from './AccountsReceivable';
+import Adjustment from './Adjustment';
+import AdjustmentItem from './AdjustmentItem';
 
 // Investment Summary associations
 CashRegister.belongsTo(CashRegisterMaster, { foreignKey: 'cashRegisterId', as: 'cashRegisterMaster' });
@@ -151,6 +153,10 @@ AccountsReceivable.hasMany(CreditCardFee, { foreignKey: 'arId', as: 'creditCardF
 
 // Client associations for credit card fees
 Client.hasMany(CreditCardFee, { foreignKey: 'customerId', as: 'creditCardFees' });
+
+// Adjustment associations
+Adjustment.hasMany(AdjustmentItem, { foreignKey: 'adjustmentId', as: 'items', onDelete: 'CASCADE' });
+AdjustmentItem.belongsTo(Adjustment, { foreignKey: 'adjustmentId', as: 'adjustment' });
 
 export default {
   Purchase,

@@ -62,6 +62,20 @@ BankAccount.init(
     sequelize,
     tableName: 'bank_accounts',
     timestamps: true,
+    indexes: [
+      {
+        fields: ['id'],
+        name: 'idx_bank_accounts_id'
+      },
+      {
+        fields: ['status'],
+        name: 'idx_bank_accounts_status'
+      },
+      {
+        fields: ['accountType'],
+        name: 'idx_bank_accounts_account_type'
+      }
+    ]
   }
 );
 

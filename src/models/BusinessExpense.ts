@@ -22,6 +22,7 @@ interface BusinessExpenseAttributes {
   balanceAmount: number;
   status: string; // 'COMPLETED', 'PENDING', 'CANCELLED'
   paymentStatus: string; // 'Paid', 'Partial', 'Unpaid'
+  deletionStatus?: string; // 'EXECUTED' | null
   
   // Payment method specific fields
   bankAccountId?: number;
@@ -32,6 +33,11 @@ interface BusinessExpenseAttributes {
   transferDate?: Date;
   paymentReference?: string;
   voucherDate?: Date;
+
+  // Extended fields (present in DB but optional in model)
+  clientId?: number;
+  cardPaymentNetworkId?: number;
+  relatedArId?: number;
   
   createdAt?: Date;
   updatedAt?: Date;
@@ -55,6 +61,7 @@ class BusinessExpense extends Model<BusinessExpenseAttributes, BusinessExpenseCr
   public balanceAmount!: number;
   public status!: string;
   public paymentStatus!: string;
+  public deletionStatus?: string;
   
   // Payment method specific fields
   public bankAccountId?: number;
@@ -65,6 +72,11 @@ class BusinessExpense extends Model<BusinessExpenseAttributes, BusinessExpenseCr
   public transferDate?: Date;
   public paymentReference?: string;
   public voucherDate?: Date;
+
+  // Extended fields
+  public clientId?: number;
+  public cardPaymentNetworkId?: number;
+  public relatedArId?: number;
   
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -200,6 +212,27 @@ BusinessExpense.init(
     voucherDate: {
       type: DataTypes.DATE,
       allowNull: true,
+    },
+    // Extended fields present in DB
+    deletionStatus: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'deletion_status',
+    },
+    clientId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'client_id',
+    },
+    cardPaymentNetworkId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'card_payment_network_id',
+    },
+    relatedArId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'related_ar_id',  // ✅ exact DB column name — avoids the related_a_r_id mismatch
     },
   },
   {

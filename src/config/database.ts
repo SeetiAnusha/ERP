@@ -14,12 +14,13 @@ const sequelize = new Sequelize(
       }
     },
     pool: {
-      max: 15, // Match your Supabase pool size
-      min: 2,
-      acquire: 60000,
-      idle: 10000
+      max: 25, // Increased for better concurrency
+      min: 5, // Keep more connections ready
+      acquire: 30000, // Reduced timeout for faster failures
+      idle: 10000,
+      evict: 60000 // Evict idle connections after 60s
     },
-    logging: console.log,
+    logging: false, // Disable logging in production for performance
     // Force snake_case for all column names to match Render database
     define: {
       underscored: true,

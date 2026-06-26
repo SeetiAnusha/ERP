@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as saleService from '../services/saleService';
+import { parseSaleDTO } from '../dto/sale.dto';
 
 export const getAll = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -42,7 +43,9 @@ export const getById = async (req: Request, res: Response, next: NextFunction) =
 
 export const create = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const sale = await saleService.createSale(req.body);
+    // Sanitise and type-coerce the request body before it reaches the service.
+    const dto = parseSaleDTO(req.body);
+    const sale = await saleService.createSale(dto);
     res.status(201).json(sale);
   } catch (error) {
     next(error);
